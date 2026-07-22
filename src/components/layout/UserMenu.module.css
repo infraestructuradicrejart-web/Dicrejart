@@ -1,0 +1,122 @@
+/**
+ * @file UserMenu.module.css
+ * @description Círculo flotante de sesión activa (todo lo que queda de la antigua
+ * barra superior), fijo en la esquina superior derecha de la app.
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-5);
+  z-index: 100;
+}
+
+.user-button {
+  background: none;
+  border: none;
+  padding: var(--space-1);
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-normal) ease;
+
+  &:focus {
+    outline: 2px solid var(--color-white);
+    outline-offset: 2px;
+  }
+}
+
+/* Anillo iluminado palpitante (indicador "en línea") */
+.avatar-ring {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  animation: avatarPulse 2.2s infinite;
+}
+
+@keyframes avatarPulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 204, 0, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(255, 204, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 204, 0, 0); }
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  background: linear-gradient(135deg, var(--color-primary), #e74c3c);
+  box-shadow: var(--shadow-md);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-white);
+}
+
+.user-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--space-2);
+  background-color: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 200;
+  min-width: 200px;
+  overflow: hidden;
+}
+
+.dropdown-item {
+  background: none;
+  border: none;
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-family);
+  font-size: 14px;
+  color: var(--color-dark);
+  cursor: pointer;
+  transition: all var(--transition-fast) ease;
+
+  &:hover {
+    background-color: var(--color-gray-100);
+    color: var(--color-primary);
+  }
+
+  &:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+    background-color: var(--color-gray-100);
+  }
+}
+
+.logout-item {
+  color: var(--color-alert);
+
+  &:hover {
+    background-color: #fef2f2;
+    color: #cc0000;
+  }
+}
+
+.dropdown-divider {
+  height: 1px;
+  background-color: var(--color-gray-200);
+  margin: var(--space-2) 0;
+}
+
+@media (max-width: 480px) {
+  .avatar {
+    width: 38px;
+    height: 38px;
+    font-size: 13px;
+  }
+}

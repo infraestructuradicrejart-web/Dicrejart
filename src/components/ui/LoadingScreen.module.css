@@ -1,0 +1,227 @@
+/**
+ * @file LoadingScreen.module.css
+ * @description Estilos premium para la pantalla de carga de Dicrejart
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100vh;
+  background-color: #0f172a;
+  background-image: radial-gradient(circle at center, #1e293b 0%, #020617 100%);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+}
+
+/* Background Glowing Shapes */
+.glowShape1 {
+  position: absolute;
+  top: -100px;
+  right: -100px;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(255, 51, 0, 0.08) 0%, transparent 70%);
+  border-radius: 50%;
+  filter: blur(50px);
+  animation: pulseGlow 5s infinite ease-in-out;
+}
+
+.glowShape2 {
+  position: absolute;
+  bottom: -100px;
+  left: -100px;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(153, 51, 255, 0.08) 0%, transparent 70%);
+  border-radius: 50%;
+  filter: blur(50px);
+  animation: pulseGlow 5s infinite ease-in-out;
+  animation-delay: 2.5s;
+}
+
+.blob1 {
+  position: absolute;
+  top: 25%;
+  left: 20%;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(255, 51, 0, 0.05) 0%, transparent 70%);
+  border-radius: 50%;
+  filter: blur(40px);
+  animation: blobMotion 12s infinite ease-in-out;
+}
+
+.blob2 {
+  position: absolute;
+  bottom: 20%;
+  right: 20%;
+  width: 350px;
+  height: 350px;
+  background: radial-gradient(circle, rgba(153, 51, 255, 0.05) 0%, transparent 70%);
+  border-radius: 50%;
+  filter: blur(40px);
+  animation: blobMotion 14s infinite ease-in-out;
+  animation-delay: 4s;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@keyframes blobMotion {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, -60px) scale(1.1); }
+  66% { transform: translate(-30px, 30px) scale(0.9); }
+}
+
+/* Content wrapper */
+.content {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  padding: 0 var(--space-4);
+  text-align: center;
+}
+
+/* Logo container with rings */
+.logoWrapper {
+  position: relative;
+  width: 280px;
+  height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ring1 {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2.5px solid transparent;
+  border-top-color: #FF3300; /* Dicrejart red */
+  border-right-color: rgba(255, 51, 0, 0.25);
+  animation: spinRing 3s linear infinite;
+}
+
+.ring2 {
+  position: absolute;
+  inset: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: #9933FF; /* Purple X11 (manual) */
+  border-right-color: rgba(153, 51, 255, 0.15);
+  animation: spinRingReverse 4s linear infinite;
+}
+
+.ring3 {
+  position: absolute;
+  inset: 40px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  border-top-color: #FF3300;
+  border-right-color: rgba(255, 51, 0, 0.1);
+  animation: spinRing 5s linear infinite;
+}
+
+@keyframes spinRing {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes spinRingReverse {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+
+/* SVG styling */
+.logoSvg {
+  position: relative;
+  z-index: 20;
+  width: 220px;
+  height: auto;
+  /* removed drop-shadow */
+}
+
+.logoSvgPath {
+  fill: #ffffff !important; /* WHITE FOR READABILITY AGAINST DARK BG */
+}
+
+/* Text & typewriter section */
+.textSection {
+  text-align: center;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.typewriterText {
+  font-size: 14px;
+  font-weight: 700;
+  color: #FF3300; /* Red */
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  font-family: var(--font-family);
+}
+
+/* Progress bar */
+.progressContainer {
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.progressTrack {
+  width: 100%;
+  height: 4px;
+  background-color: rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progressBar {
+  height: 100%;
+  background: linear-gradient(90deg, #FF3300 0%, #9933FF 60%, #330066 100%);
+  border-radius: var(--radius-full);
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.progressPercent {
+  font-size: 11px;
+  color: var(--color-gray-400);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+/* Status message */
+.statusMessage {
+  font-size: 11px;
+  color: var(--color-gray-450);
+  animation: textPulse 1.5s infinite ease-in-out;
+  letter-spacing: 0.5px;
+}
+
+.statusComplete {
+  font-size: 11px;
+  color: var(--color-success);
+  font-weight: 700;
+  animation: textPulse 1.5s infinite ease-in-out;
+  letter-spacing: 0.5px;
+}
+
+@keyframes textPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}

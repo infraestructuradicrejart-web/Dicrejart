@@ -1,0 +1,291 @@
+/**
+ * @file MainLayout.module.css
+ * @description Estilos CSS Module para el componente MainLayout
+ * Organiza el layout: Header (top), Sidebar (left), Content (main)
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   LAYOUT PRINCIPAL
+   ============================================ */
+
+.layout {
+  /* Display flex vertical */
+  display: flex;
+  flex-direction: column;
+
+  /* Altura fija de la viewport */
+  height: 100vh;
+
+  /* Ancho completo */
+  width: 100%;
+
+  /* Fondo base claro */
+  background-color: var(--color-gray-50);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Botón para abrir/cerrar el sidebar en mobile. En desktop el sidebar siempre
+   está visible (ver Sidebar.module.css), así que este botón no hace falta ahí. */
+.sidebarToggle {
+  display: none;
+  position: fixed;
+  top: var(--space-4);
+  left: var(--space-4);
+  /* Orden de capas: overlay(80) < sidebar-drawer(90) < sidebarToggle(95) <
+     UserMenu(100) — por encima del overlay oscuro (se puede usar para cerrar
+     el drawer), por debajo del círculo de sesión de la esquina opuesta. */
+  z-index: 95;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-secondary);
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+}
+
+@media (max-width: 768px) {
+  .sidebarToggle {
+    display: flex;
+  }
+}
+
+/* ============================================
+   CONTENEDOR PRINCIPAL (Sidebar + Content)
+   ============================================ */
+
+.main-container {
+  /* Display flex horizontal */
+  display: flex;
+
+  /* Flex grow para ocupar espacio disponible */
+  flex: 1;
+
+  /* Position relative para overlay y para el fondo decorativo */
+  position: relative;
+
+  /* Fondo transparente para dejar ver el BrandBackdrop a nivel de layout */
+  background-color: transparent;
+
+  /* Ya no hay barra superior: ocupa toda la altura de la ventana */
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ============================================
+   CONTENIDO PRINCIPAL
+   ============================================ */
+
+.content {
+  /* Flex grow para ocupar espacio disponible */
+  flex: 1;
+
+  /* Position + z-index para quedar por encima del BrandBackdrop */
+  position: relative;
+  z-index: 1;
+
+  /* Margin left para no superponer con sidebar */
+  margin-left: 309px; /* Sidebar flotante: 45px offset + 248px ancho + 16px gap */
+
+  /* Padding */
+  padding: var(--space-7);
+
+  /* Fondo transparente: deja ver el BrandBackdrop detrás */
+  background-color: transparent;
+
+  /* Transición suave */
+  transition: margin-left var(--transition-normal) ease;
+
+  /* Overflow para contenido largo */
+  overflow: auto;
+
+  /* Permitir que el flex item se encoja por debajo de su min-content (crucial para scroll horizontal) */
+  min-width: 0;
+}
+
+/* ============================================
+   WRAPPER DEL CONTENIDO
+   ============================================ */
+
+.content-wrapper {
+  /* Max-width para no ser demasiado ancho */
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ============================================
+   OVERLAY (para cerrar sidebar en mobile)
+   ============================================ */
+
+.overlay {
+  /* Position fixed para cubrir todo */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  
+  /* Z-index bajo (debajo del sidebar) */
+  z-index: 80;
+  
+  /* Background semi-transparente */
+  background-color: rgba(0, 0, 0, 0.3);
+  
+  /* Pointer events para ser clickeable */
+  pointer-events: auto;
+  
+  /* Display solo en mobile */
+  display: none;
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+
+@media (max-width: 1024px) {
+  /* Tablet - Reducir padding */
+  
+  .content {
+    padding: var(--space-6);
+    margin-left: 295px;
+  }
+  
+  .content-wrapper {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Tablet pequeño y mobile - Sidebar como overlay */
+  
+  /* Mostrar overlay en mobile */
+  .overlay {
+    display: block;
+  }
+  
+  .content {
+    /* Quitar margin left - content ocupa todo */
+    margin-left: 0;
+
+    /* Padding reducido. Arriba se deja espacio extra: el botón flotante del
+       sidebar (.sidebarToggle, fixed en top:16px + 44px de alto) si no,
+       tapaba el encabezado de cada página, que arrancaba pegado hasta arriba. */
+    padding: 72px var(--space-4) var(--space-4);
+
+    /* Transición */
+    transition: all var(--transition-normal) ease;
+  }
+  
+  /* Cuando sidebar está abierto */
+  .main-container {
+    /* Position relative para layering */
+    position: relative;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Mobile pequeño */
+
+  .content {
+    /* Mismo espacio superior que a 768px (ver ese bloque) para no volver a tapar
+       el encabezado con el botón flotante del sidebar */
+    padding: 72px var(--space-3) var(--space-3);
+  }
+  
+  .content-wrapper {
+    /* Ajustar max-width para mobile */
+    max-width: 100%;
+  }
+}
+
+/* ============================================
+   ESTADOS ESPECIALES
+   ============================================ */
+
+/**
+ * Estado: Sidebar cerrado (mobile)
+ * El overlay y sidebar están ocultos
+ */
+@media (max-width: 768px) {
+  .main-container {
+    /* Position relative mantiene el layering */
+  }
+  
+  /* Cuando el overlay está visible, el sidebar está abierto */
+  .overlay {
+    animation: fadeIn 0.2s ease-out;
+  }
+}
+
+/* ============================================
+   ANIMACIONES
+   ============================================ */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ============================================
+   SCROLLBAR PERSONALIZADA (para contenido)
+   ============================================ */
+
+.content::-webkit-scrollbar {
+  width: 10px;
+}
+
+.content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.content::-webkit-scrollbar-thumb {
+  background: var(--color-gray-300);
+  border-radius: 5px;
+  
+  &:hover {
+    background: var(--color-gray-400);
+  }
+}
+
+/* Firefox scrollbar */
+.content {
+  scrollbar-color: var(--color-gray-300) transparent;
+  scrollbar-width: thin;
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+
+@media print {
+  /* Ocultar sidebar en impresión */
+  .main-container {
+    flex-direction: column;
+  }
+  
+  .sidebar {
+    display: none;
+  }
+  
+  .content {
+    margin-left: 0;
+    padding: 0;
+    background-color: white;
+  }
+  
+  .overlay {
+    display: none;
+  }
+}
+

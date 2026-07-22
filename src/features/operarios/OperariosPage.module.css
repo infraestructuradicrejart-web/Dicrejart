@@ -1,0 +1,302 @@
+/**
+ * @file OperariosPage.module.css
+ * @description Estilos para la vista de Gestión de Operarios
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: var(--h1-size);
+  font-weight: var(--h1-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+}
+
+.hiddenInput {
+  display: none;
+}
+
+/* ============================================
+   KPIs
+   ============================================ */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-4);
+}
+
+.kpiContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.kpiLabel {
+  font-size: var(--small-size);
+  color: var(--color-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.kpiValue {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-dark);
+}
+
+/* ============================================
+   FILTRO
+   ============================================ */
+.filterBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+}
+
+.filterWrapper {
+  min-width: 220px;
+}
+
+/* ============================================
+   TABLA
+   ============================================ */
+.tableResponsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.table th {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-gray-500);
+  font-weight: 500;
+  border-bottom: 2px solid var(--color-gray-100);
+  font-size: var(--small-size);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-gray-100);
+  color: var(--color-dark);
+  vertical-align: middle;
+}
+
+.areaSelectCell {
+  min-width: 200px;
+}
+
+.userInfoBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.avatarMini {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-secondary);
+  color: var(--color-white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: var(--body-size);
+  flex-shrink: 0;
+}
+
+.emptyCell {
+  text-align: center;
+  color: var(--color-gray-500);
+  padding: var(--space-8);
+}
+
+/* ============================================
+   JORNADAS Y HORAS EXTRAS
+   ============================================ */
+.scheduleInfoBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.overtimeBadgeWrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+.authHint {
+  font-size: 10px;
+  color: var(--color-gray-400);
+  cursor: help;
+  text-decoration: underline dotted;
+}
+
+.actionsCell {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.modalForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.modalMetaInfo {
+  display: flex;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-200);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+}
+
+.modalMetaInfo strong {
+  color: var(--color-secondary);
+}
+
+.textInputDisabled {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-gray-150);
+  border: 1px solid var(--color-gray-250);
+  border-radius: var(--radius-md);
+  color: var(--color-gray-600);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  cursor: not-allowed;
+  box-sizing: border-box;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-gray-150);
+  padding-top: var(--space-4);
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 500px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* Tabla de 7 columnas → tarjetas apiladas en celular (mismo patrón que
+   Dashboard.module.css): cada <tr> se vuelve una tarjeta, cada <td> su propia
+   fila con la etiqueta de columna a la izquierda (`data-label` puesto en
+   OperariosPage.jsx) y el valor a la derecha. Antes solo había scroll
+   horizontal, poco descubrible con el dedo — el texto se veía cortado. */
+@media (max-width: 640px) {
+  .table thead {
+    display: none;
+  }
+
+  .table, .table tbody, .table tr, .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--color-gray-100);
+    text-align: right;
+  }
+
+  .table td:last-child {
+    border-bottom: none;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: var(--small-size);
+    font-weight: 600;
+    color: var(--color-gray-500);
+    text-align: left;
+  }
+}
+
+.futureOvertimeHint {
+  font-size: 10px;
+  color: var(--color-primary);
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.textInput {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  box-sizing: border-box;
+}
+
+.textInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}

@@ -1,0 +1,256 @@
+/**
+ * @file Button.module.css
+ * @description Estilos CSS Module para el componente Button
+ * Incluye variantes (primary, secondary, danger, ghost) y tamaños (sm, md, lg, xl)
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   BOTÓN BASE
+   ============================================ */
+
+.button {
+  /* Display y layout */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  
+  /* Tipografía */
+  font-family: var(--font-family);
+  font-weight: 600;
+  
+  /* Styling */
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  
+  /* Transiciones */
+  transition: all var(--transition-normal) var(--ease-out);
+  
+  /* Sombra inicial */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  
+  /* Focus para accesibilidad */
+  &:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  
+  /* Overflow oculto para ripple effect futuro */
+  overflow: hidden;
+}
+
+/* ============================================
+   VARIANTE: PRIMARY (Naranja - Dicrejart)
+   ============================================ */
+
+.variant-primary {
+  background-color: var(--color-primary);
+  color: var(--color-white);
+  
+  /* Hover */
+  &:hover:not(:disabled) {
+    background-color: #d64c05; /* Naranja más oscuro */
+  }
+  
+  /* Active/Press */
+  &:active:not(:disabled) {
+    background-color: #c43f00; /* Naranja aún más oscuro */
+  }
+}
+
+/* ============================================
+   VARIANTE: SECONDARY (Azul oscuro)
+   ============================================ */
+
+.variant-secondary {
+  background-color: var(--color-secondary);
+  color: var(--color-white);
+  
+  /* Hover */
+  &:hover:not(:disabled) {
+    background-color: #2f2660; /* Más oscuro */
+  }
+  
+  /* Active/Press */
+  &:active:not(:disabled) {
+    background-color: #251d4a; /* Aún más oscuro */
+  }
+}
+
+/* ============================================
+   VARIANTE: DANGER (Rojo - Para acciones destructivas)
+   ============================================ */
+
+.variant-danger {
+  background-color: var(--color-alert);
+  color: var(--color-white);
+  
+  /* Hover */
+  &:hover:not(:disabled) {
+    background-color: #ee3333; /* Rojo más oscuro */
+  }
+  
+  /* Active/Press */
+  &:active:not(:disabled) {
+    background-color: #dd2222; /* Aún más oscuro */
+  }
+}
+
+/* ============================================
+   VARIANTE: GHOST (Transparente - Solo texto)
+   ============================================ */
+
+.variant-ghost {
+  background-color: transparent;
+  color: var(--color-primary);
+  box-shadow: none;
+  
+  /* Hover */
+  &:hover:not(:disabled) {
+    background-color: var(--color-gray-100);
+  }
+  
+  /* Active/Press */
+  &:active:not(:disabled) {
+    background-color: var(--color-gray-200);
+  }
+}
+
+/* ============================================
+   TAMAÑOS
+   ============================================ */
+
+/**
+ * Tamaño Small (sm)
+ * Para botones compactos en UI densa
+ */
+.size-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  min-height: 32px;
+}
+
+/**
+ * Tamaño Medium (md) - DEFECTO
+ * Para la mayoría de botones
+ */
+.size-md {
+  padding: 10px 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 40px;
+}
+
+/**
+ * Tamaño Large (lg)
+ * Para botones primarios prominentes
+ */
+.size-lg {
+  padding: 12px 24px;
+  font-size: 16px;
+  line-height: 1.6;
+  min-height: 48px;
+}
+
+/**
+ * Tamaño Extra Large (xl)
+ * Para botones de llamada a acción (CTA)
+ */
+.size-xl {
+  padding: 16px 32px;
+  font-size: 18px;
+  line-height: 1.7;
+  min-height: 56px;
+}
+
+/* ============================================
+   ANCHO COMPLETO
+   ============================================ */
+
+.full-width {
+  width: 100%;
+}
+
+/* ============================================
+   ESTADO DESHABILITADO
+   ============================================ */
+
+.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  
+  /* No permitir hover en deshabilitado */
+  &:hover {
+    transform: none;
+  }
+}
+
+/* ============================================
+   SPINNER (Estado de carga)
+   ============================================ */
+
+.spinner {
+  display: inline-block;
+  animation: spin 2s linear infinite;
+  
+  /* Tamaño relativo según el botón */
+  font-size: 1em;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================
+   CONTENIDO DEL BOTÓN
+   ============================================ */
+
+.content {
+  /* Display para alineación vertical */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: inherit;
+  
+  /* Transición suave del contenido */
+  transition: opacity var(--transition-fast) var(--ease-out);
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+@media (max-width: 640px) {
+  /* En mobile, aumentar tamaño mínimo de botones */
+  .button {
+    min-height: 44px; /* WCAG recommendation for touch targets */
+  }
+  
+  /* Reducir padding en mobile */
+  .size-sm {
+    padding: 8px 10px;
+  }
+  
+  .size-md {
+    padding: 10px 14px;
+  }
+  
+  .size-lg {
+    padding: 12px 18px;
+  }
+  
+  .size-xl {
+    padding: 14px 20px;
+  }
+}

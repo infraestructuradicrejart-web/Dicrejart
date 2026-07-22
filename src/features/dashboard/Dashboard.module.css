@@ -1,0 +1,433 @@
+/**
+ * @file Dashboard.module.css
+ * @description Estilos para el componente Dashboard
+ * Proporciona un diseño premium responsivo con micro-animaciones
+ * @author Dicrejart Dev Team
+ */
+
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.title {
+  font-size: var(--h1-size);
+  font-weight: var(--h1-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+}
+
+/* ============================================
+   KPI WIDGETS
+   ============================================ */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+}
+
+.kpiCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  height: 100%;
+  transition: transform var(--transition-fast) var(--ease-out), box-shadow var(--transition-fast) var(--ease-out);
+}
+
+.kpiCard:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.kpiIcon {
+  font-size: 32px;
+  background: var(--color-gray-50);
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.kpiContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.kpiLabel {
+  font-size: var(--small-size);
+  font-weight: 500;
+  color: var(--color-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.kpiValue {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-dark);
+}
+
+.kpiFooter {
+  font-size: var(--small-size);
+  color: var(--color-gray-400);
+}
+
+/* ============================================
+   CHARTS SECTION
+   ============================================ */
+.chartsGrid {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr;
+  gap: var(--space-5);
+}
+
+.chartTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.chartContainer {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
+.pieContainer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.pieLegend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 40%;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--small-size);
+  color: var(--color-gray-600);
+}
+
+.legendDot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.legendLabel {
+  flex-grow: 1;
+}
+
+.legendVal {
+  color: var(--color-dark);
+  font-weight: 600;
+}
+
+/* ============================================
+   TABLAS / ACTIVIDAD RECIENTE
+   ============================================ */
+.tableGrid {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr;
+  gap: var(--space-5);
+}
+
+/* Un item de grid nunca se encoge más allá del ancho de su contenido si no se le
+   pone min-width:0 explícito (igual que un flex item) — sin esto, la tabla/gráfica
+   de adentro empujaba toda la cuadrícula más ancha que la pantalla en vez de dejar
+   que .tableResponsive (o el propio ResponsiveContainer de recharts) hicieran su
+   trabajo. Ninguna de las 3 clases tenía reglas propias antes de este arreglo. */
+.tableWrapper,
+.chartWrapper,
+.activityWrapper {
+  min-width: 0;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.badge {
+  font-size: var(--small-size);
+  background: var(--color-gray-100);
+  color: var(--color-gray-600);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-weight: 500;
+}
+
+.tableResponsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: var(--body-size);
+}
+
+.table th {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-gray-500);
+  font-weight: 500;
+  border-bottom: 2px solid var(--color-gray-100);
+  font-size: var(--small-size);
+  text-transform: uppercase;
+}
+
+.table td {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-gray-100);
+  color: var(--color-dark);
+}
+
+.boldText {
+  font-weight: 600;
+}
+
+.textMuted {
+  color: var(--color-gray-500);
+  font-size: var(--small-size);
+}
+
+.progressCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.progressBarBg {
+  width: 80px;
+  height: 6px;
+  background: var(--color-gray-200);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.progressBar {
+  height: 100%;
+  background: var(--color-success);
+  border-radius: var(--radius-full);
+}
+
+.progressVal {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-700);
+  min-width: 32px;
+}
+
+/* Badges por áreas */
+.areaBadgeGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.areaBadge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-white);
+  display: inline-block;
+}
+
+.area-almacen { background-color: var(--color-area-almacen); }
+.area-corte-laser { background-color: var(--color-area-corte-laser); }
+.area-herreria { background-color: var(--color-area-herreria); }
+.area-carpinteria { background-color: var(--color-area-carpinteria); }
+.area-costura-acc { background-color: var(--color-area-costura-acc); }
+.area-costura-colch { background-color: var(--color-area-costura-colch); }
+.area-mantenimiento { background-color: var(--color-area-mantenimiento); }
+.area-producto-terminado { background-color: var(--color-area-prod-terminado); }
+
+/* ============================================
+   ACTIVIDAD RECIENTE
+   ============================================ */
+.activityList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.activityItem {
+  display: flex;
+  gap: var(--space-3);
+  position: relative;
+}
+
+/* Conector vertical */
+.activityItem:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 16px;
+  bottom: -20px;
+  width: 1px;
+  background: var(--color-gray-200);
+}
+
+.activityDot {
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-full);
+  margin-top: 5px;
+  flex-shrink: 0;
+  border: 2px solid var(--color-white);
+  box-shadow: 0 0 0 2px var(--color-gray-200);
+}
+
+.dotSuccess {
+  background-color: var(--color-success);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+
+.dotDanger {
+  background-color: var(--color-alert);
+  box-shadow: 0 0 0 2px rgba(255, 68, 68, 0.2);
+}
+
+.activityContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.activityText {
+  font-size: var(--body-size);
+  color: var(--color-gray-700);
+  line-height: 1.4;
+}
+
+.activityText strong {
+  color: var(--color-dark);
+}
+
+.activityTime {
+  font-size: var(--small-size);
+  color: var(--color-gray-400);
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+@media (max-width: 1200px) {
+  .kpiGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .chartsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .tableGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .kpiGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .pieContainer {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .pieLegend {
+    width: 100%;
+    margin-top: var(--space-2);
+  }
+}
+
+/* En celular, una tabla de 4 columnas dentro de un contenedor angosto solo dejaba
+   ver texto cortado aunque .tableResponsive ya permitía scroll horizontal (no era
+   descubrible con el dedo). Se convierte cada <tr> en una tarjeta apilada: cada
+   <td> pasa a ocupar su propia fila con la etiqueta de columna a la izquierda
+   (inyectada vía `content: attr(data-label)`, ver el atributo puesto en Dashboard.jsx)
+   y el valor a la derecha — sin perder ninguna columna ni requerir scroll lateral. */
+@media (max-width: 640px) {
+  .table thead {
+    display: none;
+  }
+
+  .table, .table tbody, .table tr, .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--color-gray-100);
+    text-align: right;
+  }
+
+  .table td:last-child {
+    border-bottom: none;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: var(--small-size);
+    font-weight: 600;
+    color: var(--color-gray-500);
+    text-align: left;
+  }
+}

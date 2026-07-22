@@ -1,0 +1,300 @@
+/**
+ * @file AdminPage.module.css
+ * @description Estilos para la vista de Administración
+ * Incluye un switch deslizante animado y tablas de control
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.title {
+  font-size: var(--h1-size);
+  font-weight: var(--h1-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+}
+
+/* ============================================
+   GRID LAYOUT
+   ============================================ */
+.layoutGrid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.sectionTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-4);
+}
+
+/* Configuración */
+.settingsList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.settingItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-gray-100);
+  gap: var(--space-4);
+}
+
+.settingInfo strong {
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  display: block;
+  margin-bottom: var(--space-1);
+}
+
+.settingInfo p {
+  font-size: var(--small-size);
+  color: var(--color-gray-500);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Switch deslizante */
+.toggle {
+  width: 48px;
+  height: 24px;
+  background-color: var(--color-gray-300);
+  border-radius: var(--radius-full);
+  border: none;
+  cursor: pointer;
+  position: relative;
+  transition: background-color var(--transition-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.toggleActive {
+  background-color: var(--color-primary);
+}
+
+.toggleKnob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  background-color: var(--color-white);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-fast) var(--ease-out);
+}
+
+.toggleActive .toggleKnob {
+  transform: translateX(24px);
+}
+
+.settingGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.label {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-700);
+}
+
+/* Tabla de Usuarios */
+.tableResponsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.table th {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-gray-500);
+  font-weight: 500;
+  border-bottom: 2px solid var(--color-gray-100);
+  font-size: var(--small-size);
+  text-transform: uppercase;
+}
+
+.table td {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-gray-100);
+  color: var(--color-dark);
+}
+
+.userInfoBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.avatarMini {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-secondary);
+  color: var(--color-white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: var(--body-size);
+  flex-shrink: 0;
+}
+
+.userDetails {
+  display: flex;
+  flex-direction: column;
+}
+
+.userName {
+  font-size: var(--body-size);
+  font-weight: 600;
+  color: var(--color-dark);
+}
+
+.userEmail {
+  font-size: 11px;
+  color: var(--color-gray-400);
+}
+
+.userRole {
+  font-size: var(--small-size);
+  color: var(--color-gray-600);
+  font-weight: 500;
+}
+
+/* ============================================
+   FORMULARIO DEL MODAL DE USUARIO
+   ============================================ */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.textInput {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  box-sizing: border-box;
+}
+
+.textInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(232, 92, 13, 0.15);
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-gray-100);
+  padding-top: var(--space-4);
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+@media (max-width: 1200px) {
+  .layoutGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 500px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* Tablas (Usuarios y Bitácora) → tarjetas apiladas en celular: cada <tr> se
+   vuelve una tarjeta, cada <td> su propia fila con la etiqueta de columna a
+   la izquierda (`data-label` puesto en AdminPage.jsx) y el valor a la
+   derecha. Antes solo había scroll horizontal, poco descubrible con el dedo. */
+@media (max-width: 640px) {
+  .table thead {
+    display: none;
+  }
+
+  .table, .table tbody, .table tr, .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--color-gray-100);
+    text-align: right;
+  }
+
+  .table td:last-child {
+    border-bottom: none;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: var(--small-size);
+    font-weight: 600;
+    color: var(--color-gray-500);
+    text-align: left;
+  }
+}

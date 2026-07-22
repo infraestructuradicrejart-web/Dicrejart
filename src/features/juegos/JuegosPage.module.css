@@ -1,0 +1,494 @@
+/**
+ * @file JuegosPage.module.css
+ * @description Estilos para la página de juegos
+ * Proporciona un diseño dinámico para el stepper de rutas de manufactura
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.headerActions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.hiddenInput {
+  display: none;
+}
+
+.title {
+  font-size: var(--h1-size);
+  font-weight: var(--h1-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+}
+
+/* ============================================
+   FILTROS Y BÚSQUEDA
+   ============================================ */
+.filtersBar {
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-end; /* Alinear a la base de los inputs */
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+
+.searchWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex-grow: 1;
+  max-width: 360px;
+}
+
+.searchLabel {
+  font-size: var(--body-size);
+  color: var(--color-gray-600);
+}
+
+.searchField {
+  width: 100%;
+  height: 44px; /* Misma altura que el SelectWrapper */
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  background-color: var(--color-white);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-sizing: border-box;
+  transition: all var(--transition-normal) var(--ease-out);
+}
+
+.searchField:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(232, 92, 13, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.selectWrapper {
+  flex-grow: 1;
+  max-width: 260px;
+  min-width: 200px;
+}
+
+.selectLabel {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-600);
+}
+
+.select {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  background-color: var(--color-white);
+  cursor: pointer;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* ============================================
+   GRID DE JUEGOS
+   ============================================ */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-5);
+}
+
+.gameCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  height: 100%;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.gameId {
+  font-size: var(--small-size);
+  font-weight: 700;
+  color: var(--color-gray-400);
+  font-family: var(--font-mono);
+}
+
+.gameTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+  margin-top: var(--space-1);
+}
+
+.projectName {
+  font-size: var(--small-size);
+  color: var(--color-gray-600);
+}
+
+/* ============================================
+   ÁREAS EN PARALELO (ya no es una ruta secuencial)
+   ============================================ */
+.routeContainer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.routeLabel {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.areaChipsGrid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.areaChip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-gray-200);
+  border-left: 3px solid var(--color-gray-400);
+  border-radius: var(--radius-md);
+  background-color: var(--color-white);
+}
+
+.chipFinal {
+  background-color: var(--color-gray-50);
+}
+
+.chipIcon {
+  font-size: 16px;
+}
+
+.chipTextBlock {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.chipName {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-dark);
+  white-space: nowrap;
+}
+
+.chipLink {
+  font-size: 10px;
+}
+
+.chipStatus {
+  font-size: 10px;
+  color: var(--color-gray-500);
+}
+
+.chipArrow {
+  color: var(--color-gray-300);
+  font-size: 16px;
+}
+
+/* Estados de las áreas */
+.chip-pendiente {
+  opacity: 0.65;
+}
+
+.chip-proceso {
+  border-left-color: var(--color-primary);
+  animation: pulse 1.8s infinite ease-in-out;
+}
+
+.chip-proceso .chipStatus {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.chip-completado {
+  border-left-color: var(--color-success);
+}
+
+.chip-completado .chipStatus {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(232, 92, 13, 0.15); }
+  50% { box-shadow: 0 0 0 4px rgba(232, 92, 13, 0.1); }
+  100% { box-shadow: 0 0 0 0 rgba(232, 92, 13, 0.15); }
+}
+
+/* ============================================
+   PROGRESS SECTION
+   ============================================ */
+.progressSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+
+.progressText {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--small-size);
+  color: var(--color-gray-600);
+}
+
+.progressBg {
+  width: 100%;
+  height: 6px;
+  background-color: var(--color-gray-100);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progressBar {
+  height: 100%;
+  background-color: var(--color-success);
+  border-radius: var(--radius-full);
+  transition: width var(--transition-slow) var(--ease-out);
+}
+
+.emptyState {
+  grid-column: span 2;
+  text-align: center;
+  padding: var(--space-10);
+  color: var(--color-gray-500);
+  border: 2px dashed var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-gray-50);
+}
+
+/* ============================================
+   FORMULARIO Y SELECTOR DE RUTA
+   ============================================ */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-700);
+}
+
+.textInput, .selectField {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  box-sizing: border-box;
+}
+
+.textInput:focus, .selectField:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.routeSelectorGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+}
+
+.selectorCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-gray-200);
+  border-left: 4px solid var(--color-gray-400);
+  border-radius: var(--radius-md);
+  background-color: var(--color-white);
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--transition-fast) var(--ease-out);
+}
+
+.selectorCard:hover {
+  transform: translateX(2px);
+  box-shadow: var(--shadow-sm);
+}
+
+.selectorCardActive {
+  background-color: var(--color-gray-50);
+  border-color: var(--color-primary);
+}
+
+.selectorIcon {
+  font-size: 20px;
+}
+
+.selectorContent {
+  display: flex;
+  flex-direction: column;
+}
+
+.selectorName {
+  font-size: var(--body-size);
+  font-weight: 600;
+  color: var(--color-dark);
+}
+
+.selectorBadge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin-top: var(--space-1);
+}
+
+.selectorHint {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--color-gray-500);
+}
+
+.routePreview {
+  padding: var(--space-3);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-200);
+  font-size: var(--small-size);
+  line-height: 1.6;
+}
+
+.previewStep {
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-gray-100);
+  padding-top: var(--space-4);
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+@media (max-width: 1100px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .emptyState {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .routeSelectorGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================
+   TARGET PIECES SECTION
+   ============================================ */
+.targetPiecesSection {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-200);
+}
+
+.targetPiecesInputsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.targetPiecesInputGroup {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  background-color: var(--color-white);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-150);
+}
+
+.targetPiecesLabel {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-700);
+}
+
+.numberInput {
+  width: 70px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--small-size);
+  color: var(--color-dark);
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.numberInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}

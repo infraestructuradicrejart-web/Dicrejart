@@ -1,0 +1,27 @@
+# Dependencias
+node_modules/
+
+# Build de producción
+dist/
+
+# Variables de entorno (contienen configuración específica del entorno; se deja
+# .env.example como plantilla de referencia)
+.env
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+firebase-export-*/
+
+# Configuración local de herramientas (no es parte del proyecto)
+.claude/
+
+# Editor / SO
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

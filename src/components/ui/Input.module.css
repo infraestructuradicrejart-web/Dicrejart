@@ -1,0 +1,321 @@
+/**
+ * @file Input.module.css
+ * @description Estilos para el componente Input
+ * Incluye validación visual, focus states y animaciones
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   CONTAINER Y LAYOUT
+   ============================================ */
+
+.container {
+  /* Display como column para agrupar vertically */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* ============================================
+   INPUT WRAPPER (Bordes y sombra)
+   ============================================ */
+
+.input-wrapper {
+  /* Display flex para alinear ícono, input y status */
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  
+  /* Estilos */
+  padding: 0 var(--space-3);
+  background-color: var(--color-white);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  
+  /* Sombra por defecto */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  
+  /* Transiciones para cambios de estado */
+  transition: all var(--transition-normal) var(--ease-out);
+  
+  /* Altura mínima para accesibilidad */
+  min-height: 44px;
+}
+
+/* ============================================
+   ESTADOS DEL INPUT WRAPPER
+   ============================================ */
+
+/**
+ * Estado: FOCUSED
+ * El input tiene focus - borde y sombra más prominentes
+ */
+.input-wrapper.focused {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(232, 92, 13, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/**
+ * Estado: ERROR
+ * Hay error de validación - borde y sombra roja
+ */
+.input-wrapper.error {
+  border-color: var(--color-alert);
+  box-shadow: 0 0 0 2px rgba(255, 68, 68, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/**
+ * Estado: SUCCESS
+ * Validación exitosa - borde y sombra verde
+ */
+.input-wrapper.success {
+  border-color: var(--color-success);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/**
+ * Estado: DISABLED
+ * Campo deshabilitado - opacidad reducida
+ */
+.input-wrapper.disabled {
+  background-color: var(--color-gray-100);
+  color: var(--color-gray-500);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ============================================
+   ÍCONO (Izquierda)
+   ============================================ */
+
+.icon {
+  /* Display flex para centrado */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  /* Tamaño y color */
+  font-size: 18px;
+  color: var(--color-gray-500);
+  flex-shrink: 0; /* No encoge */
+}
+
+/* ============================================
+   GRUPO DE INPUT Y LABEL
+   ============================================ */
+
+.input-group {
+  /* Position relative para el label flotante */
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+/* ============================================
+   INPUT (Campo de texto)
+   ============================================ */
+
+.input {
+  /* Reset de estilos nativos */
+  border: none;
+  background: none;
+  outline: none;
+  
+  /* Tipografía */
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  
+  /* Layout */
+  width: 100%;
+  padding: var(--space-3) 0;
+  
+  /* Transiciones */
+  transition: color var(--transition-fast) var(--ease-out);
+  
+  /* Placeholder */
+  &::placeholder {
+    color: var(--color-gray-400);
+    opacity: 0;
+  }
+  
+  /* Focus */
+  &:focus {
+    color: var(--color-dark);
+  }
+  
+  /* Disabled */
+  &:disabled {
+    color: var(--color-gray-500);
+    cursor: not-allowed;
+  }
+}
+
+/* ============================================
+   LABEL (Flotante)
+   ============================================ */
+
+.label {
+  /* Position absolute para efecto flotante */
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  
+  /* Tipografía */
+  font-size: var(--body-size);
+  color: var(--color-gray-600);
+  pointer-events: none; /* No intercepta clicks */
+  
+  /* Transiciones (Framer Motion maneja las animaciones) */
+  transition: color var(--transition-fast) var(--ease-out);
+}
+
+/* Color del label en focus */
+.input-wrapper.focused .label {
+  color: var(--color-primary);
+}
+
+/* Color del label con error */
+.input-wrapper.error .label {
+  color: var(--color-alert);
+}
+
+/* Color del label en éxito */
+.input-wrapper.success .label {
+  color: var(--color-success);
+}
+
+/**
+ * Asterisco indicador de requerido
+ */
+.required {
+  color: var(--color-alert);
+  margin-left: 2px;
+}
+
+/* ============================================
+   ICONOS DE ESTADO (Derecha)
+   ============================================ */
+
+.status-icons {
+  /* Display flex para alinear ícono */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  
+  /* Tamaño */
+  font-size: 16px;
+  flex-shrink: 0; /* No encoge */
+}
+
+/**
+ * Ícono de error (X roja)
+ */
+.icon-error {
+  /* Display flex para centrado */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  /* Estilos */
+  color: var(--color-alert);
+  font-weight: bold;
+  animation: fadeIn 0.2s ease-out;
+}
+
+/**
+ * Ícono de éxito (Check verde)
+ */
+.icon-success {
+  /* Display flex para centrado */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  /* Estilos */
+  color: var(--color-success);
+  font-weight: bold;
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* ============================================
+   MENSAJES (Error y Helper)
+   ============================================ */
+
+/**
+ * Mensaje de error
+ */
+.error-message {
+  /* Tipografía pequeña */
+  font-size: var(--small-size);
+  color: var(--color-alert);
+  
+  /* Padding y spacing */
+  padding: 0 var(--space-3);
+  margin-top: var(--space-1);
+  
+  /* Animación desde Framer Motion */
+  animation: slideDownError 0.2s ease-out;
+}
+
+/**
+ * Texto de ayuda
+ */
+.helper-text {
+  /* Tipografía pequeña */
+  font-size: var(--small-size);
+  color: var(--color-gray-500);
+  
+  /* Padding y spacing */
+  padding: 0 var(--space-3);
+  margin-top: var(--space-1);
+}
+
+/* ============================================
+   ANIMACIONES
+   ============================================ */
+
+@keyframes slideDownError {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+@media (max-width: 640px) {
+  /* Aumentar padding en mobile para mejor touch */
+  .input-wrapper {
+    min-height: 48px;
+    padding: 0 var(--space-4);
+  }
+  
+  .input {
+    padding: var(--space-3) 0;
+  }
+  
+  /* Aumentar font size en mobile */
+  .input {
+    font-size: 16px; /* Evita zoom en iOS */
+  }
+}

@@ -1,0 +1,533 @@
+/**
+ * @file Sidebar.module.css
+ * @description Estilos premium glassmorphic para el Sidebar de Dicrejart
+ * Rediseño cohesivo con el resto de la aplicación
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   SIDEBAR PRINCIPAL — Glassmorphic Premium
+   ============================================ */
+
+.sidebar {
+  position: fixed;
+  left: 45px;
+  top: 45px;    /* ya no hay barra superior: flota simétrico arriba y abajo */
+  height: calc(100vh - 90px);
+  width: 248px;
+  z-index: 90;
+
+  /* Traslúcido glassmorphic: deja ver el fondo animado */
+  background: linear-gradient(
+    160deg,
+    rgba(27, 27, 27, 0.65) 0%,
+    rgba(51, 0, 102, 0.55) 55%,
+    rgba(27, 27, 27, 0.70) 100%
+  );
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+
+  /* Bordes redondeados de globo flotante */
+  border-radius: 16px;
+
+  /* Borde interior sutil con tono de marca */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+
+  /* Glow exterior de profundidad */
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(51, 0, 102, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(255, 51, 0, 0.1);
+
+  /* Scroll interno con barra completamente oculta por defecto */
+  overflow-y: auto;
+  overflow-x: hidden;
+
+  /* Transición suave */
+  transition: all var(--transition-normal) ease;
+
+  /* Scrollbar oculta en Firefox — solo aparece al hover */
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+
+/* Scrollbar webkit: OCULTA por defecto */
+.sidebar::-webkit-scrollbar {
+  width: 0px;
+  transition: width 0.3s ease;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 8px;
+}
+
+/* Solo aparece al hacer hover en el sidebar */
+.sidebar:hover {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 51, 0, 0.4) transparent;
+}
+
+.sidebar:hover::-webkit-scrollbar {
+  width: 3px;
+}
+
+.sidebar:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 51, 0, 0.45);
+}
+
+.sidebar:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 51, 0, 0.75);
+}
+
+
+/* ============================================
+   SECCIONES DEL SIDEBAR
+   ============================================ */
+
+.section {
+  padding: var(--space-5) var(--space-4) var(--space-4);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.section:last-of-type {
+  border-bottom: none;
+}
+
+/* ============================================
+   TÍTULO DE SECCIÓN
+   ============================================ */
+
+.section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0 0 var(--space-3) var(--space-1);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Línea decorativa después del título */
+.section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.12), transparent);
+  margin-left: var(--space-2);
+}
+
+/* ============================================
+   LISTA DE NAVEGACIÓN
+   ============================================ */
+
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ============================================
+   ITEM DE NAVEGACIÓN
+   ============================================ */
+
+.nav-item {
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+  font-family: var(--font-family);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  border-radius: 10px;
+  transition: all 0.2s ease;
+  position: relative;
+  width: 100%;
+  text-align: left;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.95);
+  transform: translateX(3px);
+}
+
+.nav-item:focus {
+  outline: none;
+  background: rgba(255, 51, 0, 0.15);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* Estado activo */
+.nav-item.active {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 51, 0, 0.25) 0%,
+    rgba(153, 51, 255, 0.15) 100%
+  );
+  color: #ffffff;
+  font-weight: 600;
+  border-left: 2px solid #FF3300;
+  padding-left: calc(var(--space-3) - 2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 8px rgba(255, 51, 0, 0.15);
+}
+
+/* ============================================
+   ÍCONO DE ITEM
+   ============================================ */
+
+.nav-icon {
+  font-size: 17px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.nav-item:hover .nav-icon,
+.nav-item.active .nav-icon {
+  background: rgba(255, 51, 0, 0.2);
+  transform: scale(1.05);
+}
+
+/* ============================================
+   TEXTO DE ITEM
+   ============================================ */
+
+.nav-text {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================
+   BADGE DE MENSAJES SIN LEER (Chat)
+   ============================================ */
+
+.unread-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #FF3300;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Pulso continuo en el badge de no-leídos, para llamar la atención sin ser molesto */
+.unread-badge-pulse {
+  animation: unread-badge-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes unread-badge-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(255, 51, 0, 0.55);
+  }
+  50% {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 4px rgba(255, 51, 0, 0);
+  }
+}
+
+/* Pequeño balanceo en el ícono de Chat mientras haya mensajes sin leer */
+.nav-icon-unread {
+  animation: nav-icon-wiggle 1.6s ease-in-out infinite;
+}
+
+@keyframes nav-icon-wiggle {
+  0%, 40%, 100% {
+    transform: rotate(0deg);
+  }
+  10% {
+    transform: rotate(-12deg);
+  }
+  20% {
+    transform: rotate(10deg);
+  }
+  30% {
+    transform: rotate(-6deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .unread-badge-pulse,
+  .nav-icon-unread {
+    animation: none;
+  }
+}
+
+/* ============================================
+   INDICADOR DE ACTIVO (punto)
+   ============================================ */
+
+.nav-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #FF3300;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(255, 51, 0, 0.7);
+}
+
+/* ============================================
+   LISTA DE ÁREAS
+   ============================================ */
+
+.areas-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ============================================
+   ITEM DE ÁREA
+   ============================================ */
+
+.area-item {
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px var(--space-3);
+  font-family: var(--font-family);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  width: 100%;
+  text-align: left;
+}
+
+.area-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.9);
+  transform: translateX(3px);
+}
+
+.area-item:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Estado activo área */
+.area-item.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* ============================================
+   INDICADOR DE COLOR DEL ÁREA (bolita de color)
+   ============================================ */
+
+.area-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 4px currentColor;
+}
+
+.area-item:hover .area-color,
+.area-item.active .area-color {
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 8px currentColor;
+}
+
+/* ============================================
+   ÍCONO DE ÁREA
+   ============================================ */
+
+.area-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  transition: all 0.2s ease;
+}
+
+.area-item:hover .area-icon,
+.area-item.active .area-icon {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ============================================
+   TEXTO DE ÁREA
+   ============================================ */
+
+.area-text {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================
+   SECCIÓN INFERIOR
+   ============================================ */
+
+.bottom-section {
+  padding: var(--space-4);
+  margin-top: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ============================================
+   INFORMACIÓN DE VERSIÓN / BRANDING
+   ============================================ */
+
+.version-info {
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  padding: var(--space-3) var(--space-4);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 51, 0, 0.15);
+  border-radius: 10px;
+}
+
+.version-shape {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 44px;
+  height: 44px;
+  opacity: 0.08;
+  pointer-events: none;
+}
+
+.version-text {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0 0 4px 0;
+}
+
+.version-version {
+  font-size: 12px;
+  font-weight: 800;
+  color: #FF3300;
+  margin: 0;
+  letter-spacing: 0.5px;
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+
+@media (max-width: 1024px) {
+  .sidebar {
+    width: 260px;
+  }
+
+  .area-text {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    width: 280px;
+    box-shadow: 8px 0 40px rgba(0, 0, 0, 0.6);
+    /* El botón flotante (.sidebarToggle en MainLayout.module.css, fixed en
+       top:16px + 44px de alto, z-index 95) queda POR ENCIMA del drawer
+       (z-index 90) para poder cerrarlo — pero eso significa que se dibuja
+       encima de lo que sea que el drawer tenga en esa esquina. Sin este
+       espacio, tapaba la primera opción de navegación. */
+    padding-top: 72px;
+  }
+
+  .section {
+    padding: var(--space-4) var(--space-3);
+  }
+
+  .nav-item {
+    padding: 9px var(--space-3);
+  }
+
+  .area-item {
+    padding: 7px var(--space-3);
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .sidebar {
+    width: 100%;
+    max-width: 280px;
+  }
+
+  .section {
+    padding: var(--space-3) var(--space-2);
+  }
+
+  .section-title {
+    font-size: 9px;
+    margin-bottom: var(--space-2);
+  }
+
+  .nav-item,
+  .area-item {
+    padding: var(--space-2);
+    gap: var(--space-2);
+  }
+
+  .nav-icon {
+    font-size: 15px;
+    width: 24px;
+    height: 24px;
+  }
+
+  .area-icon {
+    font-size: 13px;
+  }
+
+  .area-text,
+  .nav-text {
+    font-size: 12px;
+  }
+}

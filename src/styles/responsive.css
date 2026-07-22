@@ -1,0 +1,339 @@
+/**
+ * @file responsive.css
+ * @description Media queries y estilos responsive para Dicrejart
+ * Desde mobile (320px) hasta desktop (1536px+)
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   MOBILE PEQUEÑO (320px - 480px)
+   ============================================ */
+
+@media (max-width: 480px) {
+  /* Reducir tamaños de heading en mobile */
+  h1 {
+    font-size: 24px;
+    margin-bottom: var(--space-3);
+  }
+  
+  h2 {
+    font-size: 20px;
+  }
+  
+  h3 {
+    font-size: 16px;
+  }
+  
+  /* Reducir espaciado */
+  body {
+    font-size: 13px;
+  }
+  
+  /* Padding en contenedores */
+  [role="main"] {
+    padding: var(--space-3) !important;
+  }
+  
+  /* Tablas scrolleables en mobile */
+  table {
+    font-size: 12px;
+  }
+  
+  th, td {
+    padding: var(--space-2);
+  }
+  
+  /* Botones más grandes para móvil */
+  button {
+    min-height: 44px; /* Recomendación WCAG para touch targets */
+  }
+  
+  /* Inputs más grandes */
+  input, textarea, select {
+    min-height: 44px;
+    padding: var(--space-2) var(--space-3);
+  }
+}
+
+/* ============================================
+   MOBILE NORMAL (481px - 640px)
+   ============================================ */
+
+@media (max-width: 640px) {
+  /* Estilos para mobile normal */
+  
+  /* Sidebar oculto, se abre con menú hamburguesa */
+  [data-sidebar] {
+    position: fixed;
+    left: -100%;
+    transition: left var(--transition-normal);
+    z-index: 100;
+  }
+  
+  [data-sidebar].open {
+    left: 0;
+  }
+  
+  /* Layouts en columna */
+  [data-grid] {
+    grid-template-columns: 1fr !important;
+  }
+  
+  /* KPIs cards en grid 2x2 en lugar de 4x1 */
+  [data-kpi-grid] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  
+  /* Modales fullscreen */
+  [data-modal] {
+    width: 95vw !important;
+    max-height: 90vh !important;
+    border-radius: var(--radius-lg);
+  }
+  
+  /* Forms con campos full-width */
+  [data-form] input,
+  [data-form] textarea,
+  [data-form] select {
+    width: 100%;
+  }
+}
+
+/* ============================================
+   TABLET PEQUEÑA (641px - 768px)
+   ============================================ */
+
+@media (max-width: 768px) {
+  /* Estilos tablet pequeña */
+  
+  /* Grid de 2 columnas */
+  [data-grid-responsive] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  
+  /* KPIs cards 2x2 */
+  [data-kpi-grid] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  
+  /* Reducir shadow en elementos */
+  [data-card] {
+    box-shadow: var(--shadow-sm) !important;
+  }
+  
+  /* Reducir padding */
+  [data-container] {
+    padding: var(--space-4) !important;
+  }
+}
+
+/* ============================================
+   TABLET NORMAL (769px - 1024px)
+   ============================================ */
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* Estilos tablet */
+  
+  /* Sidebar colapsable pero visible */
+  [data-sidebar] {
+    width: 250px;
+  }
+  
+  /* Grid de 3 columnas */
+  [data-grid-responsive] {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+  
+  /* KPIs cards 2x2 */
+  [data-kpi-grid] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  
+  /* Tablas con scroll horizontal */
+  [data-table-responsive] {
+    overflow-x: auto;
+  }
+}
+
+/* ============================================
+   TABLET GRANDE (1025px - 1280px)
+   ============================================ */
+
+@media (min-width: 1025px) and (max-width: 1280px) {
+  /* Estilos tablet grande */
+  
+  /* Sidebar normal */
+  [data-sidebar] {
+    width: 280px;
+  }
+  
+  /* Grid de 4 columnas */
+  [data-grid-responsive] {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+  
+  /* KPIs cards 4x1 */
+  [data-kpi-grid] {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+}
+
+/* ============================================
+   DESKTOP (1281px - 1536px)
+   ============================================ */
+
+@media (min-width: 1281px) and (max-width: 1536px) {
+  /* Estilos desktop normal */
+  
+  /* Sidebar normal */
+  [data-sidebar] {
+    width: 300px;
+  }
+  
+  /* Max-width para content */
+  [data-content] {
+    max-width: 1200px;
+  }
+  
+  /* Grid de 4 columnas */
+  [data-grid-responsive] {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+  
+  /* KPIs cards 4x1 */
+  [data-kpi-grid] {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+}
+
+/* ============================================
+   DESKTOP GRANDE (1537px+)
+   ============================================ */
+
+@media (min-width: 1537px) {
+  /* Estilos desktop grande */
+  
+  /* Sidebar más ancho */
+  [data-sidebar] {
+    width: 320px;
+  }
+  
+  /* Max-width más grande */
+  [data-content] {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  
+  /* Más columnas en grid */
+  [data-grid-responsive] {
+    grid-template-columns: repeat(6, 1fr) !important;
+  }
+}
+
+/* ============================================
+   ORIENTACIÓN (Portrait vs Landscape)
+   ============================================ */
+
+/**
+ * Dispositivos en orientación horizontal (landscape)
+ * Útil para tablets y teléfonos rotados
+ */
+@media (orientation: landscape) and (max-height: 500px) {
+  /* Reducir altura de elementos */
+  [data-header] {
+    height: 50px;
+  }
+  
+  [data-sidebar] {
+    height: calc(100vh - 50px);
+    overflow-y: auto;
+  }
+  
+  /* Reducir padding vertical */
+  h1, h2, h3 {
+    margin-bottom: var(--space-2);
+  }
+}
+
+/* ============================================
+   PANTALLAS MUY ANCHAS (Ultra-wide monitors)
+   ============================================ */
+
+@media (min-width: 2560px) {
+  /* Estilos para ultra-wide displays */
+  
+  /* Aumentar font-size ligeramente */
+  body {
+    font-size: 16px;
+  }
+  
+  h1 {
+    font-size: 40px;
+  }
+  
+  h2 {
+    font-size: 32px;
+  }
+  
+  /* Max-width más conservador */
+  [data-content] {
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+  
+  /* Grid de más columnas */
+  [data-grid-responsive] {
+    grid-template-columns: repeat(8, 1fr) !important;
+  }
+}
+
+/* ============================================
+   DARK MODE (si se implementa en futuro)
+   ============================================ */
+
+@media (prefers-color-scheme: dark) {
+  /* Placeholder para dark mode
+     Será implementado en futuras versiones */
+}
+
+/* ============================================
+   PRINT STYLES (para impresión)
+   ============================================ */
+
+@media print {
+  /* Ocular elementos que no deben imprimirse */
+  [data-no-print],
+  [data-sidebar],
+  [data-header],
+  button,
+  [role="button"] {
+    display: none !important;
+  }
+  
+  /* Fondo blanco para impresión */
+  body {
+    background-color: white;
+    color: black;
+  }
+  
+  /* Sin sombras en impresión */
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  
+  /* Links azules para impresión */
+  a {
+    color: #0066cc;
+  }
+  
+  /* Evitar saltos de página en elementos importantes */
+  [data-page-break] {
+    page-break-inside: avoid;
+  }
+  
+  /* Margen en impresión */
+  body {
+    margin: 2cm;
+  }
+}

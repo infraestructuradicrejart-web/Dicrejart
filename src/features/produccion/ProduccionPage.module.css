@@ -1,0 +1,440 @@
+/**
+ * @file ProduccionPage.module.css
+ * @description Estilos para el módulo de producción por áreas
+ * Proporciona diseños estructurados de cuadrículas y tarjetas interactivas
+ * @author Dicrejart Dev Team
+ */
+
+.selectorContainer, .areaViewContainer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.title {
+  font-size: var(--h1-size);
+  font-weight: var(--h1-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+}
+
+/* ============================================
+   GRID DE ÁREAS (SELECTOR PRINCIPAL)
+   ============================================ */
+.areasGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-5);
+}
+
+.areaCard {
+  background: var(--color-white);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-gray-100);
+  border-left: 6px solid var(--color-gray-400);
+  padding: var(--space-5);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  transition: all var(--transition-fast) var(--ease-out);
+}
+
+.areaHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.areaIcon {
+  font-size: 28px;
+}
+
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-white);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+}
+
+.areaTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+}
+
+.areaDesc {
+  font-size: var(--small-size);
+  color: var(--color-gray-500);
+  line-height: 1.5;
+}
+
+/* ============================================
+   VISTA DE UN ÁREA EN ESPECÍFICO
+   ============================================ */
+.areaViewHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--color-gray-200);
+  padding-bottom: var(--space-4);
+}
+
+.areaViewTitleBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.areaColorIndicator {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.areaViewTitle {
+  font-size: var(--h2-size);
+  font-weight: var(--h2-weight);
+  color: var(--color-secondary);
+}
+
+/* Layout 2 columnas */
+.layoutColumns {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.sectionTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-700);
+}
+
+.select, .textarea {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  box-sizing: border-box;
+}
+
+.select:focus, .textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* Historial */
+.historyList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 500px;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.logCard {
+  padding: var(--space-4);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-200);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.logHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logGame {
+  font-size: var(--body-size);
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+
+.logMeta {
+  display: flex;
+  gap: var(--space-4);
+  font-size: var(--small-size);
+  color: var(--color-gray-500);
+}
+
+.logNotes {
+  font-size: var(--small-size);
+  color: var(--color-gray-600);
+  background: var(--color-white);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-gray-300);
+}
+
+.emptyState {
+  text-align: center;
+  padding: var(--space-8);
+  color: var(--color-gray-400);
+  font-size: var(--body-size);
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+@media (max-width: 1200px) {
+  .areasGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  .layoutColumns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .areasGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 500px) {
+  .areasGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.metaHelperText {
+  font-size: 11px;
+  color: var(--color-gray-600);
+  background-color: var(--color-gray-50);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-primary);
+  margin-top: 2px;
+}
+
+/* ============================================
+   VALIDACIONES VISUALES Y PROYECCIÓN
+   ============================================ */
+.bannerSuccess, .bannerWarning, .bannerInfo, .bannerDanger {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--small-size);
+  line-height: 1.4;
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.bannerSuccess {
+  background-color: rgba(16, 185, 129, 0.04);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+  border-left: 4px solid var(--color-success);
+  color: #065f46;
+}
+
+.bannerWarning {
+  background-color: rgba(245, 158, 11, 0.04);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  border-left: 4px solid var(--color-warning);
+  color: #92400e;
+}
+
+.bannerInfo {
+  background-color: rgba(59, 130, 246, 0.04);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-left: 4px solid #3b82f6;
+  color: #1e3a8a;
+}
+
+.bannerDanger {
+  background-color: rgba(239, 68, 68, 0.04);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+  border-left: 4px solid var(--color-alert);
+  color: #991b1b;
+}
+
+.progressContainerMini {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-200);
+}
+
+.progressLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--color-gray-600);
+  font-weight: 600;
+}
+
+.progressTrack {
+  width: 100%;
+  height: 10px;
+  background-color: var(--color-gray-200);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  margin-top: var(--space-1);
+}
+
+.progressSegmentActual {
+  height: 100%;
+  background-color: var(--color-primary);
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.progressSegmentProyectado {
+  height: 100%;
+  background-color: #f59e0b;
+  animation: projectPulse-animation 1.2s infinite ease-in-out;
+  transition: width 0.3s ease;
+}
+
+.progressSegmentExcedido {
+  height: 100%;
+  background-color: var(--color-alert);
+  animation: projectPulse-animation 0.8s infinite ease-in-out;
+  transition: width 0.3s ease;
+}
+
+@keyframes projectPulse-animation {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+.exceededMessage {
+  font-size: 10px;
+  color: var(--color-alert);
+  font-weight: 700;
+  margin-top: var(--space-1);
+  display: block;
+}
+
+/* Mismo patrón que Dashboard/AdminPage/OperariosPage/CalidadPage: scroll horizontal
+   en vez de perder columnas en pantallas angostas */
+.tableResponsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: var(--body-size);
+  margin-top: var(--space-2);
+}
+
+.table th {
+  padding: var(--space-3) var(--space-2);
+  border-bottom: 2px solid var(--color-gray-200);
+  color: var(--color-gray-600);
+  font-weight: 600;
+  font-size: var(--small-size);
+  text-transform: uppercase;
+}
+
+.table td {
+  padding: var(--space-3) var(--space-2);
+  vertical-align: middle;
+}
+
+/* Tabla de Juegos/Proyectos (7-8 columnas) → tarjetas apiladas en celular: cada
+   <tr> se vuelve una tarjeta, cada <td> su propia fila con la etiqueta de
+   columna a la izquierda (`data-label` puesto en ProduccionPage.jsx) y el
+   valor a la derecha. Antes solo tenía scroll horizontal (vía overflowX
+   inline), poco descubrible con el dedo — el texto se veía cortado. */
+@media (max-width: 640px) {
+  .table thead {
+    display: none;
+  }
+
+  .table, .table tbody, .table tr, .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-width: 0;
+    border-bottom: 1px solid var(--color-gray-100);
+    text-align: right;
+  }
+
+  .table td:last-child {
+    border-bottom: none;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: var(--small-size);
+    font-weight: 600;
+    color: var(--color-gray-500);
+    text-align: left;
+  }
+}

@@ -1,0 +1,386 @@
+/**
+ * @file LoginPage.module.css
+ * @description Estilos del login — panel de marca morado (logo + mascota) y panel de
+ * formulario en blanco, según el mockup entregado por el usuario.
+ */
+
+/* ── Pantalla de carga de sesión ── */
+.loadingPage {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  background: #efeaf4;
+}
+
+.spinnerDark {
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(47, 22, 96, 0.15);
+  border-top-color: #2f1660;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* ── Layout general: dos paneles ── */
+.page {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  background: #ffffff;
+}
+
+/* ── Panel de marca (izquierda) ── */
+.brandPanel {
+  flex: 0 0 46%;
+  position: relative;
+  overflow: hidden;
+  background: #2f1660;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Mosaico de fondo: 4 copias de la figura "anillo" del manual de identidad, del
+   mismo ancho que el panel, recortadas en cada esquina. El desplazamiento usa
+   `transform` (porcentaje relativo AL PROPIO tamaño de la figura) en vez de
+   `top/left` (que se calcularía sobre el alto/ancho del panel) para que la
+   proporción se vea igual sin importar qué tan alto o ancho esté el panel. */
+.cornerTL, .cornerTR, .cornerBL, .cornerBR {
+  position: absolute;
+  width: 96%;
+  aspect-ratio: 1 / 1;
+  pointer-events: none;
+}
+
+.cornerTL { top: 0; left: 0; opacity: 0.62; transform: translate(-52%, -52%) rotate(-47deg); }
+.cornerTR { top: 0; right: 0; opacity: 0.57; transform: translate(36%, -49%) rotate(96deg); }
+.cornerBL { bottom: 0; left: 0; opacity: 0.57; transform: translate(-52%, 38%) rotate(58deg); }
+.cornerBR { bottom: 0; right: 0; opacity: 0.62; transform: translate(40%, 40%) rotate(-58deg); }
+
+.centerpiece {
+  position: relative;
+  z-index: 2;
+  width: 94%;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.centerFlower {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.badge {
+  position: relative;
+  z-index: 3;
+  width: 40%;
+  height: 40%;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 7px solid #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.badgeLogo {
+  width: 88%;
+  height: auto;
+}
+
+@keyframes floatMascot {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
+
+/* ── Panel del formulario (derecha) ── */
+.formPanel {
+  flex: 1;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+
+.formCard {
+  width: 100%;
+  max-width: 380px;
+}
+
+.mobileLogo {
+  display: none;
+  justify-content: center;
+  margin-bottom: var(--space-6);
+}
+
+.titleRow {
+  position: relative;
+  display: inline-block;
+}
+
+.title {
+  font-family: var(--font-heading);
+  font-size: 26px;
+  font-weight: 800;
+  color: #2f1a5c;
+  margin: 0;
+}
+
+/* Contenedor de GIDI + su estela: ambos se mueven juntos con la misma
+   animación de flotado, así nunca se desincronizan ni se cruzan entre sí. */
+.mascotGroup {
+  position: absolute;
+  top: -120px;
+  left: 100%;
+  margin-left: 40px;
+  width: 260px;
+  animation: floatMascot 5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.mascotTrail {
+  position: absolute;
+  z-index: 1;
+  top: -110px;
+  left: -50px;
+  width: 210px;
+  height: auto;
+  transform: rotate(6deg);
+  opacity: 0.85;
+}
+
+.titleMascot {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: auto;
+  transform: rotate(-10deg);
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.25));
+}
+
+.subtitle {
+  font-size: 14px;
+  color: #6a6478;
+  margin: 4px 0 var(--space-6);
+}
+
+/* ── Formulario ── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #3a2166;
+}
+
+.input {
+  width: 100%;
+  padding: 12px 14px;
+  font-family: var(--font-family);
+  font-size: 14px;
+  color: #2f1a5c;
+
+  background: #faf9fc;
+  border: 1.5px solid #e4ddf0;
+  border-radius: 10px;
+  outline: none;
+
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.input::placeholder {
+  color: #b8aecf;
+}
+
+.input:focus {
+  border-color: #dc2a24;
+  box-shadow: 0 0 0 3px rgba(220, 42, 36, 0.12);
+}
+
+.inputError {
+  border-color: #dc2a24 !important;
+  box-shadow: 0 0 0 3px rgba(220, 42, 36, 0.15) !important;
+}
+
+.forgotLink {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #dc2a24;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.forgotLink:hover {
+  color: #b8211c;
+}
+
+.infoMsg {
+  font-size: 12px;
+  color: #6a6478;
+  margin-top: 2px;
+}
+
+.errorMsg {
+  font-size: 12px;
+  color: #dc2a24;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+/* ── Botón de submit ── */
+.submitBtn {
+  margin-top: var(--space-2);
+  padding: 14px;
+  width: 100%;
+  font-family: var(--font-family);
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  cursor: pointer;
+  border: none;
+  border-radius: 12px;
+
+  background: linear-gradient(135deg, #e8352c, #c21e17);
+  box-shadow: 0 10px 24px rgba(220, 42, 36, 0.4);
+
+  transition: all 0.2s ease;
+}
+
+.submitBtn:hover:not(:disabled) {
+  box-shadow: 0 12px 28px rgba(220, 42, 36, 0.55);
+  transform: translateY(-1px);
+}
+
+.submitBtn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 6px 16px rgba(220, 42, 36, 0.35);
+}
+
+.submitBtn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.toggleModeBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: var(--space-1);
+  cursor: pointer;
+  font-size: 13px;
+  color: #6a6478;
+  text-decoration: underline;
+  text-align: center;
+}
+
+.toggleModeBtn:hover {
+  color: #3a2166;
+}
+
+.footerText {
+  margin: var(--space-7) 0 0;
+  font-size: 12px;
+  color: #9a94a8;
+  text-align: center;
+}
+
+/* ── Responsive: apilar en una sola columna ── */
+@media (max-width: 880px) {
+  .brandPanel {
+    display: none;
+  }
+
+  .mobileLogo {
+    display: flex;
+    /* Antes space-6 (24px): con GIDI ahora achicado (ver .mascotGroup abajo) sigue
+       viviendo justo debajo del logo, así que necesita más aire por encima. */
+    margin-bottom: var(--space-8);
+  }
+
+  .formPanel {
+    /* Antes centrado verticalmente (align-items:center heredado): en una pantalla
+       alta de celular dejaba mucho espacio en blanco arriba. Se alinea al inicio
+       con un padding-top propio, así el logo queda arriba en vez de a la mitad. */
+    align-items: flex-start;
+    padding: 100px var(--space-5) var(--space-5);
+  }
+
+  /* En desktop .mascotGroup flota 120px arriba del título porque ahí no hay nada
+     más — en mobile .mobileLogo aparece justo encima del título con poco espacio,
+     y el grupo (260px de ancho) lo invadía por completo ("se tapa por el
+     personaje"). Se conserva el mismo GIDI + estela, solo se achica ~50% y se
+     acerca al título en vez de flotar tan arriba. */
+  .mascotGroup {
+    top: -5px;
+    width: 130px;
+    margin-left: 16px;
+  }
+
+  /* El subtítulo es un párrafo de ancho completo, así que su texto pasaba
+     por debajo de GIDI (que ahora vive más abajo, a la derecha del título).
+     Se limita su ancho para que envuelva a una segunda línea antes de llegar
+     a esa zona, en vez de quedar tapado. */
+  .subtitle {
+    max-width: calc(100% - 100px);
+  }
+
+  .mascotTrail {
+    top: -55px;
+    left: -25px;
+    width: 105px;
+  }
+}

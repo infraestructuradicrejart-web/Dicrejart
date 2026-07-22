@@ -1,0 +1,386 @@
+/**
+ * @file EditorVisualPage.module.css
+ * @description Estilos del Editor Visual de Asignaciones (grafo de nodos), usando
+ * la paleta e identidad de marca de Dicrejart (Manual de Identidad)
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 0px);
+  gap: var(--space-4);
+}
+
+/* Ventana aparte: sin Header/Sidebar alrededor, así que el propio editor aporta el
+   respiro de los bordes y el fondo de la aplicación */
+.standalonePage {
+  box-sizing: border-box;
+  height: 100vh;
+  padding: var(--space-5);
+  background: var(--color-gray-50);
+}
+
+.workspace {
+  flex: 1;
+  display: flex;
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+/* ---------- Rail izquierdo: paleta + leyenda ---------- */
+.rail {
+  width: 230px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  overflow-y: auto;
+}
+
+.railTitle {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-gray-500);
+  font-weight: 600;
+  margin: 0 0 10px 0;
+}
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.paletteChip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-dark);
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-left: 3px solid var(--chip-color, var(--color-primary));
+  border-radius: var(--radius-md);
+  padding: 9px 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform var(--transition-fast) var(--ease-out);
+}
+.paletteChip:hover { transform: translateX(2px); }
+.paletteChip:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+.legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.legend li {
+  font-size: 12px;
+  color: var(--color-gray-600);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.4;
+}
+.legend em { color: var(--color-dark); font-style: normal; font-weight: 600; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+
+.hint {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-gray-500);
+  margin: 0;
+}
+
+/* ---------- Lienzo ---------- */
+.canvasWrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  background-color: var(--color-gray-50);
+  background-image: radial-gradient(rgba(51, 0, 102, 0.12) 1.4px, transparent 1.4px);
+  background-size: 26px 26px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-gray-200);
+}
+.canvasWrap.panning { cursor: grabbing; }
+
+.world { position: absolute; top: 0; left: 0; }
+.wires { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.wirePath { fill: none; stroke-width: 2.25; pointer-events: stroke; cursor: pointer; }
+.wirePath:hover { stroke-width: 3.25; }
+.wirePreview { fill: none; stroke: var(--color-primary); stroke-width: 2.25; stroke-dasharray: 6 5; pointer-events: none; }
+
+/* ---------- Nodos ---------- */
+.node {
+  position: absolute;
+  width: 214px;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  user-select: none;
+  cursor: grab;
+}
+.node.selected { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.node.dragging { cursor: grabbing; box-shadow: var(--shadow-xl); z-index: 10; }
+
+.nodeHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--node-color);
+  color: var(--color-white);
+}
+.nodeIcon { font-size: 14px; line-height: 1; flex-shrink: 0; }
+.nodeTitle {
+  font-family: var(--font-heading);
+  font-size: 12.5px;
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nodeBadge {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+.nodeClose {
+  background: rgba(255, 255, 255, 0.22);
+  border: none;
+  color: var(--color-white);
+  width: 17px;
+  height: 17px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition-fast) var(--ease-out);
+}
+.node:hover .nodeClose { opacity: 1; }
+.nodeClose:hover { background: rgba(255, 255, 255, 0.4); }
+
+.nodeBody { padding: 9px 10px 10px 10px; display: flex; flex-direction: column; gap: 5px; }
+.nodeEyebrow {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-gray-500);
+}
+.nodeTag { font-size: 11.5px; color: var(--color-gray-600); line-height: 1.35; }
+
+.port {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin-top: -6.5px;
+  border-radius: 50%;
+  background: var(--color-white);
+  border: 2.5px solid var(--node-color);
+  cursor: crosshair;
+  z-index: 3;
+}
+.port:hover { transform: scale(1.25); }
+.portIn { left: -6.5px; }
+.portOut { right: -6.5px; }
+
+/* ---------- Bloque: lista de actividades desplegable sobre el propio nodo ---------- */
+/* Se cuelga como overlay (position: absolute, fuera del flujo normal) para que no
+   cambie la altura real del nodo — así los puertos (calculados con NODE_HEIGHT) y las
+   líneas de conexión no se desalinean cuando el bloque tiene muchas actividades. */
+.blockDropdown {
+  position: absolute;
+  top: 100%;
+  left: -1px;
+  right: -1px;
+  margin-top: 4px;
+  z-index: 20;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 8px;
+  cursor: default;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.blockDropdownEmpty {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--color-gray-400);
+  text-align: center;
+}
+.blockDropdownItem {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.blockDropdownItem:hover { background: var(--color-gray-50); }
+.blockDropdownMeta { font-size: 10.5px; color: var(--color-gray-500); margin-top: 2px; }
+.blockDropdownRemove {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--color-gray-400);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.blockDropdownRemove:hover { color: var(--color-alert); }
+.blockDropdownActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-gray-100);
+}
+.blockDropdownAction {
+  flex: 1;
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-dark);
+  cursor: pointer;
+  text-align: center;
+}
+.blockDropdownAction:hover { background: var(--color-gray-100); }
+
+/* ---------- Inspector ---------- */
+.inspector {
+  width: 280px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.inspectorEyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-gray-500);
+  font-weight: 600;
+  margin: 0 0 2px 0;
+}
+.inspectorTitle {
+  font-family: var(--font-heading);
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 14px 0;
+}
+
+.field { margin-bottom: 12px; }
+.field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-gray-500);
+  margin-bottom: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.field input, .field select, .field textarea {
+  width: 100%;
+  font-family: var(--font-family);
+  font-size: 13.5px;
+  color: var(--color-dark);
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--color-primary); }
+.field input:disabled, .field select:disabled { background: var(--color-gray-50); color: var(--color-gray-500); }
+
+.connRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  padding: 5px 0;
+  color: var(--color-gray-600);
+}
+.connArrow { color: var(--color-gray-400); font-family: var(--font-mono); font-size: 11px; }
+.emptyConns { font-size: 12px; color: var(--color-gray-400); font-style: italic; }
+
+.areaStatusList { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.areaStatusRow {
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  font-size: 11.5px;
+}
+.areaStatusRow strong { display: block; font-size: 12px; margin-bottom: 3px; color: var(--color-dark); }
+.areaStatusMeta { display: flex; flex-wrap: wrap; gap: 7px; color: var(--color-gray-600); }
+
+.calloutBox {
+  margin-top: 14px;
+  padding: 10px 11px;
+  border-radius: var(--radius-md);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* ---------- Picker (buscar existente / crear nuevo) ---------- */
+.pickerSearch {
+  width: 100%;
+  font-family: var(--font-family);
+  font-size: 13.5px;
+  color: var(--color-dark);
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.pickerSearch:focus { outline: none; border-color: var(--color-primary); }
+
+.pickerList { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.pickerItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-family);
+  font-size: 13px;
+  color: var(--color-dark);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  cursor: pointer;
+}
+.pickerItem:hover { background: var(--color-gray-50); }
+.pickerBadge { margin-left: auto; font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; color: var(--color-gray-400); }
+.pickerCreate { color: var(--color-primary); font-weight: 600; }
+.pickerEmpty { padding: 16px; text-align: center; font-size: 12.5px; color: var(--color-gray-400); }

@@ -1,0 +1,360 @@
+.layout {
+  display: flex;
+  gap: var(--space-4, 16px);
+  height: calc(100vh - 260px);
+  min-height: 420px;
+}
+
+.sidebarList {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg, 12px);
+  overflow: hidden;
+}
+
+.sidebarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-gray-100);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-secondary);
+}
+
+.chatList {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.chatRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--color-gray-100);
+  position: relative;
+}
+
+.chatRow:hover {
+  background: var(--color-gray-50, #f7f7f7);
+}
+
+.chatRow:hover .chatRowDelete {
+  opacity: 1;
+}
+
+.chatRowActive {
+  background: rgba(0, 153, 204, 0.08);
+}
+
+.chatRowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.chatRowDelete {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 6px 12px 6px 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.chatRowDelete:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--color-secondary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.avatarGlobal {
+  background: var(--color-tiffany-blue);
+  font-size: 16px;
+}
+
+.chatRowBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.chatRowTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.chatRowName {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--color-dark, #1b1b1b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatRowTime {
+  font-size: 11px;
+  color: var(--color-gray-500);
+  flex-shrink: 0;
+}
+
+.chatRowPreview {
+  font-size: 12px;
+  color: var(--color-gray-600);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unreadDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-danger, #ff3300);
+  flex-shrink: 0;
+}
+
+.conversation {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg, 12px);
+  overflow: hidden;
+}
+
+.conversationHeader {
+  padding: 14px;
+  border-bottom: 1px solid var(--color-gray-100);
+  font-weight: 700;
+  color: var(--color-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.backButton {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px 6px 4px 0;
+  color: var(--color-secondary);
+  line-height: 1;
+}
+
+.messagesArea {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.emptyMessages {
+  text-align: center;
+  color: var(--color-gray-500);
+  font-size: 13px;
+  margin: auto;
+}
+
+.bubbleRow {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.bubbleRowMine {
+  justify-content: flex-end;
+}
+
+.bubble {
+  max-width: 65%;
+  background: var(--color-gray-100, #f0f0f0);
+  border-radius: 12px 12px 12px 2px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--color-dark, #1b1b1b);
+}
+
+.bubbleMine {
+  background: var(--color-tiffany-blue);
+  color: #fff;
+  border-radius: 12px 12px 2px 12px;
+}
+
+/* Burbuja que me menciona a mí ("@Mi Nombre"), para que resalte a simple vista */
+.bubbleMentioned {
+  background: rgba(255, 204, 0, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 204, 0, 0.6);
+}
+
+/* Texto de una mención "@Nombre" dentro de un mensaje */
+.mention {
+  font-weight: 700;
+  color: var(--color-secondary);
+  background: rgba(153, 51, 255, 0.12);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+
+.bubbleMine .mention {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.bubbleSender {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-secondary);
+  margin-bottom: 2px;
+}
+
+.bubbleTime {
+  font-size: 10px;
+  opacity: 0.7;
+  text-align: right;
+  margin-top: 2px;
+}
+
+.inputRow {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--color-gray-100);
+}
+
+.mentionDropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 12px;
+  right: 12px;
+  margin-bottom: 6px;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: 10px;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mentionOption {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-dark, #1b1b1b);
+}
+
+.mentionOption:hover {
+  background: var(--color-gray-50, #f7f7f7);
+}
+
+.mentionOptionAvatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-secondary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.textInput {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-gray-200);
+  font-size: 13px;
+}
+
+.pickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.pickerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pickerRow:hover {
+  background: var(--color-gray-50, #f7f7f7);
+}
+
+.pickerName {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--color-dark, #1b1b1b);
+}
+
+/* En mobile se muestra un solo panel a la vez (ver ChatPage.jsx: showList /
+   showConversation), así que cada uno pasa a ocupar el 100% del ancho. */
+@media (max-width: 768px) {
+  .layout {
+    height: calc(100vh - 200px);
+  }
+
+  .sidebarList,
+  .conversation {
+    width: 100%;
+  }
+}
+
+.pickerRole {
+  font-size: 11px;
+  color: var(--color-gray-500);
+}

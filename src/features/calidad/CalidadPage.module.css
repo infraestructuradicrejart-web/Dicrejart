@@ -1,0 +1,810 @@
+/**
+ * @file CalidadPage.module.css
+ * @description Estilos para la página de gestión de calidad y defectos
+ * Proporciona un diseño responsivo elegante
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.title {
+  font-size: var(--h1-size);
+  font-weight: var(--h1-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+}
+
+/* ============================================
+   KPI GRID
+   ============================================ */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+}
+
+.kpiContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.kpiLabel {
+  font-size: var(--small-size);
+  font-weight: 500;
+  color: var(--color-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.kpiValue {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-dark);
+}
+
+.kpiFooter {
+  font-size: var(--small-size);
+  color: var(--color-gray-400);
+}
+
+/* ============================================
+   LAYOUT COLUMNS
+   ============================================ */
+.layoutColumns {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.sectionTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-700);
+}
+
+.textarea {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  box-sizing: border-box;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+/* Historial de Auditorías */
+.historyList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-height: 600px;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.insCard {
+  padding: var(--space-4);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-200);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.insHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.insGame {
+  font-size: var(--body-size);
+  font-weight: 600;
+  color: var(--color-secondary);
+  display: block;
+}
+
+.insArea {
+  font-size: 11px;
+  color: var(--color-gray-400);
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.insBadgeBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.scoreBadge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-gray-700);
+}
+
+.defectTypeAlert {
+  font-size: var(--small-size);
+  color: var(--color-alert);
+  background-color: rgba(255, 68, 68, 0.05);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-alert);
+}
+
+.insNotes {
+  font-size: var(--small-size);
+  color: var(--color-gray-600);
+  line-height: 1.5;
+  background-color: var(--color-white);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-gray-100);
+}
+
+.insMeta {
+  font-size: 10px;
+  color: var(--color-gray-400);
+}
+
+.bannerSuccess, .bannerWarning, .bannerInfo, .bannerDanger {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--small-size);
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.bannerSuccess {
+  background-color: rgba(16, 185, 129, 0.04);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+  border-left: 4px solid var(--color-success);
+  color: #065f46;
+}
+
+.bannerWarning {
+  background-color: rgba(245, 158, 11, 0.04);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  border-left: 4px solid var(--color-warning);
+  color: #92400e;
+}
+
+.bannerInfo {
+  background-color: rgba(0, 153, 204, 0.05);
+  border: 1px solid rgba(0, 153, 204, 0.18);
+  border-left: 4px solid var(--color-tiffany-blue);
+  color: #0c4a6e;
+}
+
+.bannerDanger {
+  background-color: rgba(239, 68, 68, 0.04);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+  border-left: 4px solid var(--color-alert);
+  color: #991b1b;
+}
+
+/* Línea de tiempo de seguimiento de pieza */
+.chainCard {
+  padding: var(--space-4);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-200);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.chainHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.chainSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.chainStep {
+  position: relative;
+  padding-left: 22px;
+  padding-bottom: var(--space-3);
+}
+
+.chainStep:last-child {
+  padding-bottom: 0;
+}
+
+.chainStepDot {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-white);
+  border: 2px solid var(--color-gray-300);
+}
+
+.chainStep:last-child .chainStepDot {
+  border-color: var(--color-secondary);
+  background-color: var(--color-secondary);
+}
+
+.chainStepLine {
+  position: absolute;
+  left: 5px;
+  top: 16px;
+  bottom: 0;
+  width: 2px;
+  background-color: var(--color-gray-200);
+}
+
+.chainStepBody {
+  background-color: var(--color-white);
+  border: 1px solid var(--color-gray-100);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+@media (max-width: 1200px) {
+  .kpiGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .layoutColumns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .kpiGrid {
+    grid-template-columns: 1fr;
+  }
+  
+  .row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================
+   TABS NAVIGATION
+   ============================================ */
+.tabsContainer {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 2px solid var(--color-gray-100);
+  padding-bottom: 2px;
+  margin-top: calc(-1 * var(--space-2));
+  margin-bottom: var(--space-2);
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.tabBtn {
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--body-size);
+  font-weight: 600;
+  color: var(--color-gray-500);
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition-fast) var(--ease-out);
+}
+
+.tabBtn:hover {
+  color: var(--color-primary);
+}
+
+.tabBtnActive {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+/* ============================================
+   EVALUACIONES COLABORADORES
+   ============================================ */
+.evaluacionesSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.filterCard {
+  padding: var(--space-4) var(--space-5);
+}
+
+.evalFilterBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.evalSectionTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+  margin: 0;
+}
+
+.evalSelectWrapper {
+  min-width: 250px;
+}
+
+.tableCardContainer {
+  width: 100%;
+}
+
+.tableCard {
+  padding: var(--space-4);
+}
+
+.tableResponsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Tabla de bloques */
+.evalTable {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.evalTable th {
+  padding: var(--space-4);
+  background-color: var(--color-gray-50);
+  border-bottom: 2px solid var(--color-gray-100);
+  vertical-align: middle;
+}
+
+.evalTable td {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-gray-100);
+  vertical-align: middle;
+}
+
+.colaboradorColHeader {
+  width: 240px;
+  color: var(--color-gray-500);
+  font-size: var(--small-size);
+  text-transform: uppercase;
+  font-weight: 600;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background-color: var(--color-gray-50);
+}
+
+.blockHeader {
+  text-align: center;
+  min-width: 160px;
+  border-left: 1px solid var(--color-gray-100);
+}
+
+.activeBlockHeader {
+  background-color: rgba(16, 185, 129, 0.03) !important;
+  border-left: 2px solid var(--color-success) !important;
+  border-right: 2px solid var(--color-success) !important;
+}
+
+.blockHeaderContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.blockNameText {
+  font-size: var(--body-size);
+  font-weight: 700;
+  color: var(--color-secondary);
+}
+
+.blockTimeRangeText {
+  font-size: 11px;
+  color: var(--color-gray-500);
+  font-weight: 500;
+}
+
+.liveBadge {
+  margin-top: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.1);
+}
+
+.pulseDot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--color-success);
+  border-radius: var(--radius-full);
+  display: inline-block;
+  animation: pulse-dot-animation 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse-dot-animation {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+}
+
+.colaboradorCell {
+  background-color: var(--color-white);
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.04);
+}
+
+.evalCell {
+  text-align: center;
+  border-left: 1px solid var(--color-gray-100);
+}
+
+.activeBlockCell {
+  background-color: rgba(16, 185, 129, 0.015);
+  border-left: 2px solid rgba(16, 185, 129, 0.2) !important;
+  border-right: 2px solid rgba(16, 185, 129, 0.2) !important;
+}
+
+/* Celda con calificación existente */
+.scoreContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast) var(--ease-out);
+}
+
+.scoreContainer:hover {
+  background-color: var(--color-gray-50);
+}
+
+.evalNote {
+  font-size: 11px;
+  color: var(--color-gray-500);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 150px;
+  text-align: center;
+}
+
+/* Botón calificar */
+.calificarBtn {
+  background-color: var(--color-white);
+  border: 1px dashed var(--color-gray-300);
+  color: var(--color-gray-500);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--small-size);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast) var(--ease-out);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.calificarBtn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background-color: rgba(232, 92, 13, 0.02);
+}
+
+.pulseCalificarBtn {
+  border-color: var(--color-success);
+  color: var(--color-success);
+  font-weight: 600;
+  background-color: rgba(16, 185, 129, 0.02);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.05);
+}
+
+.pulseCalificarBtn:hover {
+  background-color: rgba(16, 185, 129, 0.05);
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+/* Modal Form styles */
+.modalForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.modalMetaInfo {
+  display: flex;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-200);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+}
+
+.modalMetaInfo strong {
+  color: var(--color-secondary);
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-gray-150);
+  padding-top: var(--space-4);
+}
+
+/* ============================================
+   INFO DE USUARIOS (TABLA DE DESEMPEÑO)
+   ============================================ */
+.userInfoBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+}
+
+.avatarMini {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-secondary);
+  color: var(--color-white);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: var(--body-size);
+  flex-shrink: 0;
+}
+
+.userDetails {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.userName {
+  font-size: var(--body-size);
+  font-weight: 600;
+  color: var(--color-dark);
+}
+
+.userRole {
+  font-size: var(--small-size);
+  color: var(--color-gray-400);
+  font-weight: 500;
+}
+
+.emptyCell {
+  text-align: center;
+  padding: var(--space-6) !important;
+  color: var(--color-gray-400);
+  font-weight: 500;
+  font-style: italic;
+}
+
+/* ============================================
+   ESTILOS DE CELDAS EXTRAS Y DESHABILITADAS
+   ============================================ */
+.disabledCell {
+  background-color: var(--color-gray-100) !important;
+  cursor: not-allowed;
+  text-align: center;
+  border-left: 1px solid var(--color-gray-150);
+}
+
+.naText {
+  font-size: var(--small-size);
+  color: var(--color-gray-400);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.overtimeBlockCell {
+  background-color: rgba(245, 158, 11, 0.02) !important;
+  border-left: 1px dashed rgba(245, 158, 11, 0.3) !important;
+}
+
+.overtimeCalificarBtn {
+  border-color: var(--color-warning) !important;
+  color: var(--color-warning) !important;
+  background-color: rgba(245, 158, 11, 0.02) !important;
+}
+
+.overtimeCalificarBtn:hover {
+  background-color: rgba(245, 158, 11, 0.06) !important;
+  border-color: var(--color-warning) !important;
+}
+
+.overtimeMarker {
+  margin-top: 2px;
+  font-size: 8px !important;
+  padding: 1px 4px !important;
+  background-color: rgba(245, 158, 11, 0.1) !important;
+  color: var(--color-warning) !important;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.calificarBtnContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.overtimeIndicatorText {
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--color-warning);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.scoreContainerDisabled {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2);
+  cursor: default;
+  opacity: 0.85;
+}
+
+.closedBlockLabel {
+  font-size: 11px;
+  color: var(--color-gray-400);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Tabla de evaluaciones (columnas dinámicas, una por bloque de horario) →
+   tarjetas apiladas en celular: cada colaborador es una tarjeta, y cada bloque
+   aparece como su propia fila con el nombre del bloque a la izquierda
+   (`data-label={block.name}`, dinámico, puesto en CalidadPage.jsx) y su
+   evaluación a la derecha. Antes solo tenía scroll horizontal con la columna
+   de colaborador "pegada" (sticky) — funcional en desktop, pero poco
+   descubrible con el dedo en un celular; el texto se veía cortado. */
+@media (max-width: 640px) {
+  .evalTable thead {
+    display: none;
+  }
+
+  .evalTable, .evalTable tbody, .evalTable tr, .evalTable td {
+    display: block;
+    width: 100%;
+  }
+
+  .evalTable tr {
+    margin-bottom: var(--space-4);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  /* La celda del colaborador funciona como encabezado de la tarjeta, no como
+     una fila etiqueta:valor más — ya no necesita quedar "pegada" (sticky),
+     eso solo aplicaba dentro del scroll horizontal que aquí ya no existe. */
+  .colaboradorCell {
+    position: static;
+    box-shadow: none;
+    border-bottom: 2px solid var(--color-gray-100);
+  }
+
+  .evalCell, .disabledCell {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-width: 0;
+    text-align: right;
+    border-left: none;
+    border-bottom: 1px solid var(--color-gray-100);
+  }
+
+  .evalTable tr td:last-child {
+    border-bottom: none;
+  }
+
+  .evalCell::before, .disabledCell::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: var(--small-size);
+    font-weight: 600;
+    color: var(--color-gray-500);
+    text-align: left;
+  }
+}

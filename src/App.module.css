@@ -1,0 +1,430 @@
+/**
+ * @file App.module.css
+ * @description Estilos para el componente App y layout general de la aplicación
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   LAYOUT GENERAL DE LA APP
+   ============================================ */
+
+.app {
+  /* Layout flexbox vertical */
+  display: flex;
+  flex-direction: column;
+  
+  /* Altura mínima para ocupar toda la viewport */
+  min-height: 100vh;
+  
+  /* Fondo blanco */
+  background-color: var(--color-white);
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+
+.header {
+  /* Sticky header */
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  
+  /* Background con gradiente */
+  background: linear-gradient(135deg, var(--color-secondary) 0%, #2f2660 100%);
+  color: var(--color-white);
+  
+  /* Padding y sombra */
+  padding: var(--space-6) 0;
+  box-shadow: var(--shadow-md);
+  
+  /* Transición suave */
+  transition: all var(--transition-normal) ease;
+}
+
+.header-content {
+  /* Container con max-width */
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+  
+  /* Layout flex */
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.logo {
+  /* Logo section */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.logo h1 {
+  /* Tamaño grande */
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 0;
+  color: var(--color-white);
+}
+
+.subtitle {
+  /* Subtítulo pequeño */
+  font-size: 12px;
+  opacity: 0.9;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.header-info {
+  /* Info section */
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.header-info p {
+  /* Texto info */
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.95;
+}
+
+/* ============================================
+   MAIN CONTENT
+   ============================================ */
+
+.main {
+  /* Flex grow para ocupar espacio disponible */
+  flex: 1;
+  
+  /* Padding */
+  padding: var(--space-7) 0;
+  
+  /* Fondo */
+  background-color: var(--color-gray-50);
+}
+
+.container {
+  /* Container centrado */
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+  
+  /* Display flex para las secciones */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+/* ============================================
+   SECCIÓN DE BIENVENIDA
+   ============================================ */
+
+.welcome-section {
+  /* Styling */
+  text-align: center;
+  padding: var(--space-6);
+  background: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.welcome-section h2 {
+  /* Heading */
+  font-size: 32px;
+  color: var(--color-dark);
+  margin-bottom: var(--space-3);
+}
+
+.welcome-section p {
+  /* Párrafo */
+  font-size: 16px;
+  color: var(--color-gray-600);
+  max-width: 600px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+/* ============================================
+   GRID DE COMPONENTES
+   ============================================ */
+
+.grid {
+  /* Grid responsivo */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: var(--space-6);
+}
+
+/* ============================================
+   DEMO DE BOTONES
+   ============================================ */
+
+.demo-buttons {
+  /* Flex layout */
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+}
+
+.demo-buttons button {
+  /* Botones en demo */
+  flex: 1;
+  min-width: 120px;
+}
+
+/* ============================================
+   DEMO DE CARDS
+   ============================================ */
+
+.demo-cards {
+  /* Grid de 3 columnas */
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.demo-cards > div {
+  /* Padding en cards */
+  padding: var(--space-3) !important;
+}
+
+.demo-cards strong {
+  /* Bold en títulos */
+  font-weight: 600;
+  display: block;
+  margin-bottom: var(--space-1);
+}
+
+/* ============================================
+   PALETA DE COLORES
+   ============================================ */
+
+.color-palette {
+  /* Grid de colores */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  background-color: var(--color-gray-50);
+  border-radius: var(--radius-md);
+}
+
+.color-swatch {
+  /* Swatch individual */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.color-box {
+  /* Caja de color */
+  width: 60px;
+  height: 60px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-gray-200);
+  transition: transform var(--transition-normal);
+}
+
+.color-box:hover {
+  /* Hover effect */
+  transform: scale(1.1);
+}
+
+.color-swatch span {
+  /* Nombre del color */
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-gray-700);
+  max-width: 80px;
+  word-break: break-word;
+}
+
+/* ============================================
+   SECCIÓN DE INFO
+   ============================================ */
+
+.info-section {
+  /* Info section */
+  margin-top: var(--space-4);
+}
+
+.info-section h3 {
+  /* Heading */
+  font-size: 20px;
+  margin-bottom: var(--space-3);
+}
+
+.info-section ul {
+  /* Lista */
+  list-style: none;
+  padding: 0;
+  margin: var(--space-3) 0 0 0;
+}
+
+.info-section li {
+  /* Items de lista */
+  margin: var(--space-2) 0;
+  font-size: 14px;
+  color: var(--color-gray-700);
+}
+
+/* ============================================
+   FOOTER
+   ============================================ */
+
+.footer {
+  /* Footer */
+  background: linear-gradient(135deg, var(--color-secondary) 0%, #2f2660 100%);
+  color: var(--color-white);
+  
+  /* Padding */
+  padding: var(--space-6);
+  
+  /* Text center */
+  text-align: center;
+  
+  /* Margin top para empujar hacia abajo */
+  margin-top: auto;
+}
+
+.footer p {
+  /* Párrafo footer */
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+/* ============================================
+   UTILIDADES
+   ============================================ */
+
+.small {
+  /* Texto pequeño con color gris */
+  font-size: 12px;
+  color: var(--color-gray-500);
+  margin: var(--space-3) 0 0 0;
+  font-style: italic;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+@media (max-width: 768px) {
+  /* Tablet */
+  
+  .header-content {
+    /* Stack vertical en mobile */
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .logo h1 {
+    /* Reducir heading */
+    font-size: 24px;
+  }
+  
+  .container {
+    /* Reducir padding */
+    padding: 0 var(--space-4);
+  }
+  
+  .grid {
+    /* Grid de 1 columna en tablet pequeño */
+    grid-template-columns: 1fr;
+  }
+  
+  .demo-cards {
+    /* Grid de 2 columnas */
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .color-palette {
+    /* Grid de 2 columnas */
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .welcome-section {
+    /* Reducir padding */
+    padding: var(--space-4);
+  }
+  
+  .welcome-section h2 {
+    /* Reducir heading */
+    font-size: 24px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Mobile */
+  
+  .header {
+    /* Reducir padding */
+    padding: var(--space-4) 0;
+  }
+  
+  .header-content {
+    /* Reducir padding */
+    padding: 0 var(--space-4);
+  }
+  
+  .logo h1 {
+    /* Heading pequeño */
+    font-size: 20px;
+  }
+  
+  .container {
+    /* Reducir padding */
+    padding: 0 var(--space-4);
+    gap: var(--space-4);
+  }
+  
+  .main {
+    /* Reducir padding */
+    padding: var(--space-4) 0;
+  }
+  
+  .grid {
+    /* Grid single column */
+    grid-template-columns: 1fr;
+  }
+  
+  .demo-buttons {
+    /* Flex column */
+    flex-direction: column;
+  }
+  
+  .demo-buttons button {
+    /* Full width */
+    width: 100%;
+  }
+  
+  .demo-cards {
+    /* Grid single column */
+    grid-template-columns: 1fr;
+  }
+  
+  .color-palette {
+    /* Grid 2 columns */
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .welcome-section p {
+    /* Reducir font */
+    font-size: 14px;
+  }
+}

@@ -1,0 +1,152 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Reglas para la colección de usuarios. Antes era de lectura totalmente pública
+    // (`if true`) — se restringió a cualquier usuario CON sesión iniciada, ya que no hay
+    // razón para exponer nombres/correos/roles de todo el personal a quien ni siquiera
+    // se ha autenticado. La única lectura que de verdad ocurre sin sesión (revisar si el
+    // sistema está vacío, para el registro del primer administrador) ahora pasa por la
+    // Cloud Function `checkSystemEmpty`, que solo regresa un booleano.
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    
+    // Reglas para auditorías de calidad
+    match /inspecciones/{inspeccionId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Reglas para evaluaciones de operarios
+    match /evaluaciones/{evaluacionId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Reglas para proyectos
+    match /proyectos/{proyectoId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Reglas para juegos
+    match /juegos/{juegoId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Reglas para el historial de producción (el código escribe/lee "historial_produccion")
+    match /historial_produccion/{logId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Reglas para actividades
+    match /actividades/{actividadId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Reglas para requisiciones de compra (el código escribe/lee "requisiciones").
+    // Cualquier usuario autenticado puede leer y crear/editar sus propias requisiciones;
+    // cada transición de estado exige el rol correspondiente Y el estado "de origen"
+    // correcto (para que, por ejemplo, no se pueda saltar directo de 'pendiente' a
+    // 'comprada'). Las Cloud Functions del flujo de aprobación por correo usan el SDK de
+    // administrador (firebase-admin), que no pasa por estas reglas, así que esto solo
+    // cierra el mismo camino del lado de la app/cliente.
+    match /requisiciones/{requisicionId} {
+      allow read: if request.auth != null;
+      // Eliminar una requisición es irreversible (no es una transición de estado más,
+      // como las de abajo) y solo Admin puede hacerlo.
+      allow delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleType == 'admin';
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && (
+        // Cambios que no tocan el estado (ej. adjuntar datos de pago): sin restricción extra
+        request.resource.data.status == resource.data.status ||
+        // Reenvío tras ser regresada: lo hace el propio solicitante
+        (request.resource.data.status == 'pendiente' && resource.data.status == 'regresada') ||
+        // Autorizar o regresar: solo Dirección o Admin, y solo desde 'pendiente'
+        (request.resource.data.status in ['autorizada', 'regresada'] && resource.data.status == 'pendiente' &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleType in ['direccion', 'admin']) ||
+        // Marcar como comprada: solo Compras o Admin, y solo desde 'autorizada'
+        (request.resource.data.status == 'comprada' && resource.data.status == 'autorizada' &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleType in ['compras', 'admin']) ||
+        // Marcar como recibida: el propio solicitante, o Dirección/Admin, y solo desde 'comprada'
+        (request.resource.data.status == 'recibida' && resource.data.status == 'comprada' && (
+          resource.data.requestedByUserId == request.auth.uid ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleType in ['direccion', 'admin']
+        ))
+      );
+    }
+
+    // Reglas para los tokens de aprobación de requisiciones por correo. Se generan y se
+    // leen exclusivamente desde las Cloud Functions (SDK de administrador, que no pasa
+    // por estas reglas) — el cliente/navegador nunca debe poder tocar esta colección: si
+    // pudiera crearla, cualquier usuario autenticado podría forjar un token con el id de
+    // un usuario Dirección real (la colección `users` es de lectura pública) y
+    // auto-autorizarse cualquier requisición sin que Dirección interviniera.
+    match /requisicion_approvals/{token} {
+      allow read, write: if false;
+    }
+
+    // Reglas para operarios
+    match /operarios/{operarioId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Reglas para los lienzos del Editor Visual (uno por proyecto)
+    match /lienzos/{lienzoId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Reglas para tarimas (empaque/paletizado)
+    match /tarimas/{tarimaId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Reglas para envíos programados
+    match /envios/{envioId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Reglas para solicitudes de préstamo/cambio definitivo de área de un colaborador
+    match /movimientos_personal/{movimientoId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Reglas para la configuración global de la app: `config/limites` (límites dinámicos
+    // de historial) y `config/general` (Modo Mantenimiento, alertas de calidad
+    // automáticas, tolerancia de calidad exigida)
+    match /config/{configId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Reglas para la bitácora de auditoría: cualquier usuario logueado puede generar
+    // entradas (de su propia actividad), pero solo Admin puede leer la bitácora completa
+    match /audit_log/{logId} {
+      allow read: if request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleType == 'admin';
+      allow write: if request.auth != null;
+    }
+
+    // Reglas para el chat interno: un documento por conversación ('global' o el id
+    // determinístico de un chat privado, ver ChatContext.jsx), con los mensajes en una
+    // subcolección. Un chat privado solo es visible/escribible por sus dos
+    // participantes; el chat global es visible/escribible por cualquier usuario
+    // autenticado. Los mensajes nunca se editan ni se borran una vez enviados.
+    match /chats/{chatId} {
+      allow read, update: if request.auth != null
+        && (chatId == 'global' || request.auth.uid in resource.data.participants);
+      allow create: if request.auth != null
+        && (chatId == 'global' || request.auth.uid in request.resource.data.participants);
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if request.auth != null
+          && (chatId == 'global' || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants);
+        allow create: if request.auth != null
+          && request.resource.data.senderId == request.auth.uid
+          && (chatId == 'global' || request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants);
+        allow update, delete: if false;
+      }
+    }
+  }
+}

@@ -1,0 +1,129 @@
+/**
+ * @file Select.module.css
+ * @description Estilos para el componente Select
+ * Consistente con el estilo visual de Input.module.css
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   CONTAINER Y LAYOUT
+   ============================================ */
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* ============================================
+   ETIQUETA
+   ============================================ */
+.label {
+  font-size: var(--body-size);
+  color: var(--color-gray-600);
+}
+
+.required {
+  color: var(--color-alert);
+  margin-left: 2px;
+}
+
+/* ============================================
+   SELECT WRAPPER (Bordes y sombra)
+   ============================================ */
+.select-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+
+  background-color: var(--color-white);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+  transition: all var(--transition-normal) var(--ease-out);
+  min-height: 44px;
+}
+
+.select-wrapper.focused {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(232, 92, 13, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.select-wrapper.error {
+  border-color: var(--color-alert);
+  box-shadow: 0 0 0 2px rgba(255, 68, 68, 0.1), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.select-wrapper.disabled {
+  background-color: var(--color-gray-100);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ============================================
+   SELECT (Nativo)
+   ============================================ */
+.select {
+  appearance: none;
+  border: none;
+  background: none;
+  outline: none;
+  cursor: pointer;
+
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+
+  width: 100%;
+  height: 100%;
+  padding: var(--space-3) var(--space-7) var(--space-3) var(--space-3);
+}
+
+.select:disabled {
+  color: var(--color-gray-500);
+  cursor: not-allowed;
+}
+
+/* ============================================
+   ÍCONO DE DESPLIEGUE
+   ============================================ */
+.dropdown-icon {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--color-gray-500);
+  pointer-events: none;
+}
+
+/* ============================================
+   MENSAJES (Error y Helper)
+   ============================================ */
+.error-message {
+  font-size: var(--small-size);
+  color: var(--color-alert);
+  padding: 0 var(--space-3);
+  margin-top: var(--space-1);
+}
+
+.helper-text {
+  font-size: var(--small-size);
+  color: var(--color-gray-500);
+  padding: 0 var(--space-3);
+  margin-top: var(--space-1);
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 640px) {
+  .select-wrapper {
+    min-height: 48px;
+  }
+
+  .select {
+    font-size: 16px; /* Evita zoom automático en iOS */
+  }
+}

@@ -1,0 +1,2237 @@
+/**
+ * @file CalidadPage.jsx
+ * @description Página de Gestión de Calidad e Inspecciones de Dicrejart
+ * Permite registrar inspecciones de piezas y calificar el desempeño de los operarios por bloques de horarios
+ * @author Dicrejart Dev Team
+ * @requires react
+ * @requires framer-motion
+ */
+
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { motion } from 'framer-motion';
+import Card from '../../components/ui/Card';
+import Button from '../../components/ui/Button';
+import Input from '../../components/ui/Input';
+import Select from '../../components/ui/Select';
+import Badge from '../../components/ui/Badge';
+import Modal from '../../components/ui/Modal';
+import useToast from '../../hooks/useToast';
+import useOperarios from '../../hooks/useOperarios';
+import useCalidad from '../../hooks/useCalidad';
+import useProduccion from '../../hooks/useProduccion';
+import useAuth from '../../hooks/useAuth';
+import PageHeader from '../../components/ui/PageHeader';
+import { isReadOnlySection } from '../../utils/roleAccess';
+import styles from './CalidadPage.module.css';
+
+/**
+ * Áreas de manufactura configuradas
+ * @constant
+ */
+const AREAS = [
+  { id: 'almacen', name: 'Almacén' },
+  { id: 'corte-laser', name: 'Corte Laser' },
+  { id: 'herreria', name: 'Herrería' },
+  { id: 'carpinteria', name: 'Carpintería' },
+  { id: 'costura-acc', name: 'Costura Accesorios' },
+  { id: 'costura-colch', name: 'Costura Colchonetas' },
+  { id: 'mantenimiento', name: 'Mantenimiento' },
+  { id: 'producto-terminado', name: 'Producto Terminado' },
+];
+
+/** Áreas de manufactura que entregan a PT (excluye Producto Terminado, que no se entrega a sí mismo) */
+const MANUFACTURING_AREAS = AREAS.filter((a) => a.id !== 'producto-terminado');
+
+/**
+ * Tipos comunes de defectos
+ * @constant
+ */
+const DEFECT_TYPES = [
+  'Ninguno',
+  'Costura Abierta / Defectuosa',
+  'Dimensiones fuera de tolerancia',
+  'Soldadura porosa / débil',
+  'Pintura escurrida / rayada',
+  'Madera astillada / mal lijada',
+  'Falta de material / herraje',
+  'Mancha / suciedad en tela',
+  'Otro defecto',
+];
+
+/**
+ * Genera dinámicamente los bloques de horario laboral basados en la frecuencia global
+ * y la hora máxima de salida en taller para ese día.
+ *
+ * @param {number} blockDuration - Frecuencia de los bloques en horas (1, 2, 3)
+ * @param {number} maxEndHour - Hora límite de salida en el taller
+ * @returns {Array<Object>} Bloques generados
+ */
+const generateWorkBlocks = (blockDuration, minStartHour, maxEndHour) => {
+  const blocks = [];
+  const duration = Number(blockDuration || 2);
+  
+  let current = Number(minStartHour || 8);
+  let blockIndex = 1;
+  
+  while (current < maxEndHour) {
+    const next = Math.min(current + duration, maxEndHour);
+    const startStr = String(current).padStart(2, '0');
+    const endStr = String(next).padStart(2, '0');
+    
+    blocks.push({
+      id: `b-${current}-${next}`,
+      name: `Bloque ${blockIndex}`,
+      timeRange: `${startStr}:00 - ${endStr}:00`,
+      startHour: current,
+      endHour: next,
+    });
+    
+    current = next;
+    blockIndex += 1;
+  }
+  
+  return blocks;
+};
+
+/**
+ * Determina qué bloque de horario está activo en tiempo real
+ * @param {Array<Object>} blocks - Bloques de horarios activos
+ * @returns {string|null} ID del bloque activo, o null si está fuera de horario laboral
+ */
+const getLiveBlockId = (blocks) => {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const activeBlock = blocks.find(
+    (b) => currentHour >= b.startHour && currentHour < b.endHour
+  );
+  return activeBlock ? activeBlock.id : null;
+};
+
+/**
+ * Resuelve la variante visual del Badge según la puntuación
+ * @param {number} score
+ * @returns {string} Variant name
+ */
+const getScoreVariant = (score) => {
+  if (score >= 9) return 'success';
+  if (score >= 7) return 'warning';
+  return 'danger';
+};
+
+/**
+ * Devuelve la URL para mostrar una foto de evidencia ya guardada: las inspecciones
+ * guardadas antes de migrar a Firebase Storage tienen sus fotos como texto base64
+ * directo (string); las nuevas se guardan como `{ url, path }` de Storage. Este helper
+ * permite mostrar ambos formatos sin necesidad de migrar los datos antiguos.
+ * @param {string|{url: string, path: string}} photo
+ * @returns {string}
+ */
+const getPhotoSrc = (photo) => (typeof photo === 'string' ? photo : photo?.url);
+
+/**
+ * Componente CalidadPage - Gestión de inspecciones y calidad operativa
+ * @component
+ * @returns {ReactElement} Render de la página de calidad
+ */
+const CalidadPage = () => {
+  // ============================================
+  // ESTADO Y CONTEXTOS
+  // ============================================
+  const [activeTab, setActiveTab] = useState('auditoria');
+  const [evalAreaId, setEvalAreaId] = useState('corte-laser');
+  
+  // Auditoría de Juegos (Pestaña 1)
+  const {
+    inspecciones,
+    evaluaciones,
+    addInspeccion,
+    editInspeccion,
+    deleteInspeccion,
+    saveEvaluacion,
+    addEvidenceToInspeccion,
+    removeEvidenceFromInspeccion,
+  } = useCalidad();
+  const [newInspection, setNewInspection] = useState({
+    areaId: 'corte-laser',
+    gameName: '',
+    inspector: '',
+    score: '10',
+    status: 'aprobado',
+    pieceName: '',
+    hasDefect: false,
+    defectType: 'Ninguno',
+    defectAction: 'retrabajo',
+    notes: '',
+    photos: [],
+  });
+
+  // Revoca los blob URLs de fotos pendientes (no enviadas) al salir de la página, para
+  // no dejarlos retenidos en memoria mientras la pestaña siga viva
+  const newInspectionPhotosRef = useRef(newInspection.photos);
+  useEffect(() => { newInspectionPhotosRef.current = newInspection.photos; }, [newInspection.photos]);
+  useEffect(() => {
+    return () => { newInspectionPhotosRef.current.forEach((p) => URL.revokeObjectURL(p.previewUrl)); };
+  }, []);
+
+  // Seguimiento de pieza: 'nueva' (pieza recién detectada) o 'seguimiento' (continuación
+  // de una pieza ya existente, elegida explícitamente por su ID único, nunca por nombre)
+  const [followUpMode, setFollowUpMode] = useState('nueva');
+  const [followUpTargetId, setFollowUpTargetId] = useState('');
+
+  // Estados para edición de auditorías de calidad
+  const [editingInspection, setEditingInspection] = useState(null);
+  const [editInspectionForm, setEditInspectionForm] = useState({
+    status: 'aprobado',
+    pieceName: '',
+    defectType: '',
+    defectAction: 'retrabajo',
+    notes: '',
+  });
+  const [isEditInspectionModalOpen, setIsEditInspectionModalOpen] = useState(false);
+  const [editInspectionPhotos, setEditInspectionPhotos] = useState([]);
+  const [isUploadingEditInspectionPhotos, setIsUploadingEditInspectionPhotos] = useState(false);
+
+  // Estado para la confirmación de eliminación de auditoría
+  const [deleteConfirmation, setDeleteConfirmation] = useState({
+    isOpen: false,
+    inspectionId: null,
+    gameName: '',
+  });
+
+  // Foto de evidencia mostrada en grande dentro del modal de vista previa
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [isSubmittingInspection, setIsSubmittingInspection] = useState(false);
+
+  const [evalModal, setEvalModal] = useState({
+    isOpen: false,
+    collaborator: null,
+    block: null,
+    score: '10',
+    notes: '',
+  });
+
+  const [scheduleModal, setScheduleModal] = useState({
+    isOpen: false,
+    collaborator: null,
+    startHour: '8',
+    endHour: '18',
+    overtimeHours: '0',
+    authorizedDate: '',
+  });
+
+  const { operarios, blockDuration, updateOperarioSchedule, updateBlockDuration } = useOperarios();
+  const {
+    juegos,
+    addQualityChecklistItem,
+    removeQualityChecklistItem,
+    toggleQualityChecklistItem,
+    approveQualityReview,
+    rejectQualityReview,
+  } = useProduccion();
+  const { user } = useAuth();
+  const toast = useToast();
+  const isReadOnly = isReadOnlySection(user, 'calidad');
+
+  // Revisión de Calidad para Entrega a PT (Pestaña 3)
+  const [reviewAreaId, setReviewAreaId] = useState('corte-laser');
+  const [reviewGameName, setReviewGameName] = useState('');
+  const [newReviewItemText, setNewReviewItemText] = useState('');
+  const [rejectModal, setRejectModal] = useState({ isOpen: false, notes: '' });
+
+  // Solo los administradores pueden autorizar y modificar jornadas (igual que en Operarios)
+  const canManageSchedule = user?.roleType === 'admin';
+
+  // Tick para forzar el recálculo del bloque activo cada 30 segundos
+  const [tick, setTick] = useState(0);
+  const tableContainerRef = useRef(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTick((t) => t + 1);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Sincronizar inspector con el usuario logueado en tiempo real
+  useEffect(() => {
+    if (user?.name) {
+      setNewInspection((prev) => ({
+        ...prev,
+        inspector: user.name,
+      }));
+    }
+  }, [user]);
+
+  // ============================================
+  // GENERACIÓN DINÁMICA DE BLOQUES
+  // ============================================
+  const areaOperarios = useMemo(() => {
+    return operarios.filter((op) => op.currentArea === evalAreaId);
+  }, [operarios, evalAreaId]);
+
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const isSaturday = useMemo(() => new Date().getDay() === 6, []);
+  const defaultEnd = useMemo(() => (isSaturday ? 13 : 18), [isSaturday]);
+
+  // Encontrar el horario de entrada más temprano registrado para hoy para los operarios del área elegida
+  const minStartHour = useMemo(() => {
+    return areaOperarios.reduce((min, op) => {
+      const isTodaySchedule = op.schedule?.authorizedDate === todayStr;
+      const opStart = isTodaySchedule ? (op.schedule?.startHour || 8) : 8;
+      return opStart < min ? opStart : min;
+    }, 8);
+  }, [areaOperarios, todayStr]);
+
+  // Encontrar el horario de salida más tarde registrado para hoy para los operarios del área elegida
+  const maxEndHour = useMemo(() => {
+    return areaOperarios.reduce((max, op) => {
+      const isTodaySchedule = op.schedule?.authorizedDate === todayStr;
+      const opEnd = isTodaySchedule ? (op.schedule?.endHour || defaultEnd) : defaultEnd;
+      return opEnd > max ? opEnd : max;
+    }, defaultEnd);
+  }, [areaOperarios, defaultEnd, todayStr]);
+
+  // Generar bloques correspondientes a la duración elegida y la jornada extendida máxima
+  const activeBlocks = useMemo(() => {
+    return generateWorkBlocks(blockDuration, minStartHour, maxEndHour);
+  }, [blockDuration, minStartHour, maxEndHour]);
+
+  // Determinar bloque activo en curso
+  const liveBlockId = useMemo(() => {
+    return getLiveBlockId(activeBlocks);
+  }, [activeBlocks, tick]);
+
+  // Auto-scroll dinámico hacia la columna del bloque actual (EN CURSO)
+  useEffect(() => {
+    if (activeTab === 'evaluaciones' && liveBlockId) {
+      const timer = setTimeout(() => {
+        const container = tableContainerRef.current;
+        if (container) {
+          const activeHeader = container.querySelector(`.${styles.activeBlockHeader}`);
+          if (activeHeader) {
+            const containerWidth = container.offsetWidth;
+            const headerOffsetLeft = activeHeader.offsetLeft;
+            const headerWidth = activeHeader.offsetWidth;
+            
+            // Centrar suavemente el bloque activo en el contenedor scrollable
+            container.scrollTo({
+              left: headerOffsetLeft - (containerWidth / 2) + (headerWidth / 2),
+              behavior: 'smooth',
+            });
+          }
+        }
+      }, 250);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, liveBlockId, blockDuration, evalAreaId]);
+
+  // ============================================
+  // MÉTRICAS CONDICIONALES
+  // ============================================
+  
+  // Tab 1: Auditoría de Juegos
+  const totalInspecciones = inspecciones.length;
+  const aprobadas = inspecciones.filter((i) => i.status === 'aprobado').length;
+  const defectuosas = totalInspecciones - aprobadas;
+  const tasaAprobacion = totalInspecciones > 0
+    ? ((aprobadas / totalInspecciones) * 100).toFixed(1)
+    : '0.0';
+
+  // Línea de tiempo por pieza: agrupa las inspecciones que comparten pieceTrackingId
+  // (las inspecciones antiguas sin ese campo se muestran como una línea de tiempo de un
+  // solo paso). Cada grupo se ordena cronológicamente y los grupos se ordenan por su
+  // actividad más reciente primero.
+  const pieceChains = useMemo(() => {
+    const groups = new Map();
+    inspecciones.forEach((ins) => {
+      const key = ins.pieceTrackingId || ins.id;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(ins);
+    });
+    return Array.from(groups.values())
+      .map((steps) => steps.slice().sort((a, b) => new Date(a.date) - new Date(b.date)))
+      .sort((a, b) => new Date(b[b.length - 1].date) - new Date(a[a.length - 1].date));
+  }, [inspecciones]);
+
+  const isChainOpen = (chain) => {
+    const last = chain[chain.length - 1];
+    return ['retrabajo', 'reutilizacion'].includes(last.defectAction);
+  };
+
+  const pendingReinspectionCount = useMemo(
+    () => pieceChains.filter(isChainOpen).length,
+    [pieceChains]
+  );
+
+  // Piezas con retrabajo/reclasificación pendiente, disponibles para elegir como
+  // seguimiento explícito por su ID único (nunca por nombre, ya que puede haber varias
+  // piezas con el mismo nombre en el mismo juego/área)
+  const openPendingChains = useMemo(() => pieceChains.filter(isChainOpen), [pieceChains]);
+
+  const selectedFollowUpChain = useMemo(
+    () => openPendingChains.find((chain) => chain[chain.length - 1].id === followUpTargetId) || null,
+    [openPendingChains, followUpTargetId]
+  );
+
+  // Tab 2: Evaluaciones de Colaboradores
+  const totalEvals = evaluaciones.length;
+  const evalPromedio = totalEvals > 0 
+    ? (evaluaciones.reduce((acc, curr) => acc + curr.score, 0) / totalEvals).toFixed(1)
+    : '0.0';
+  const uniqueEvaluados = new Set(evaluaciones.map((e) => e.operarioId)).size;
+  const totalColaboradoresArea = areaOperarios.length;
+  const alertasDesempeno = evaluaciones.filter((e) => e.score < 7).length;
+
+  // Tab 3: Revisión de Calidad para Entrega a PT
+  const allReviewPairs = useMemo(() => {
+    const pairs = [];
+    juegos.forEach((j) => {
+      j.areas.forEach((areaId) => {
+        const target = j.targetPieces?.[areaId] || 1;
+        const produced = j.producedPieces?.[areaId] || 0;
+        pairs.push({
+          game: j,
+          areaId,
+          review: j.qualityReview?.[areaId],
+          isReady: produced >= target,
+        });
+      });
+    });
+    return pairs;
+  }, [juegos]);
+
+  const reviewStats = useMemo(() => ({
+    aprobados: allReviewPairs.filter((p) => p.review?.status === 'aprobado').length,
+    rechazados: allReviewPairs.filter((p) => p.review?.status === 'rechazado').length,
+    pendientesListos: allReviewPairs.filter(
+      (p) => p.isReady && (!p.review || p.review.status !== 'aprobado')
+    ).length,
+  }), [allReviewPairs]);
+
+  const reviewQueue = useMemo(
+    () => allReviewPairs.filter((p) => p.isReady && (!p.review || p.review.status !== 'aprobado')),
+    [allReviewPairs]
+  );
+
+  const reviewGamesForArea = useMemo(
+    () => juegos.filter((j) => j.areas.includes(reviewAreaId)),
+    [juegos, reviewAreaId]
+  );
+
+  const reviewGameObj = useMemo(
+    () => juegos.find((j) => j.name === reviewGameName),
+    [juegos, reviewGameName]
+  );
+
+  const reviewData = reviewGameObj?.qualityReview?.[reviewAreaId] || { checklist: [], status: 'pendiente', notes: '' };
+  const reviewTarget = reviewGameObj?.targetPieces?.[reviewAreaId] || 1;
+  const reviewProduced = reviewGameObj?.producedPieces?.[reviewAreaId] || 0;
+  const reviewAreaReady = reviewProduced >= reviewTarget;
+
+  // ============================================
+  // HANDLERS
+  // ============================================
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setNewInspection((prev) => {
+      const updated = { ...prev, [name]: value };
+      
+      if (name === 'status') {
+        const isDefect = value === 'defectuoso';
+        updated.hasDefect = isDefect;
+        updated.score = isDefect ? 0 : 10;
+        updated.defectType = isDefect ? (prev.defectType === 'Ninguno' ? '' : prev.defectType) : 'Ninguno';
+        updated.defectAction = isDefect ? (prev.defectAction === 'Ninguna' ? 'retrabajo' : prev.defectAction) : 'Ninguna';
+      }
+      return updated;
+    });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!newInspection.gameName) {
+      toast.danger('Por favor selecciona el juego que fue inspeccionado.');
+      return;
+    }
+    if (followUpMode === 'seguimiento' && !followUpTargetId) {
+      toast.danger('Selecciona a qué pieza (por su ID) le estás dando seguimiento.');
+      return;
+    }
+
+    // Si no tiene defecto, asegurar que el tipo de defecto sea "Ninguno"
+    const finalDefectType = newInspection.hasDefect ? (newInspection.defectType || 'Desconocido') : 'Ninguno';
+
+    setIsSubmittingInspection(true);
+    const result = await addInspeccion({
+      areaId: newInspection.areaId,
+      gameName: newInspection.gameName,
+      inspector: newInspection.inspector,
+      status: newInspection.hasDefect ? 'defectuoso' : 'aprobado',
+      score: Number(newInspection.score),
+      pieceName: newInspection.pieceName || 'General',
+      defectType: finalDefectType,
+      notes: newInspection.notes || 'Inspección finalizada.',
+      photos: newInspection.photos.map((p) => p.file),
+      defectAction: newInspection.hasDefect ? (newInspection.defectAction || 'retrabajo') : 'Ninguna',
+      previousInspeccionId: followUpMode === 'seguimiento' ? followUpTargetId : null,
+    });
+    setIsSubmittingInspection(false);
+
+    if (!result?.ok) {
+      toast.danger(result?.error || 'No se pudo registrar la inspección.');
+      return;
+    }
+
+    newInspection.photos.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+    setNewInspection({
+      areaId: 'corte-laser',
+      gameName: '',
+      inspector: user?.name || 'Inspector',
+      score: '10',
+      status: 'aprobado',
+      pieceName: '',
+      hasDefect: false,
+      defectType: 'Ninguno',
+      defectAction: 'retrabajo',
+      notes: '',
+      photos: [],
+    });
+    setFollowUpMode('nueva');
+    setFollowUpTargetId('');
+
+    if (result.photoWarning) {
+      toast.warning(`⚠️ ${result.photoWarning}`);
+    } else {
+      toast.success('✅ Inspección de calidad registrada.');
+    }
+  };
+
+  /**
+   * Cuando el inspector elige de la lista a qué pieza existente le está dando
+   * seguimiento, se precargan área/juego/nombre de pieza desde esa misma pieza para
+   * evitar que por error quede enlazada a un juego/área distinto al original.
+   */
+  const handleSelectFollowUpTarget = (inspeccionId) => {
+    setFollowUpTargetId(inspeccionId);
+    const chain = openPendingChains.find((c) => c[c.length - 1].id === inspeccionId);
+    if (chain) {
+      const last = chain[chain.length - 1];
+      setNewInspection((prev) => ({ ...prev, areaId: last.areaId, gameName: last.gameName, pieceName: last.pieceName }));
+    }
+  };
+
+  /**
+   * Agrega fotos capturadas con la cámara del dispositivo (o del almacenamiento) como
+   * evidencia pendiente de la inspección en curso; la compresión y subida real ocurre
+   * después, al guardar, dentro de CalidadContext
+   */
+  const handleCapturePhotos = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const withPreviews = files.map((file) => ({ file, previewUrl: URL.createObjectURL(file) }));
+    setNewInspection((prev) => ({
+      ...prev,
+      photos: [...prev.photos, ...withPreviews],
+    }));
+    toast.success(`📷 ${files.length} evidencia(s) fotográfica(s) agregada(s).`);
+    e.target.value = '';
+  };
+
+  /**
+   * Quita una foto pendiente de la inspección en curso y libera su blob URL
+   */
+  const handleRemovePhoto = (index) => {
+    setNewInspection((prev) => {
+      URL.revokeObjectURL(prev.photos[index].previewUrl);
+      return { ...prev, photos: prev.photos.filter((_, i) => i !== index) };
+    });
+  };
+
+  const handleEditInspectionClick = (ins) => {
+    setEditingInspection(ins);
+    setEditInspectionForm({
+      status: ins.status,
+      pieceName: ins.pieceName,
+      defectType: ins.defectType === 'Ninguno' ? '' : ins.defectType,
+      defectAction: ins.defectAction || 'retrabajo',
+      notes: ins.notes,
+    });
+    setEditInspectionPhotos(ins.photos || []);
+    setIsEditInspectionModalOpen(true);
+  };
+
+  /**
+   * Sube nuevas fotos de evidencia directo a la inspección que ya existe en edición
+   */
+  const handleAddEditInspectionPhotos = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0 || !editingInspection) return;
+    e.target.value = '';
+    setIsUploadingEditInspectionPhotos(true);
+    const result = await addEvidenceToInspeccion(editingInspection.id, files);
+    setIsUploadingEditInspectionPhotos(false);
+    if (result.ok) {
+      setEditInspectionPhotos(result.photos);
+      toast.success('📷 Evidencia agregada a la inspección.');
+    } else {
+      toast.danger(result.error || 'No se pudo subir la evidencia fotográfica.');
+    }
+  };
+
+  /**
+   * Quita una foto ya guardada de la inspección en edición (borra también en Storage)
+   */
+  const handleRemoveEditInspectionPhoto = async (photo) => {
+    if (!editingInspection || typeof photo === 'string') return;
+    const result = await removeEvidenceFromInspeccion(editingInspection.id, photo.path);
+    if (result.ok) {
+      setEditInspectionPhotos(result.photos);
+    } else {
+      toast.danger(result.error || 'No se pudo quitar la evidencia fotográfica.');
+    }
+  };
+
+  const handleSaveEditInspection = async (e) => {
+    e.preventDefault();
+    if (!editingInspection) return;
+    
+    const isDefect = editInspectionForm.status === 'defectuoso';
+    const finalDefectType = isDefect ? (editInspectionForm.defectType || 'Desconocido') : 'Ninguno';
+    const finalDefectAction = isDefect ? (editInspectionForm.defectAction || 'retrabajo') : 'Ninguna';
+
+    const res = await editInspeccion(editingInspection.id, {
+      status: editInspectionForm.status,
+      score: isDefect ? 0 : 10,
+      pieceName: editInspectionForm.pieceName || 'General',
+      defectType: finalDefectType,
+      defectAction: finalDefectAction,
+      notes: editInspectionForm.notes || 'Inspección modificada.',
+    });
+
+    if (res.ok) {
+      toast.success('📝 Inspección de calidad modificada con éxito.');
+      setIsEditInspectionModalOpen(false);
+      setEditingInspection(null);
+    } else {
+      toast.danger(res.error || 'Error al modificar la inspección.');
+    }
+  };
+
+  const handleDeleteInspection = (ins) => {
+    setDeleteConfirmation({
+      isOpen: true,
+      inspectionId: ins.id,
+      gameName: ins.gameName,
+    });
+  };
+
+  const handleConfirmDelete = async () => {
+    const id = deleteConfirmation.inspectionId;
+    if (!id) return;
+
+    const res = await deleteInspeccion(id);
+    if (res.ok) {
+      toast.success('🗑️ Inspección de calidad eliminada.');
+    } else {
+      toast.danger(res.error || 'Error al eliminar la inspección.');
+    }
+    setDeleteConfirmation({ isOpen: false, inspectionId: null, gameName: '' });
+  };
+
+  // Handlers para Revisión de Calidad para Entrega a PT
+  const handleSelectReviewArea = (e) => {
+    setReviewAreaId(e.target.value);
+    setReviewGameName('');
+  };
+
+  const handleOpenReviewFromQueue = (pair) => {
+    setReviewAreaId(pair.areaId);
+    setReviewGameName(pair.game.name);
+  };
+
+  const handleAddReviewItem = () => {
+    if (!newReviewItemText.trim() || !reviewGameObj) return;
+    addQualityChecklistItem(reviewGameObj.id, reviewAreaId, newReviewItemText.trim());
+    setNewReviewItemText('');
+  };
+
+  const handleToggleReviewItem = (itemId) => {
+    toggleQualityChecklistItem(reviewGameObj.id, reviewAreaId, itemId);
+  };
+
+  const handleRemoveReviewItem = (itemId) => {
+    removeQualityChecklistItem(reviewGameObj.id, reviewAreaId, itemId);
+  };
+
+  const handleApproveReview = () => {
+    const result = approveQualityReview(reviewGameObj.id, reviewAreaId, user.name, '');
+    if (!result.ok) {
+      toast.danger(result.error);
+      return;
+    }
+    toast.success('✅ Revisión aprobada. El área ya puede notificar su entrega a Producto Terminado.');
+  };
+
+  const handleOpenRejectModal = () => setRejectModal({ isOpen: true, notes: '' });
+  const handleCloseRejectModal = () => setRejectModal({ isOpen: false, notes: '' });
+
+  const handleSubmitReject = (e) => {
+    e.preventDefault();
+    if (!rejectModal.notes.trim()) {
+      toast.danger('Indica qué no cumplió para que el área pueda corregirlo.');
+      return;
+    }
+    rejectQualityReview(reviewGameObj.id, reviewAreaId, user.name, rejectModal.notes);
+    toast.warning('↩️ Revisión rechazada; el área deberá retrabajar y solicitar una nueva revisión.');
+    handleCloseRejectModal();
+  };
+
+  // Handlers para Evaluaciones
+  const handleOpenEvalModal = (collaborator, block, existingEval) => {
+    setEvalModal({
+      isOpen: true,
+      collaborator,
+      block,
+      score: existingEval ? String(existingEval.score) : '10',
+      notes: existingEval ? existingEval.notes : '',
+    });
+  };
+
+  const handleCloseEvalModal = () => {
+    setEvalModal({
+      isOpen: false,
+      collaborator: null,
+      block: null,
+      score: '10',
+      notes: '',
+    });
+  };
+
+  const handleSaveEval = (e) => {
+    e.preventDefault();
+    const { collaborator, block, score, notes } = evalModal;
+
+    if (!notes.trim()) {
+      toast.warning('Por favor ingresa observaciones antes de guardar.');
+      return;
+    }
+
+    const wasUpdate = saveEvaluacion(collaborator.id, block.id, Number(score), notes);
+
+    if (wasUpdate) {
+      toast.success(`📝 Evaluación actualizada para ${collaborator.name}.`);
+    } else {
+      toast.success(`✅ Calificación registrada para ${collaborator.name}.`);
+    }
+
+    handleCloseEvalModal();
+  };
+
+  // Handales para editar jornada y horas extras del operario directamente
+  const handleOpenScheduleModal = (op) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    setScheduleModal({
+      isOpen: true,
+      collaborator: op,
+      startHour: String(op.schedule?.startHour || 8),
+      endHour: String(op.schedule?.endHour || 18),
+      overtimeHours: String(op.schedule?.overtimeHours || 0),
+      authorizedDate: op.schedule?.authorizedDate || todayStr,
+    });
+  };
+
+  const handleCloseScheduleModal = () => {
+    setScheduleModal({
+      isOpen: false,
+      collaborator: null,
+      startHour: '8',
+      endHour: '18',
+      overtimeHours: '0',
+      authorizedDate: '',
+    });
+  };
+
+  const getIsSaturdayFromDate = (dateStr) => {
+    if (!dateStr) return false;
+    const date = new Date(dateStr + 'T00:00:00');
+    return date.getDay() === 6; // 6 es Sábado
+  };
+
+  const handleDateChange = (e) => {
+    const dateStr = e.target.value;
+    const startVal = Number(scheduleModal.startHour);
+    const endVal = Number(scheduleModal.endHour);
+
+    const isSaturday = getIsSaturdayFromDate(dateStr);
+    const baseEnd = isSaturday ? 13 : 18;
+
+    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
+    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
+
+    setScheduleModal((prev) => ({
+      ...prev,
+      authorizedDate: dateStr,
+      overtimeHours: String(earlyOvertime + lateOvertime),
+    }));
+  };
+
+  const handleStartHourChange = (e) => {
+    const startVal = Number(e.target.value);
+    const endVal = Number(scheduleModal.endHour);
+
+    const isSaturday = getIsSaturdayFromDate(scheduleModal.authorizedDate);
+    const baseEnd = isSaturday ? 13 : 18;
+
+    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
+    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
+
+    setScheduleModal((prev) => ({
+      ...prev,
+      startHour: String(startVal),
+      overtimeHours: String(earlyOvertime + lateOvertime),
+    }));
+  };
+
+  const handleEndHourChange = (e) => {
+    const startVal = Number(scheduleModal.startHour);
+    const endVal = Number(e.target.value);
+
+    const isSaturday = getIsSaturdayFromDate(scheduleModal.authorizedDate);
+    const baseEnd = isSaturday ? 13 : 18;
+
+    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
+    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
+
+    setScheduleModal((prev) => ({
+      ...prev,
+      endHour: String(endVal),
+      overtimeHours: String(earlyOvertime + lateOvertime),
+    }));
+  };
+
+  const handleSaveSchedule = (e) => {
+    e.preventDefault();
+    const { collaborator, startHour, endHour, overtimeHours, authorizedDate } = scheduleModal;
+
+    updateOperarioSchedule(collaborator.id, {
+      startHour: Number(startHour),
+      endHour: Number(endHour),
+      overtimeHours: Number(overtimeHours),
+      authorizedBy: 'Supervisor Calidad',
+      authorizedDate,
+    });
+
+    toast.success(`⏱️ Horario de tiempo extra guardado para ${collaborator.name} (${authorizedDate}).`);
+    handleCloseScheduleModal();
+  };
+
+  // ============================================
+  // VARIANTES DE ANIMACIÓN
+  // ============================================
+  const containerVariants = {
+    initial: { opacity: 0 },
+    animate: { opacity: 1, transition: { staggerChildren: 0.05 } },
+  };
+
+  const itemVariants = {
+    initial: { opacity: 0, y: 15 },
+    animate: { opacity: 1, y: 0, transition: { duration: 0.3 } },
+  };
+
+  return (
+    <motion.div
+      className={styles.container}
+      variants={containerVariants}
+      initial="initial"
+      animate="animate"
+    >
+      {/* Cabecera */}
+      <PageHeader
+        title="Aseguramiento de Calidad"
+        subtitle={
+          activeTab === 'auditoria'
+            ? 'Inspecciona productos y garantiza los estándares de Dicrejart.'
+            : activeTab === 'revision'
+            ? 'Aprueba el checklist de calidad antes de que un área notifique su entrega a Producto Terminado.'
+            : 'Evalúa y califica el desempeño en tiempo real de los colaboradores en taller.'
+        }
+        shape="mancha"
+        accentColor="var(--color-dark-magenta)"
+      />
+
+      {/* Pestañas de Navegación */}
+      <div className={styles.tabsContainer}>
+        <button
+          className={`${styles.tabBtn} ${activeTab === 'auditoria' ? styles.tabBtnActive : ''}`}
+          onClick={() => setActiveTab('auditoria')}
+        >
+          📋 Auditoría de Juegos
+        </button>
+        <button
+          className={`${styles.tabBtn} ${activeTab === 'revision' ? styles.tabBtnActive : ''}`}
+          onClick={() => setActiveTab('revision')}
+        >
+          ✅ Revisión para Entrega a PT
+        </button>
+        <button
+          className={`${styles.tabBtn} ${activeTab === 'evaluaciones' ? styles.tabBtnActive : ''}`}
+          onClick={() => setActiveTab('evaluaciones')}
+        >
+          👥 Desempeño de Colaboradores
+        </button>
+      </div>
+
+      {/* ============================================
+          TARJETAS DE MÉTRICAS (KPIs Condicionales)
+          ============================================ */}
+      <div className={styles.kpiGrid}>
+        {activeTab === 'auditoria' ? (
+          <>
+            <Card variant="highlight">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Tasa de Aprobación</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-secondary)' }}>{tasaAprobacion}%</h3>
+                <p className={styles.kpiFooter}>Inspección global</p>
+              </div>
+            </Card>
+            <Card variant="default">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Total Inspecciones</span>
+                <h3 className={styles.kpiValue}>{totalInspecciones}</h3>
+                <p className={styles.kpiFooter}>Órdenes auditadas</p>
+              </div>
+            </Card>
+            <Card variant="success">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Piezas Aprobadas</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-success)' }}>{aprobadas}</h3>
+                <p className={styles.kpiFooter}>Libres de defectos</p>
+              </div>
+            </Card>
+            <Card variant="danger">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Defectuosas / Rechazos</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-alert)' }}>{defectuosas}</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '11px', marginTop: '6px', color: 'var(--color-gray-600)', borderTop: '1px solid var(--color-gray-200)', paddingTop: '4px' }}>
+                  <span>🛠️ Re-trabajos: <strong>{inspecciones.filter(i => i.defectAction === 'retrabajo').length}</strong></span>
+                  <span>🗑️ Desechos / Scrap: <strong>{inspecciones.filter(i => i.defectAction === 'desecho').length}</strong></span>
+                  <span>♻️ Reutilizadas: <strong>{inspecciones.filter(i => i.defectAction === 'reutilizacion').length}</strong></span>
+                </div>
+              </div>
+            </Card>
+            <Card variant="warning">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Piezas Pendientes de Re-inspección</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-princeton-orange)' }}>{pendingReinspectionCount}</h3>
+                <p className={styles.kpiFooter}>Con retrabajo/reclasificación sin cerrar</p>
+              </div>
+            </Card>
+          </>
+        ) : activeTab === 'revision' ? (
+          <>
+            <Card variant="danger">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Listos, Pendientes de Aprobar</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-alert)' }}>{reviewStats.pendientesListos}</h3>
+                <p className={styles.kpiFooter}>Al 100% de piezas, sin aprobación</p>
+              </div>
+            </Card>
+            <Card variant="success">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Aprobados</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-success)' }}>{reviewStats.aprobados}</h3>
+                <p className={styles.kpiFooter}>Ya pueden notificar entrega a PT</p>
+              </div>
+            </Card>
+            <Card variant="default">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Rechazados</span>
+                <h3 className={styles.kpiValue}>{reviewStats.rechazados}</h3>
+                <p className={styles.kpiFooter}>Esperando retrabajo y nueva revisión</p>
+              </div>
+            </Card>
+          </>
+        ) : (
+          <>
+            <Card variant="highlight">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Nota Promedio Desempeño</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-secondary)' }}>{evalPromedio} / 10</h3>
+                <p className={styles.kpiFooter}>Calificación de personal</p>
+              </div>
+            </Card>
+            <Card variant="default">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Colaboradores en Área</span>
+                <h3 className={styles.kpiValue}>{totalColaboradoresArea}</h3>
+                <p className={styles.kpiFooter}>Personal activo asignado</p>
+              </div>
+            </Card>
+            <Card variant="success">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Evaluados Hoy</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-success)' }}>{uniqueEvaluados}</h3>
+                <p className={styles.kpiFooter}>Con al menos una evaluación</p>
+              </div>
+            </Card>
+            <Card variant="danger">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Alertas Desempeño</span>
+                <h3 className={styles.kpiValue} style={{ color: alertasDesempeno > 0 ? 'var(--color-alert)' : 'var(--color-gray-600)' }}>
+                  {alertasDesempeno}
+                </h3>
+                <p className={styles.kpiFooter}>Calificación menor a 7</p>
+              </div>
+            </Card>
+          </>
+        )}
+      </div>
+
+      {/* ============================================
+          CONTENIDO DE PESTAÑAS
+          ============================================ */}
+      
+      {/* 1. AUDITORÍA DE JUEGOS */}
+      {activeTab === 'auditoria' && (
+        <div className={styles.layoutColumns}>
+          {/* Registro */}
+          <motion.div variants={itemVariants}>
+            <Card variant="default">
+              <h3 className={styles.sectionTitle}>Registrar Auditoría de Calidad</h3>
+              <form onSubmit={handleSubmit} className={styles.form}>
+
+                {/* Tipo de Auditoría: pieza nueva o seguimiento por ID de una ya existente */}
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>Tipo de Auditoría</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setFollowUpMode('nueva'); setFollowUpTargetId(''); }}
+                      style={{
+                        flex: 1, padding: '10px', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
+                        border: followUpMode === 'nueva' ? '2px solid var(--color-secondary)' : '1px solid var(--color-gray-200)',
+                        background: followUpMode === 'nueva' ? 'rgba(51, 0, 102, 0.05)' : 'var(--color-white)',
+                        color: followUpMode === 'nueva' ? 'var(--color-secondary)' : 'var(--color-gray-600)',
+                      }}
+                    >
+                      🆕 Pieza Nueva
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFollowUpMode('seguimiento')}
+                      style={{
+                        flex: 1, padding: '10px', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
+                        border: followUpMode === 'seguimiento' ? '2px solid var(--color-secondary)' : '1px solid var(--color-gray-200)',
+                        background: followUpMode === 'seguimiento' ? 'rgba(51, 0, 102, 0.05)' : 'var(--color-white)',
+                        color: followUpMode === 'seguimiento' ? 'var(--color-secondary)' : 'var(--color-gray-600)',
+                      }}
+                    >
+                      🔗 Seguimiento de Pieza Existente
+                    </button>
+                  </div>
+                </div>
+
+                {followUpMode === 'seguimiento' && (
+                  <div className={styles.formGroup}>
+                    <Select
+                      label="¿A qué pieza le das seguimiento? (por su ID) *"
+                      value={followUpTargetId}
+                      onChange={(e) => handleSelectFollowUpTarget(e.target.value)}
+                      required
+                      placeholder="-- Selecciona el ID de la pieza --"
+                      options={openPendingChains.map((chain) => {
+                        const last = chain[chain.length - 1];
+                        const areaName = AREAS.find((a) => a.id === last.areaId)?.name || last.areaId;
+                        return {
+                          value: last.id,
+                          label: `${last.pieceTrackingId || last.id} — ${last.gameName} · ${areaName} · ${last.pieceName} (${new Date(last.date).toLocaleDateString()})`,
+                        };
+                      })}
+                    />
+                    {openPendingChains.length === 0 && (
+                      <span style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
+                        No hay piezas pendientes de re-revisión en este momento.
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Área */}
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Área Auditada"
+                    name="areaId"
+                    value={newInspection.areaId}
+                    onChange={handleInputChange}
+                    required
+                    disabled={followUpMode === 'seguimiento'}
+                    options={AREAS.map((a) => ({ value: a.id, label: a.name }))}
+                  />
+                </div>
+
+                {/* Juego */}
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Juego Inspeccionado"
+                    name="gameName"
+                    value={newInspection.gameName}
+                    onChange={handleInputChange}
+                    required
+                    disabled={followUpMode === 'seguimiento'}
+                    placeholder="-- Selecciona el Juego --"
+                    options={juegos.map((j) => ({
+                      value: j.name,
+                      label: `${j.name} (${j.projectName})`,
+                    }))}
+                  />
+                </div>
+
+                {/* Interruptor de Defecto */}
+                <div className={styles.formGroup} style={{ marginBottom: 'var(--space-2)' }}>
+                  <label className={styles.checkboxLabel} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={newInspection.hasDefect}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setNewInspection((prev) => ({
+                          ...prev,
+                          hasDefect: checked,
+                          defectType: checked ? '' : 'Ninguno',
+                          status: checked ? 'defectuoso' : 'aprobado',
+                          score: checked ? '7' : '10',
+                        }));
+                      }}
+                    />
+                    <span style={{ fontWeight: '600', fontSize: '13px', color: 'var(--color-secondary)' }}>
+                      ⚠️ ¿La pieza/componente cuenta con algún defecto?
+                    </span>
+                  </label>
+                </div>
+
+                {/* Pieza Revisada y Tipo de Defecto */}
+                <div className={styles.row}>
+                  <div className={styles.formGroup}>
+                    <Input
+                      label="Pieza / Componente Revisado *"
+                      name="pieceName"
+                      placeholder="Ej: Poste principal, Red escaladora"
+                      value={newInspection.pieceName}
+                      onChange={handleInputChange}
+                      disabled={followUpMode === 'seguimiento'}
+                      required
+                    />
+                  </div>
+
+                  <div className={styles.formGroup}>
+                    <Input
+                      label={newInspection.hasDefect ? "Tipo de Defecto *" : "Tipo de Defecto (Desactivado)"}
+                      name="defectType"
+                      placeholder={newInspection.hasDefect ? "Ej: Soldadura porosa, Astilla" : "Sin defecto (Aprobado)"}
+                      value={newInspection.hasDefect ? newInspection.defectType : ''}
+                      onChange={handleInputChange}
+                      disabled={!newInspection.hasDefect}
+                      required={newInspection.hasDefect}
+                    />
+                  </div>
+                </div>
+
+                {followUpMode === 'seguimiento' && selectedFollowUpChain && (
+                  <div className={styles.bannerInfo} style={{ marginBottom: 'var(--space-3)' }}>
+                    <strong>🔗 {selectedFollowUpChain[selectedFollowUpChain.length - 1].pieceTrackingId || selectedFollowUpChain[selectedFollowUpChain.length - 1].id}:</strong>
+                    <span>
+                      {' '}Esta nueva revisión se enlazará a esa pieza (quedó en{' '}
+                      {selectedFollowUpChain[selectedFollowUpChain.length - 1].defectAction === 'retrabajo' ? 'retrabajo' : 'reclasificación'}
+                      {' '}el {new Date(selectedFollowUpChain[selectedFollowUpChain.length - 1].date).toLocaleDateString()}).
+                    </span>
+                  </div>
+                )}
+
+                {/* Destino / Acción de la Pieza Defectuosa */}
+                {newInspection.hasDefect && (
+                  <div className={styles.formGroup}>
+                    <Select
+                      label="Destino / Acción de la Pieza Defectuosa *"
+                      name="defectAction"
+                      value={newInspection.defectAction || 'retrabajo'}
+                      onChange={handleInputChange}
+                      required
+                      options={[
+                        { value: 'retrabajo', label: '🛠️ Re-trabajo (Corregir / Cortar para dar la medida exacta)' },
+                        { value: 'desecho', label: '🗑️ Desecho / Scrap (Desechar material por completo)' },
+                        { value: 'reutilizacion', label: '♻️ Reutilización / Reclasificación (Aprovechar para otra pieza menor)' },
+                      ]}
+                    />
+                  </div>
+                )}
+
+                {/* Resultado de Inspección */}
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Resultado de Inspección *"
+                    name="status"
+                    value={newInspection.status}
+                    onChange={handleInputChange}
+                    required
+                    options={[
+                      { value: 'aprobado', label: 'Pasa (Aprobado)' },
+                      { value: 'defectuoso', label: 'No Pasa (Con Defectos)' },
+                    ]}
+                  />
+                </div>
+
+                {/* Inspector */}
+                <div className={styles.formGroup}>
+                  <Input
+                    label="Inspector Encargado"
+                    name="inspector"
+                    value={newInspection.inspector}
+                    onChange={handleInputChange}
+                    disabled
+                  />
+                </div>
+
+                {/* Evidencia Fotográfica */}
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>Evidencia Fotográfica (Opcional)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    multiple
+                    style={{ display: 'none' }}
+                    id="quality-photo-capture"
+                    onChange={handleCapturePhotos}
+                  />
+                  <label
+                    htmlFor="quality-photo-capture"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      border: '1px dashed var(--color-primary)',
+                      backgroundColor: 'rgba(255, 51, 0, 0.03)',
+                      fontWeight: '600',
+                      color: 'var(--color-primary)',
+                      height: '42px',
+                      borderRadius: '8px',
+                    }}
+                  >
+                    📷 Tomar Foto / Adjuntar Evidencia
+                  </label>
+
+                  {newInspection.photos.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '10px' }}>
+                      {newInspection.photos.map((photo, idx) => (
+                        <div key={idx} style={{ position: 'relative' }}>
+                          <img
+                            src={photo.previewUrl}
+                            alt={`Evidencia ${idx + 1}`}
+                            style={{
+                              width: '64px',
+                              height: '64px',
+                              objectFit: 'cover',
+                              borderRadius: '8px',
+                              border: '1px solid var(--color-gray-200)',
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePhoto(idx)}
+                            title="Quitar evidencia"
+                            style={{
+                              position: 'absolute',
+                              top: '-6px',
+                              right: '-6px',
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '50%',
+                              background: 'var(--color-danger)',
+                              color: '#fff',
+                              border: 'none',
+                              fontSize: '11px',
+                              lineHeight: 1,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Notas */}
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>Observaciones y Detalles del Defecto</label>
+                  <textarea
+                    name="notes"
+                    className={styles.textarea}
+                    placeholder="Detalla las especificaciones no cumplidas..."
+                    value={newInspection.notes}
+                    onChange={handleInputChange}
+                    rows="3"
+                  />
+                </div>
+
+                <Button type="submit" variant="primary" size="md" disabled={isSubmittingInspection}>
+                  {isSubmittingInspection ? '⏳ Guardando...' : '⚡ Registrar Inspección'}
+                </Button>
+              </form>
+            </Card>
+          </motion.div>
+
+          {/* Historial */}
+          <motion.div variants={itemVariants} className={styles.historyCol}>
+            <Card variant="default">
+              <h3 className={styles.sectionTitle}>Historial de Auditorías</h3>
+              <div className={styles.historyList}>
+                {pieceChains.map((chain) => {
+                  const last = chain[chain.length - 1];
+                  const areaInfo = AREAS.find((a) => a.id === last.areaId);
+                  const chainOpen = isChainOpen(chain);
+                  return (
+                    <div key={chain[0].pieceTrackingId || chain[0].id} className={styles.chainCard}>
+                      <div className={styles.chainHeader}>
+                        <div>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, color: 'var(--color-secondary)', display: 'block' }}>
+                            {last.pieceTrackingId || last.id}
+                          </span>
+                          <strong className={styles.insGame}>{last.gameName}</strong>
+                          <span className={styles.insArea}>
+                            {areaInfo?.name || last.areaId}{last.pieceName ? ` · ${last.pieceName}` : ''}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {chain.length > 1 && (
+                            <Badge variant="info">🔗 {chain.length} revisiones</Badge>
+                          )}
+                          <Badge variant={chainOpen ? 'warning' : last.status === 'aprobado' ? 'success' : 'danger'}>
+                            {chainOpen
+                              ? '⏳ Pendiente de re-revisión'
+                              : last.status === 'aprobado' ? 'PASA' : 'NO PASA'}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className={styles.chainSteps}>
+                        {chain.map((ins, idx) => (
+                          <div key={ins.id} className={styles.chainStep}>
+                            <span className={styles.chainStepDot} />
+                            {idx < chain.length - 1 && <span className={styles.chainStepLine} />}
+                            <div className={styles.chainStepBody}>
+                              <div className={styles.insHeader}>
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-gray-500)', textTransform: 'uppercase' }}>
+                                  {idx === 0 ? 'Auditoría original' : `Re-revisión ${idx}`}
+                                </span>
+                                <div className={styles.insBadgeBlock} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <Badge variant={ins.status === 'aprobado' ? 'success' : 'danger'}>
+                                    {ins.status === 'aprobado' ? 'PASA' : 'NO PASA'}
+                                  </Badge>
+                                  {!isReadOnly && (
+                                    <div style={{ display: 'flex', gap: '4px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleEditInspectionClick(ins)}
+                                        style={{
+                                          background: 'none',
+                                          border: 'none',
+                                          color: 'var(--color-primary)',
+                                          cursor: 'pointer',
+                                          fontSize: '14px',
+                                          padding: '2px',
+                                          borderRadius: '4px',
+                                          transition: 'background-color 0.2s',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                        }}
+                                        title="Editar inspección"
+                                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.05)')}
+                                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                                      >
+                                        ✏️
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteInspection(ins)}
+                                        style={{
+                                          background: 'none',
+                                          border: 'none',
+                                          color: 'var(--color-alert)',
+                                          cursor: 'pointer',
+                                          fontSize: '14px',
+                                          padding: '2px',
+                                          borderRadius: '4px',
+                                          transition: 'background-color 0.2s',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                        }}
+                                        title="Eliminar inspección"
+                                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 51, 0, 0.05)')}
+                                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                                      >
+                                        🗑️
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {(ins.defectType !== 'Ninguno' || ins.pieceName) && (
+                                <div className={styles.defectTypeAlert}>
+                                  {ins.pieceName && <span><strong>Pieza:</strong> {ins.pieceName} | </span>}
+                                  <strong>Defecto:</strong> {ins.defectType}
+                                  {ins.defectAction && ins.defectAction !== 'Ninguna' && (
+                                    <div style={{ marginTop: '4px' }}>
+                                      <strong>Destino: </strong>
+                                      <Badge variant={ins.defectAction === 'retrabajo' ? 'warning' : ins.defectAction === 'desecho' ? 'danger' : 'info'}>
+                                        {ins.defectAction === 'retrabajo'
+                                          ? '🛠️ Re-trabajo (Corregir)'
+                                          : ins.defectAction === 'desecho'
+                                          ? '🗑️ Desecho / Scrap'
+                                          : '♻️ Reclasificación'}
+                                      </Badge>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              <p className={styles.insNotes}>{ins.notes}</p>
+                              {ins.photos && ins.photos.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '8px 0' }}>
+                                  {ins.photos.map((photo, photoIdx) => (
+                                    <img
+                                      key={photo?.path || photoIdx}
+                                      src={getPhotoSrc(photo)}
+                                      alt={`Evidencia ${photoIdx + 1} de ${ins.gameName}`}
+                                      onClick={() => setPhotoPreview(getPhotoSrc(photo))}
+                                      style={{
+                                        width: '52px',
+                                        height: '52px',
+                                        objectFit: 'cover',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--color-gray-200)',
+                                        cursor: 'pointer',
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                              <span className={styles.insMeta}>
+                                Auditor: {ins.inspector} • {new Date(ins.date).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          </motion.div>
+        </div>
+      )}
+
+      {/* 3. REVISIÓN DE CALIDAD PARA ENTREGA A PT */}
+      {activeTab === 'revision' && (
+        <div className={styles.layoutColumns}>
+          {/* Cola de áreas listas sin aprobar */}
+          <motion.div variants={itemVariants}>
+            <Card variant="default">
+              <h3 className={styles.sectionTitle}>Listos para Revisar ({reviewQueue.length})</h3>
+              <div className={styles.historyList}>
+                {reviewQueue.map((pair) => {
+                  const areaInfo = AREAS.find((a) => a.id === pair.areaId);
+                  return (
+                    <button
+                      key={pair.game.id + pair.areaId}
+                      type="button"
+                      onClick={() => handleOpenReviewFromQueue(pair)}
+                      className={styles.insCard}
+                      style={{ width: '100%', textAlign: 'left', cursor: 'pointer', border: 'none' }}
+                    >
+                      <div className={styles.insHeader}>
+                        <div>
+                          <strong className={styles.insGame}>{pair.game.name}</strong>
+                          <span className={styles.insArea}>{areaInfo?.name || pair.areaId}</span>
+                        </div>
+                        <Badge variant={pair.review?.status === 'rechazado' ? 'danger' : 'warning'}>
+                          {pair.review?.status === 'rechazado' ? 'RECHAZADO' : 'SIN REVISAR'}
+                        </Badge>
+                      </div>
+                      <p className={styles.insNotes}>Proyecto: {pair.game.projectName}</p>
+                    </button>
+                  );
+                })}
+                {reviewQueue.length === 0 && (
+                  <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '16px' }}>
+                    No hay áreas al 100% esperando aprobación de Calidad en este momento.
+                  </p>
+                )}
+              </div>
+            </Card>
+          </motion.div>
+
+          {/* Detalle / gestión del checklist */}
+          <motion.div variants={itemVariants} className={styles.historyCol}>
+            <Card variant="default">
+              <h3 className={styles.sectionTitle}>Checklist de Revisión</h3>
+
+              <div className={styles.row}>
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Área"
+                    value={reviewAreaId}
+                    onChange={handleSelectReviewArea}
+                    options={MANUFACTURING_AREAS.map((a) => ({ value: a.id, label: a.name }))}
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Juego"
+                    value={reviewGameName}
+                    onChange={(e) => setReviewGameName(e.target.value)}
+                    placeholder="-- Selecciona el Juego --"
+                    options={reviewGamesForArea.map((j) => ({ value: j.name, label: `${j.name} (${j.projectName})` }))}
+                  />
+                </div>
+              </div>
+
+              {reviewGameObj && (
+                <>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', margin: '10px 0' }}>
+                    <Badge variant={
+                      reviewData.status === 'aprobado' ? 'success' : reviewData.status === 'rechazado' ? 'danger' : 'warning'
+                    }>
+                      {reviewData.status === 'aprobado' ? 'APROBADO' : reviewData.status === 'rechazado' ? 'RECHAZADO' : 'PENDIENTE'}
+                    </Badge>
+                    <span style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>
+                      Producción del área: {reviewProduced} / {reviewTarget} pzas {reviewAreaReady ? '(100% ✓)' : '(aún en proceso)'}
+                    </span>
+                  </div>
+
+                  {reviewData.status === 'rechazado' && reviewData.notes && (
+                    <div className={styles.bannerDanger} style={{ marginBottom: '10px' }}>
+                      <strong>❌ Motivo del rechazo:</strong>
+                      <span> {reviewData.notes}</span>
+                    </div>
+                  )}
+                  {reviewData.status === 'aprobado' && (
+                    <div className={styles.bannerSuccess} style={{ marginBottom: '10px' }}>
+                      <strong>✅ Aprobado por {reviewData.reviewedBy}:</strong>
+                      <span> El área ya puede notificar su entrega a Producto Terminado.</span>
+                    </div>
+                  )}
+
+                  <div className={styles.itemsSelectionBox} style={{ maxHeight: '220px', padding: '8px', background: 'var(--color-gray-50)', borderRadius: '8px', border: '1px solid var(--color-gray-200)', marginBottom: '10px' }}>
+                    {reviewData.checklist.map((item) => (
+                      <label
+                        key={item.id}
+                        className={styles.checkboxLabel}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 4px' }}
+                      >
+                        <input type="checkbox" checked={item.checked} onChange={() => handleToggleReviewItem(item.id)} />
+                        <span style={{ flexGrow: 1, textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? 'var(--color-gray-500)' : 'var(--color-dark)' }}>
+                          {item.text}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveReviewItem(item.id)}
+                          style={{ border: 'none', background: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontWeight: 'bold' }}
+                        >
+                          ✕
+                        </button>
+                      </label>
+                    ))}
+                    {reviewData.checklist.length === 0 && (
+                      <span style={{ fontSize: '12px', color: 'var(--color-gray-500)', display: 'block', textAlign: 'center', padding: '12px' }}>
+                        Aún no hay puntos de revisión para esta combinación de juego y área. Agrega los que consideres necesarios.
+                      </span>
+                    )}
+                  </div>
+
+                  <div className={styles.dynamicRow} style={{ marginBottom: '14px' }}>
+                    <input
+                      type="text"
+                      className={styles.textInput}
+                      placeholder="Ej: Soldaduras sin porosidad, medidas dentro de tolerancia..."
+                      value={newReviewItemText}
+                      style={{ flexGrow: 1 }}
+                      onChange={(e) => setNewReviewItemText(e.target.value)}
+                    />
+                    <Button type="button" variant="secondary" size="md" onClick={handleAddReviewItem}>
+                      ➕ Agregar Punto
+                    </Button>
+                  </div>
+
+                  <div className={styles.row}>
+                    <Button type="button" variant="secondary" size="md" onClick={handleOpenRejectModal}>
+                      ↩️ Rechazar
+                    </Button>
+                    <Button type="button" variant="primary" size="md" onClick={handleApproveReview}>
+                      ✅ Aprobar Entrega a PT
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {!reviewGameObj && (
+                <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '16px' }}>
+                  Selecciona un área y un juego para ver o construir su checklist de revisión.
+                </p>
+              )}
+            </Card>
+          </motion.div>
+        </div>
+      )}
+
+      {/* 2. EVALUACIÓN DE DESEMPEÑO DE COLABORADORES */}
+      {activeTab === 'evaluaciones' && (
+        <div className={styles.evaluacionesSection}>
+          {/* Tarjeta de Filtro */}
+          <motion.div variants={itemVariants}>
+            <Card variant="default" className={styles.filterCard}>
+              <div className={styles.evalFilterBar} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                <h3 className={styles.evalSectionTitle} style={{ margin: 0 }}>
+                  Calificación de Colaboradores
+                </h3>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div className={styles.evalSelectWrapper} style={{ minWidth: '200px' }}>
+                    <Select
+                      label="Selecciona Área de Fábrica"
+                      value={evalAreaId}
+                      onChange={(e) => setEvalAreaId(e.target.value)}
+                      options={AREAS.map((a) => ({ value: a.id, label: a.name }))}
+                    />
+                  </div>
+                  <div className={styles.evalSelectWrapper} style={{ minWidth: '200px' }}>
+                    <Select
+                      label="⏱️ Frecuencia de Bloques"
+                      value={String(blockDuration)}
+                      onChange={(e) => updateBlockDuration(e.target.value)}
+                      options={[
+                        { value: '1', label: 'Cada 1 Hora' },
+                        { value: '2', label: 'Cada 2 Horas' },
+                        { value: '3', label: 'Cada 3 Horas' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              </div>
+            </Card>
+          </motion.div>
+
+          {/* Tabla de Evaluaciones de Horarios */}
+          <motion.div variants={itemVariants} className={styles.tableCardContainer}>
+            <Card variant="default" className={styles.tableCard}>
+              <div className={styles.tableResponsive} ref={tableContainerRef}>
+                <table className={styles.evalTable}>
+                  <thead>
+                    <tr>
+                      <th className={styles.colaboradorColHeader}>Colaborador</th>
+                      {activeBlocks.map((block) => {
+                        const isActive = block.id === liveBlockId;
+                        return (
+                          <th 
+                            key={block.id} 
+                            className={`${styles.blockHeader} ${isActive ? styles.activeBlockHeader : ''}`}
+                          >
+                            <div className={styles.blockHeaderContent}>
+                              <span className={styles.blockNameText}>{block.name}</span>
+                              <span className={styles.blockTimeRangeText}>{block.timeRange}</span>
+                              {isActive && (
+                                <Badge variant="success" size="sm" className={styles.liveBadge}>
+                                  <span className={styles.pulseDot} />
+                                  EN CURSO
+                                </Badge>
+                              )}
+                            </div>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {areaOperarios.map((op) => {
+                      const isTodaySchedule = op.schedule?.authorizedDate === todayStr;
+                      const opStartHour = isTodaySchedule ? (op.schedule?.startHour || 8) : 8;
+                      const opEndHour = isTodaySchedule ? (op.schedule?.endHour || defaultEnd) : defaultEnd;
+
+                      return (
+                        <tr key={op.id}>
+                          <td className={styles.colaboradorCell}>
+                            <div className={styles.userInfoBlock} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span className={styles.avatarMini}>{op.name[0].toUpperCase()}</span>
+                                <div className={styles.userDetails}>
+                                  <strong className={styles.userName}>{op.name}</strong>
+                                  <span className={styles.userRole}>ID: {op.id}</span>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center', marginTop: '2px' }}>
+                                <span style={{ fontSize: '10px', color: 'var(--color-gray-600)', backgroundColor: 'var(--color-gray-100)', padding: '2px 6px', borderRadius: '4px' }}>
+                                  ⏰ {String(opStartHour).padStart(2, '0')}:00 - {String(opEndHour).padStart(2, '0')}:00
+                                </span>
+                                {isTodaySchedule && op.schedule?.overtimeHours > 0 && (
+                                  <Badge variant="warning" size="sm">
+                                    🔥 Extra (+{op.schedule.overtimeHours}h)
+                                  </Badge>
+                                )}
+                              </div>
+                              {canManageSchedule && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenScheduleModal(op)}
+                                  style={{
+                                    alignSelf: 'flex-start',
+                                    fontSize: '11px',
+                                    color: 'var(--color-primary)',
+                                    background: 'none',
+                                    border: 'none',
+                                    padding: '2px 0',
+                                    cursor: 'pointer',
+                                    fontWeight: '600',
+                                    textDecoration: 'underline'
+                                  }}
+                                >
+                                  ⏱️ Ajustar Horario
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          {activeBlocks.map((block) => {
+                            // ¿Cae este bloque dentro del horario particular de este colaborador?
+                            const opHasBlock = block.startHour >= opStartHour && block.endHour <= opEndHour;
+                            
+                            // ¿Es un bloque fuera del horario normal del taller? (Tiempo Extra)
+                            const isSaturday = new Date().getDay() === 6;
+                            const baseEnd = isSaturday ? 13 : 18;
+                            const isOvertimeBlock = block.startHour < 8 || block.startHour >= baseEnd;
+
+                            const isLive = block.id === liveBlockId;
+
+                            const existingEval = evaluaciones.find(
+                              (ev) => ev.operarioId === op.id && ev.blockId === block.id
+                            );
+
+                            if (!opHasBlock) {
+                              return (
+                                <td
+                                  key={block.id}
+                                  data-label={block.name}
+                                  className={styles.disabledCell}
+                                  title="Fuera de su jornada asignada"
+                                >
+                                  <span className={styles.naText}>N/A</span>
+                                </td>
+                              );
+                            }
+
+                            return (
+                              <td
+                                key={block.id}
+                                data-label={block.name}
+                                className={`${styles.evalCell} ${isLive ? styles.activeBlockCell : ''} ${isOvertimeBlock ? styles.overtimeBlockCell : ''}`}
+                              >
+                                {existingEval ? (
+                                  isLive ? (
+                                    <button
+                                      type="button"
+                                      className={styles.scoreContainer}
+                                      onClick={() => handleOpenEvalModal(op, block, existingEval)}
+                                      title="Clic para editar observaciones"
+                                    >
+                                      <Badge variant={getScoreVariant(existingEval.score)}>
+                                        ⭐ {existingEval.score} / 10
+                                      </Badge>
+                                      {isOvertimeBlock && (
+                                        <Badge variant="warning" size="sm" className={styles.overtimeMarker}>
+                                          Extra
+                                        </Badge>
+                                      )}
+                                      <span className={styles.evalNote} title={existingEval.notes}>
+                                        {existingEval.notes}
+                                      </span>
+                                    </button>
+                                  ) : (
+                                    <div
+                                      className={styles.scoreContainerDisabled}
+                                      title="Evaluación finalizada (solo lectura)"
+                                    >
+                                      <Badge variant={getScoreVariant(existingEval.score)}>
+                                        ⭐ {existingEval.score} / 10
+                                      </Badge>
+                                      {isOvertimeBlock && (
+                                        <Badge variant="warning" size="sm" className={styles.overtimeMarker}>
+                                          Extra
+                                        </Badge>
+                                      )}
+                                      <span className={styles.evalNote} title={existingEval.notes}>
+                                        {existingEval.notes}
+                                      </span>
+                                    </div>
+                                  )
+                                ) : (
+                                  isLive ? (
+                                    <div className={styles.calificarBtnContainer}>
+                                      <button
+                                        type="button"
+                                        className={`${styles.calificarBtn} ${styles.pulseCalificarBtn} ${isOvertimeBlock ? styles.overtimeCalificarBtn : ''}`}
+                                        onClick={() => handleOpenEvalModal(op, block, null)}
+                                      >
+                                        ＋ Calificar
+                                      </button>
+                                      {isOvertimeBlock && (
+                                        <span className={styles.overtimeIndicatorText}>Extra</span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className={styles.closedBlockLabel} title="Fuera del bloque activo de tiempo">
+                                      🔒 Cerrado
+                                    </span>
+                                  )
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                    {areaOperarios.length === 0 && (
+                      <tr>
+                        <td colSpan={activeBlocks.length + 1} className={styles.emptyCell}>
+                          No hay colaboradores asignados a esta área actualmente.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal para Registrar/Editar Evaluación de Colaborador */}
+      {evalModal.isOpen && (
+        <Modal
+          isOpen={evalModal.isOpen}
+          onClose={handleCloseEvalModal}
+          title={`Evaluación de Desempeño: ${evalModal.collaborator?.name}`}
+        >
+          <form onSubmit={handleSaveEval} className={styles.modalForm}>
+            <div className={styles.modalMetaInfo}>
+              <div>
+                <strong>Área:</strong> {AREAS.find((a) => a.id === evalAreaId)?.name}
+              </div>
+              <div>
+                <strong>Horario:</strong> {evalModal.block?.name} ({evalModal.block?.timeRange})
+              </div>
+            </div>
+
+            <div className={styles.formGroup}>
+              <Select
+                label="Calificación del Desempeño"
+                value={evalModal.score}
+                onChange={(e) => setEvalModal({ ...evalModal, score: e.target.value })}
+                required
+                options={[
+                  { value: '10', label: '10 - Excelente' },
+                  { value: '9', label: '9 - Muy Bueno' },
+                  { value: '8', label: '8 - Bueno' },
+                  { value: '7', label: '7 - Aceptable' },
+                  { value: '6', label: '6 - Deficiente' },
+                  { value: '5', label: '5 - Crítico' },
+                  { value: '4', label: '4 - Inaceptable' },
+                  { value: '3', label: '3 - Grave' },
+                  { value: '2', label: '2 - Muy Grave' },
+                  { value: '1', label: '1 - Sin Desempeño' },
+                ]}
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Observaciones y Comentarios</label>
+              <textarea
+                className={styles.textarea}
+                placeholder="Describe el comportamiento, cumplimiento de seguridad, orden y calidad del operario..."
+                value={evalModal.notes}
+                onChange={(e) => setEvalModal({ ...evalModal, notes: e.target.value })}
+                required
+                rows="4"
+              />
+            </div>
+
+            <div className={styles.modalActions}>
+              <Button type="button" variant="secondary" onClick={handleCloseEvalModal}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary">
+                Guardar Evaluación
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* MODAL DE EDICIÓN DE JORNADA / HORAS EXTRAS */}
+      {scheduleModal.isOpen && (
+        <Modal
+          isOpen={scheduleModal.isOpen}
+          onClose={handleCloseScheduleModal}
+          title={`⏱️ Modificar Horario / Tiempo Extra: ${scheduleModal.collaborator?.name}`}
+        >
+          <form onSubmit={handleSaveSchedule} className={styles.modalForm}>
+            <div className={styles.modalMetaInfo}>
+              <div>
+                <strong>Colaborador:</strong> {scheduleModal.collaborator?.name}
+              </div>
+              <div>
+                <strong>Área:</strong> {scheduleModal.collaborator && (AREAS.find((a) => a.id === scheduleModal.collaborator.currentArea)?.name || scheduleModal.collaborator.currentArea)}
+              </div>
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Fecha de Autorización (Tiempo Extra)</label>
+              <input
+                type="date"
+                className={styles.input}
+                value={scheduleModal.authorizedDate}
+                onChange={handleDateChange}
+                required
+              />
+              <span className={styles.helpText} style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '4px', display: 'block' }}>
+                * Nota: La extensión horaria o tiempo extra es válida únicamente para el día autorizado. Al día siguiente volverá a su jornada habitual.
+              </span>
+            </div>
+
+            <div className={styles.row}>
+              <div className={styles.formGroup}>
+                <Select
+                  label="Hora de Entrada (24 hrs)"
+                  value={scheduleModal.startHour}
+                  onChange={handleStartHourChange}
+                  required
+                  options={[
+                    { value: '6', label: '06:00 am (Extra Temprana)' },
+                    { value: '7', label: '07:00 am (Extra Temprana)' },
+                    { value: '8', label: '08:00 am (Horario Normal)' },
+                    { value: '9', label: '09:00 am' },
+                    { value: '10', label: '10:00 am' },
+                  ]}
+                />
+              </div>
+
+              <div className={styles.formGroup}>
+                <Select
+                  label="Hora de Salida (24 hrs)"
+                  value={scheduleModal.endHour}
+                  onChange={handleEndHourChange}
+                  required
+                  options={[
+                    { value: '13', label: '13:00 (Fin Sábado Normal)' },
+                    { value: '14', label: '14:00 (Sábado Extra)' },
+                    { value: '15', label: '15:00 (Sábado Extra)' },
+                    { value: '16', label: '16:00 (Sábado Extra)' },
+                    { value: '17', label: '17:00 (Sábado Extra)' },
+                    { value: '18', label: '18:00 (Fin L-V Normal)' },
+                    { value: '19', label: '19:00 (Extra LV)' },
+                    { value: '20', label: '20:00 (Extra LV)' },
+                    { value: '21', label: '21:00 (Extra LV)' },
+                    { value: '22', label: '22:00 (Extra LV)' },
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className={styles.formGroup} style={{ backgroundColor: 'var(--color-gray-50)', padding: '12px', borderRadius: '6px', border: '1px solid var(--color-gray-200)', marginTop: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: '600', fontSize: '13px', color: 'var(--color-secondary)' }}>
+                  Total Horas Extras Calculadas:
+                </span>
+                <Badge variant={Number(scheduleModal.overtimeHours) > 0 ? 'warning' : 'success'}>
+                  {scheduleModal.overtimeHours} Horas
+                </Badge>
+              </div>
+              {Number(scheduleModal.overtimeHours) > 0 && (
+                <p style={{ fontSize: '11px', color: 'var(--color-gray-600)', margin: '6px 0 0 0' }}>
+                  Autorizado por Supervisor de Calidad en tiempo real.
+                </p>
+              )}
+            </div>
+
+            <div className={styles.modalActions}>
+              <Button type="button" variant="secondary" onClick={handleCloseScheduleModal}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary">
+                Guardar Horario
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* MODAL: VISTA AMPLIADA DE EVIDENCIA FOTOGRÁFICA */}
+      {photoPreview && (
+        <Modal
+          isOpen={Boolean(photoPreview)}
+          onClose={() => setPhotoPreview(null)}
+          title="📷 Evidencia Fotográfica"
+        >
+          <img
+            src={photoPreview}
+            alt="Evidencia fotográfica ampliada"
+            style={{ width: '100%', borderRadius: '8px', display: 'block' }}
+          />
+        </Modal>
+      )}
+
+      {/* MODAL: RECHAZAR REVISIÓN DE CALIDAD */}
+      <Modal
+        isOpen={rejectModal.isOpen}
+        onClose={handleCloseRejectModal}
+        title={`↩️ Rechazar Revisión: ${reviewGameObj?.name || ''}`}
+      >
+        <form onSubmit={handleSubmitReject} className={styles.modalForm}>
+          <div className={styles.formGroup}>
+            <label className={styles.label}>¿Qué no cumplió? *</label>
+            <textarea
+              className={styles.textarea}
+              placeholder="Ej: Se encontraron rebabas sin lijar en 3 piezas, favor de retrabajar y solicitar nueva revisión."
+              value={rejectModal.notes}
+              onChange={(e) => setRejectModal((prev) => ({ ...prev, notes: e.target.value }))}
+              rows="4"
+              required
+            />
+          </div>
+          <div className={styles.modalActions}>
+            <Button type="button" variant="secondary" onClick={handleCloseRejectModal}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="primary">
+              Confirmar Rechazo
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* MODAL: EDITAR AUDITORÍA DE CALIDAD */}
+      {isEditInspectionModalOpen && (
+        <Modal
+          isOpen={isEditInspectionModalOpen}
+          onClose={() => {
+            setIsEditInspectionModalOpen(false);
+            setEditingInspection(null);
+          }}
+          title={`✏️ Editar Auditoría: ${editingInspection?.gameName || ''}`}
+        >
+          <form onSubmit={handleSaveEditInspection} className={styles.modalForm} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <div className={styles.formGroup}>
+              <Select
+                label="Resultado de Inspección *"
+                value={editInspectionForm.status}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setEditInspectionForm((prev) => ({
+                    ...prev,
+                    status: val,
+                    defectType: val === 'aprobado' ? '' : prev.defectType,
+                    defectAction: val === 'aprobado' ? 'Ninguna' : (prev.defectAction === 'Ninguna' ? 'retrabajo' : prev.defectAction),
+                  }));
+                }}
+                required
+                options={[
+                  { value: 'aprobado', label: 'Pasa (Aprobado)' },
+                  { value: 'defectuoso', label: 'No Pasa (Con Defectos)' },
+                ]}
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <Input
+                label="Pieza / Componente Revisado *"
+                value={editInspectionForm.pieceName}
+                onChange={(e) => setEditInspectionForm((prev) => ({ ...prev, pieceName: e.target.value }))}
+                required
+              />
+            </div>
+
+            {editInspectionForm.status === 'defectuoso' && (
+              <>
+                <div className={styles.formGroup}>
+                  <Input
+                    label="Tipo de Defecto *"
+                    placeholder="Ej: Soldadura porosa, Madera rota"
+                    value={editInspectionForm.defectType}
+                    onChange={(e) => setEditInspectionForm((prev) => ({ ...prev, defectType: e.target.value }))}
+                    required
+                  />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Destino / Acción de la Pieza Defectuosa *"
+                    value={editInspectionForm.defectAction}
+                    onChange={(e) => setEditInspectionForm((prev) => ({ ...prev, defectAction: e.target.value }))}
+                    required
+                    options={[
+                      { value: 'retrabajo', label: '🛠️ Re-trabajo (Corregir / Cortar)' },
+                      { value: 'desecho', label: '🗑️ Desecho / Scrap (Desechar material)' },
+                      { value: 'reutilizacion', label: '♻️ Reutilización / Reclasificación' },
+                    ]}
+                  />
+                </div>
+              </>
+            )}
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Observaciones y Detalles del Defecto</label>
+              <textarea
+                className={styles.textarea}
+                value={editInspectionForm.notes}
+                onChange={(e) => setEditInspectionForm((prev) => ({ ...prev, notes: e.target.value }))}
+                rows="3"
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Evidencia Fotográfica</label>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                multiple
+                style={{ display: 'none' }}
+                id="quality-edit-photo-capture"
+                onChange={handleAddEditInspectionPhotos}
+                disabled={isUploadingEditInspectionPhotos}
+              />
+              <label
+                htmlFor="quality-edit-photo-capture"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  cursor: isUploadingEditInspectionPhotos ? 'wait' : 'pointer',
+                  border: '1px dashed var(--color-primary)',
+                  backgroundColor: 'rgba(255, 51, 0, 0.03)',
+                  fontWeight: '600',
+                  color: 'var(--color-primary)',
+                  height: '42px',
+                  borderRadius: '8px',
+                  opacity: isUploadingEditInspectionPhotos ? 0.6 : 1,
+                }}
+              >
+                {isUploadingEditInspectionPhotos ? '⏳ Subiendo...' : '📷 Agregar Evidencia'}
+              </label>
+
+              {editInspectionPhotos.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '10px' }}>
+                  {editInspectionPhotos.map((photo, idx) => (
+                    <div key={(typeof photo === 'object' && photo.path) || idx} style={{ position: 'relative' }}>
+                      <img
+                        src={getPhotoSrc(photo)}
+                        alt={`Evidencia ${idx + 1}`}
+                        style={{
+                          width: '64px',
+                          height: '64px',
+                          objectFit: 'cover',
+                          borderRadius: '8px',
+                          border: '1px solid var(--color-gray-200)',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setPhotoPreview(getPhotoSrc(photo))}
+                      />
+                      {typeof photo !== 'string' && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveEditInspectionPhoto(photo)}
+                          title="Quitar evidencia"
+                          style={{
+                            position: 'absolute',
+                            top: '-6px',
+                            right: '-6px',
+                            width: '20px',
+                            height: '20px',
+                            borderRadius: '50%',
+                            background: 'var(--color-danger)',
+                            color: '#fff',
+                            border: 'none',
+                            fontSize: '11px',
+                            lineHeight: 1,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className={styles.modalActions}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setIsEditInspectionModalOpen(false);
+                  setEditingInspection(null);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary">
+                Guardar Cambios
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* MODAL: CONFIRMACIÓN DE ELIMINACIÓN */}
+      {deleteConfirmation.isOpen && (
+        <Modal
+          isOpen={deleteConfirmation.isOpen}
+          onClose={() => setDeleteConfirmation({ isOpen: false, inspectionId: null, gameName: '' })}
+          title="⚠️ Confirmar Eliminación"
+        >
+          <div style={{ padding: 'var(--space-2) 0' }}>
+            <p style={{ marginBottom: 'var(--space-4)', fontSize: 'var(--body-size)', color: 'var(--color-dark)' }}>
+              ¿Estás seguro de que deseas eliminar la inspección de calidad para el juego <strong>{deleteConfirmation.gameName}</strong>?
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginBottom: 'var(--space-5)' }}>
+              Esta acción es irreversible y actualizará automáticamente el estado de defectos del juego y las métricas en los reportes.
+            </p>
+            <div className={styles.modalActions}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setDeleteConfirmation({ isOpen: false, inspectionId: null, gameName: '' })}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={handleConfirmDelete}
+              >
+                Eliminar Registro
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </motion.div>
+  );
+};
+
+export default CalidadPage;

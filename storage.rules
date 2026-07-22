@@ -1,0 +1,39 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Evidencia fotográfica de salidas de producción por área
+    match /historial_produccion/{logId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                            && request.resource.size < 5 * 1024 * 1024
+                            && request.resource.contentType.matches('image/.*');
+      // "delete" no tiene request.resource (no hay archivo entrante que validar);
+      // separarlo de "write" evita que las reglas de tamaño/tipo bloqueen el borrado.
+      allow delete: if request.auth != null;
+    }
+
+    // Evidencia fotográfica de inspecciones de calidad
+    match /inspecciones/{inspeccionId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                            && request.resource.size < 5 * 1024 * 1024
+                            && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null;
+    }
+
+    // Adjuntos de requisiciones de compra: cotización, comprobante de pago y datos de
+    // pago del proveedor. A diferencia de la evidencia fotográfica, aquí también se
+    // permiten PDFs (facturas/comprobantes escaneados), por eso el límite de tamaño es
+    // mayor y el tipo aceptado incluye application/pdf.
+    match /compras/{requisicionId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                            && request.resource.size < 10 * 1024 * 1024
+                            && (request.resource.contentType.matches('image/.*')
+                                || request.resource.contentType == 'application/pdf');
+      allow delete: if request.auth != null;
+    }
+  }
+}

@@ -1,0 +1,28 @@
+/**
+ * @file EmptyState.module.css
+ * @description Estilos del estado vacío ilustrado (ver EmptyState.jsx)
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-9) var(--space-4);
+  text-align: center;
+  width: 100%;
+}
+
+.shape {
+  width: 84px;
+  height: 84px;
+}
+
+.message {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+  margin: 0;
+  max-width: 320px;
+}

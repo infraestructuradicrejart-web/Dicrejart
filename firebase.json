@@ -1,0 +1,59 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "functions": {
+    "source": "functions"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8090
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
+    "singleProjectMode": true
+  },
+  "hosting": {
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/getRequisicionByToken",
+        "function": {
+          "functionId": "getRequisicionByToken",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/resolveRequisicionByToken",
+        "function": {
+          "functionId": "resolveRequisicionByToken",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/checkSystemEmpty",
+        "function": {
+          "functionId": "checkSystemEmpty",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+/**
+ * @file Badge.module.css
+ * @description Estilos del componente Badge
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   ELEMENTO PRINCIPAL
+   ============================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  line-height: 1;
+}
+
+/* ============================================
+   TAMAÑOS
+   ============================================ */
+.size-sm {
+  font-size: 9px;
+  padding: var(--space-1) var(--space-2);
+}
+
+.size-md {
+  font-size: 11px;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ============================================
+   VARIANTES
+   ============================================ */
+.variant-neutral {
+  background-color: var(--color-gray-100);
+  color: var(--color-gray-600);
+}
+
+.variant-primary {
+  background-color: rgba(232, 92, 13, 0.12);
+  color: var(--color-primary);
+}
+
+.variant-success {
+  background-color: rgba(16, 185, 129, 0.12);
+  color: var(--color-success);
+}
+
+.variant-warning {
+  background-color: rgba(245, 158, 11, 0.14);
+  color: var(--color-warning);
+}
+
+.variant-danger {
+  background-color: rgba(255, 68, 68, 0.12);
+  color: var(--color-alert);
+}
+
+.variant-info {
+  background-color: rgba(59, 130, 246, 0.12);
+  color: var(--color-info);
+}

@@ -1,0 +1,91 @@
+/**
+ * @file Toast.module.css
+ * @description Estilos del componente Toast individual
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   TOAST INDIVIDUAL
+   ============================================ */
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+
+  min-width: 280px;
+  max-width: 380px;
+  padding: var(--space-4);
+
+  background-color: var(--color-white);
+  border-radius: var(--radius-md);
+  border-left: 4px solid var(--color-gray-300);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ============================================
+   VARIANTES
+   ============================================ */
+.variant-success {
+  border-left-color: var(--color-success);
+}
+
+.variant-danger {
+  border-left-color: var(--color-alert);
+}
+
+.variant-warning {
+  border-left-color: var(--color-warning);
+}
+
+.variant-info {
+  border-left-color: var(--color-info);
+}
+
+/* ============================================
+   ÍCONO
+   ============================================ */
+.icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* ============================================
+   MENSAJE
+   ============================================ */
+.message {
+  flex: 1;
+  margin: 0;
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  line-height: 1.4;
+}
+
+/* ============================================
+   BOTÓN DE CIERRE
+   ============================================ */
+.dismiss {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-gray-400);
+  padding: var(--space-1);
+  line-height: 1;
+  transition: color var(--transition-fast) var(--ease-out);
+}
+
+.dismiss:hover {
+  color: var(--color-gray-700);
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 480px) {
+  .toast {
+    min-width: 0;
+    max-width: 100%;
+  }
+}

@@ -1,0 +1,128 @@
+/**
+ * @file Modal.module.css
+ * @description Estilos para el componente Modal
+ * Proporciona un efecto frosted glass (glassmorphism) y centrado responsivo
+ * @author Dicrejart Dev Team
+ */
+
+.wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: max(96px, 8vh);
+  padding-bottom: var(--space-6);
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(27, 27, 27, 0.4);
+  backdrop-filter: blur(8px);
+}
+
+.container {
+  position: relative;
+  z-index: 1001;
+  width: 100%;
+  max-width: 600px;
+  padding: var(--space-4);
+  box-sizing: border-box;
+  display: flex;
+  flex-shrink: 0;
+}
+
+.sm {
+  max-width: 420px;
+}
+
+.md {
+  max-width: 600px;
+}
+
+.lg {
+  max-width: 900px;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 78vh;
+  background-color: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  border: 1px solid var(--color-gray-100);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-gray-100);
+  background-color: rgba(249, 250, 251, 0.75);
+  flex-shrink: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--h3-size);
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+
+.closeButton {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--color-gray-500);
+  cursor: pointer;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast) var(--ease-out);
+  line-height: 1;
+}
+
+.closeButton:hover {
+  background-color: var(--color-gray-100);
+  color: var(--color-alert);
+}
+
+.body {
+  padding: var(--space-5);
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+@media (max-width: 640px) {
+  .container {
+    padding: var(--space-2);
+  }
+  
+  .dialog {
+    border-radius: var(--radius-md);
+  }
+  
+  .body {
+    padding: var(--space-4);
+  }
+}

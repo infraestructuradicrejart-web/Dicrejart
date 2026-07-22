@@ -1,0 +1,19 @@
+/**
+ * @file BrandBackdrop.module.css
+ * @description Estilos del fondo decorativo de marca (ver BrandBackdrop.jsx)
+ * @author Dicrejart Dev Team
+ */
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.pieceWrapper {
+  position: absolute;
+  pointer-events: none;
+  transition: none !important;
+}

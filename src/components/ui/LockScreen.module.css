@@ -1,0 +1,98 @@
+/**
+ * Estilos de LockScreen — overlay de bloqueo por inactividad
+ */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+
+  background: rgba(15, 10, 25, 0.6);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+
+.card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+
+  background: #ffffff;
+  border-radius: 16px;
+  padding: var(--space-8) var(--space-6);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+}
+
+.hint {
+  margin: var(--space-3) 0 0;
+  font-size: 13px;
+  color: #6a6478;
+}
+
+.userName {
+  margin: 0 0 var(--space-4);
+  font-size: 16px;
+  font-weight: 700;
+  color: #2f1a5c;
+}
+
+.form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.input {
+  width: 100%;
+  padding: 12px 14px;
+  font-family: var(--font-family);
+  font-size: 14px;
+  color: #2f1a5c;
+
+  background: #faf9fc;
+  border: 1.5px solid #e4ddf0;
+  border-radius: 10px;
+  outline: none;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+
+.input::placeholder {
+  color: #b8aecf;
+}
+
+.input:focus {
+  border-color: #dc2a24;
+  box-shadow: 0 0 0 3px rgba(220, 42, 36, 0.12);
+}
+
+.error {
+  font-size: 12px;
+  color: #dc2a24;
+  font-weight: 500;
+  text-align: left;
+}
+
+.logoutLink {
+  margin-top: var(--space-5);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 13px;
+  color: #6a6478;
+  text-decoration: underline;
+}
+
+.logoutLink:hover {
+  color: #3a2166;
+}

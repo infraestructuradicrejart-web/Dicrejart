@@ -1,0 +1,203 @@
+/**
+ * @file variables.css
+ * @description Variables CSS globales basadas en el manual de identidad de Dicrejart
+ * Incluye colores, tipografía, espaciado, bordes y sombras
+ * @author Dicrejart Dev Team
+ */
+
+:root {
+  /* ============================================
+     COLORES OFICIALES DEL MANUAL DE IDENTIDAD
+     (Manual de Identidad Visual Dicrejart, Nov. 2024, v1.0)
+     ============================================ */
+
+  /* Paleta de color principal */
+  --color-primary: #FF3300;   /* Red (RYB) — Pantone Bright Red C */
+  --color-secondary: #330066; /* Deep Violet — Pantone 2685 C */
+
+  /* Paleta de color complementaria */
+  --color-tiffany-blue: #0099CC;         /* Pantone 7466 C */
+  --color-princeton-orange: #FF9933;     /* Pantone 1495 C */
+  --color-golden-yellow: #FFCC00;        /* Pantone Yellow C */
+  --color-dark-magenta: #990099;         /* Pantone 248 C */
+  --color-purple-x11: #9933FF;           /* Pantone 7442 C */
+  --color-blue-magenta-violet: #663399;  /* Pantone 268 C */
+
+  /* Colores neutros */
+  --color-dark: #1B1B1B;
+  --color-light: #F5F5F5;
+  --color-white: #FFFFFF;
+
+  /* Colores funcionales (semántica de UI, apoyados en la paleta complementaria) */
+  --color-success: #10B981;
+  --color-warning: #FFCC00;
+  --color-alert: #DC2626;
+  --color-info: #0099CC;
+  --color-accent: #9933FF;
+
+  /* ============================================
+     COLORES POR ÁREA DE PRODUCCIÓN
+     (una asignación 1 a 1 con los 8 colores del manual)
+     ============================================ */
+
+  /* Área 1: Almacén */
+  --color-area-almacen: #0099CC;
+
+  /* Área 2: Corte Laser */
+  --color-area-corte-laser: #FF3300;
+
+  /* Área 3: Herrería */
+  --color-area-herreria: #330066;
+
+  /* Área 4: Carpintería */
+  --color-area-carpinteria: #FFCC00;
+
+  /* Área 5: Costura Accesorios */
+  --color-area-costura-acc: #FF9933;
+
+  /* Área 6: Costura Colchonetas */
+  --color-area-costura-colch: #990099;
+
+  /* Área 7: Mantenimiento */
+  --color-area-mantenimiento: #9933FF;
+
+  /* Área 8: Producto Terminado */
+  --color-area-prod-terminado: #663399;
+
+  /* ============================================
+     GRISES NEUTROS
+     ============================================ */
+  
+  --color-gray-50: #F9FAFB;
+  --color-gray-100: #F3F4F6;
+  --color-gray-200: #E5E7EB;
+  --color-gray-300: #D1D5DB;
+  --color-gray-400: #9CA3AF;
+  --color-gray-500: #6B7280;
+  --color-gray-600: #4B5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1F2937;
+  
+  /* ============================================
+     TIPOGRAFÍA
+     ============================================ */
+  
+  /* Tipografía del manual de identidad: Outfit para títulos/encabezados,
+     SF Pro para texto de párrafo (sustituida por Inter + -apple-system:
+     SF Pro es una fuente propietaria de Apple sin licencia para uso web
+     general; -apple-system la reproduce nativamente en dispositivos Apple,
+     e Inter es su equivalente libre más cercano en el resto de plataformas) */
+  --font-heading: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  --font-mono: 'Courier New', monospace;
+  
+  /* Estilos de Heading 1 */
+  --h1-size: 32px;
+  --h1-weight: 700;
+  --h1-line-height: 1.2;
+  --h1-letter-spacing: -0.5px;
+  
+  /* Estilos de Heading 2 */
+  --h2-size: 24px;
+  --h2-weight: 600;
+  --h2-line-height: 1.3;
+  --h2-letter-spacing: -0.3px;
+  
+  /* Estilos de Heading 3 */
+  --h3-size: 18px;
+  --h3-weight: 600;
+  --h3-line-height: 1.4;
+  
+  /* Estilos de Body (Texto principal) */
+  --body-size: 14px;
+  --body-weight: 400;
+  --body-line-height: 1.6;
+  
+  /* Estilos de Small (Texto pequeño) */
+  --small-size: 12px;
+  --small-weight: 400;
+  --small-line-height: 1.5;
+  
+  /* ============================================
+     ESPACIADO (Sistema de 8px)
+     ============================================ */
+  
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 56px;
+  
+  /* ============================================
+     BORDER RADIUS
+     ============================================ */
+  
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+  
+  /* ============================================
+     SOMBRAS
+     ============================================ */
+  
+  /* Sombra extra pequeña */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  
+  /* Sombra pequeña */
+  --shadow-sm: 0 2px 8px 0 rgba(0, 0, 0, 0.08);
+  
+  /* Sombra media */
+  --shadow-md: 0 4px 12px 0 rgba(0, 0, 0, 0.12);
+  
+  /* Sombra grande */
+  --shadow-lg: 0 8px 24px 0 rgba(0, 0, 0, 0.16);
+  
+  /* Sombra extra grande */
+  --shadow-xl: 0 12px 32px 0 rgba(0, 0, 0, 0.20);
+  
+  /* ============================================
+     TRANSICIONES
+     ============================================ */
+  
+  /* Duración estándar de transiciones */
+  --transition-fast: 200ms;
+  --transition-normal: 300ms;
+  --transition-slow: 500ms;
+  
+  /* Easing functions */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  
+  /* ============================================
+     BREAKPOINTS RESPONSIVE
+     ============================================ */
+  
+  /* Mobile pequeño */
+  --mobile-sm: 320px;
+  
+  /* Mobile normal */
+  --mobile: 480px;
+  
+  /* Tablet pequeña */
+  --tablet-sm: 640px;
+  
+  /* Tablet normal */
+  --tablet: 768px;
+  
+  /* Tablet grande */
+  --tablet-lg: 1024px;
+  
+  /* Desktop normal */
+  --desktop: 1280px;
+  
+  /* Desktop grande */
+  --desktop-lg: 1536px;
+}

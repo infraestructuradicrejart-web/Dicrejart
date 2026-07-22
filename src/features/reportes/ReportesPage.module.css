@@ -1,0 +1,124 @@
+/**
+ * @file ReportesPage.module.css
+ * @description Estilos para el módulo de reportes y analítica
+ * Proporciona un diseño premium responsivo con micro-animaciones
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-2) 0;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.title {
+  font-size: var(--h1-size);
+  font-weight: var(--h1-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+}
+
+.exportButtons {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* ============================================
+   FILTROS
+   ============================================ */
+.filtersCard {
+  padding: var(--space-4) var(--space-5);
+}
+
+.filtersGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: var(--small-size);
+  font-weight: 600;
+  color: var(--color-gray-600);
+}
+
+.dateInput {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family);
+  font-size: var(--body-size);
+  color: var(--color-dark);
+  box-sizing: border-box;
+  background-color: var(--color-white);
+}
+
+.dateInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* ============================================
+   CHARTS GRID
+   ============================================ */
+.chartsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-5);
+}
+
+.chartTitle {
+  font-size: var(--h3-size);
+  font-weight: var(--h3-weight);
+  color: var(--color-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.chartContainer {
+  margin-top: var(--space-2);
+  width: 100%;
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+@media (max-width: 1100px) {
+  .chartsGrid {
+    grid-template-columns: 1fr;
+  }
+  
+  .filtersGrid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+}
+
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

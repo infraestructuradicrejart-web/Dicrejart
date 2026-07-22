@@ -1,0 +1,96 @@
+/**
+ * @file PageHeader.module.css
+ * @description Estilos del encabezado de página de marca (ver PageHeader.jsx)
+ * @author Dicrejart Dev Team
+ */
+
+.banner {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+
+  background-color: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: var(--radius-xl);
+  border-top: 5px solid var(--accent-color);
+  box-shadow: var(--shadow-md);
+
+  padding: var(--space-6) var(--space-7);
+  margin-bottom: var(--space-6);
+}
+
+/* Figura decorativa sangrada en la esquina superior derecha */
+.shape {
+  position: absolute;
+  top: -18%;
+  right: -6%;
+  width: 220px;
+  height: 220px;
+  opacity: 0.1;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.text {
+  min-width: 0;
+}
+
+.title {
+  font-family: var(--font-heading);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-secondary);
+  margin: 0 0 var(--space-1) 0;
+  letter-spacing: -0.3px;
+}
+
+.subtitle {
+  font-size: var(--body-size);
+  color: var(--color-gray-500);
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 640px) {
+  .banner {
+    padding: var(--space-5) var(--space-5);
+  }
+
+  .title {
+    font-size: 22px;
+  }
+
+  .shape {
+    width: 140px;
+    height: 140px;
+  }
+
+  .content {
+    flex-direction: column;
+  }
+
+  .actions {
+    width: 100%;
+  }
+}

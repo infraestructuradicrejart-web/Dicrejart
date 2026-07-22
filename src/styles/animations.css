@@ -1,0 +1,355 @@
+/**
+ * @file animations.css
+ * @description Animaciones globales para Dicrejart
+ * Incluye loaders, transiciones de página, efectos hover y micro-interacciones
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   ANIMACIONES DE CARGA
+   ============================================ */
+
+/**
+ * Animación de rotación para spinners
+ * Usado en loaders, botones cargando, etc.
+ * Duración: 2 segundos, infinita
+ */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/**
+ * Animación de pulso para elementos que necesitan atención
+ * Usado en badges de alerta, notificaciones
+ * Duración: 2 segundos, infinita
+ */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/**
+ * Animación de brillo/resplandor para loaders
+ * Simula brillo de luz sobre elementos
+ * Duración: 2 segundos
+ */
+@keyframes glow {
+  0%, 100% {
+    opacity: 0.8;
+    filter: drop-shadow(0 0 10px rgba(232, 92, 13, 0.5));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 20px rgba(232, 92, 13, 0.8));
+  }
+}
+
+/**
+ * Animación de efecto shimmer (brillo deslizante)
+ * Usado en skeleton screens y loaders de tabla
+ * Duración: 2 segundos, infinita
+ */
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+/**
+ * Animación de carga de barra (progreso)
+ * Duración: 3 segundos
+ */
+@keyframes slideProgress {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+/* ============================================
+   ANIMACIONES DE TRANSICIÓN
+   ============================================ */
+
+/**
+ * Fade in - Entrada suave
+ * Aumenta opacidad de 0 a 1
+ * Duración: 300ms
+ */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/**
+ * Fade out - Salida suave
+ * Disminuye opacidad de 1 a 0
+ * Duración: 200ms
+ */
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/**
+ * Slide up - Entra deslizándose desde abajo
+ * Combinado con fadeIn para transición suave
+ * Duración: 400ms
+ */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/**
+ * Slide down - Sale deslizándose hacia abajo
+ * Duración: 300ms
+ */
+@keyframes slideDown {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+}
+
+/**
+ * Scale up + Fade - Crece mientras aparece
+ * Usado para modales, cards
+ * Duración: 300ms
+ */
+@keyframes scaleUpFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/**
+ * Scale down + Fade - Encoge mientras desaparece
+ * Duración: 300ms
+ */
+@keyframes scaleDownFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+/* ============================================
+   ANIMACIONES DE INTERACCIÓN
+   ============================================ */
+
+/**
+ * Shake - Temblor para errores
+ * Mueve elemento horizontalmente
+ * Duración: 500ms
+ */
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  10%, 30%, 50%, 70%, 90% {
+    transform: translateX(-10px);
+  }
+  20%, 40%, 60%, 80% {
+    transform: translateX(10px);
+  }
+}
+
+/**
+ * Bounce - Rebote para énfasis
+ * Mueve elemento verticalmente
+ * Duración: 600ms
+ */
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-10px);
+  }
+  50% {
+    transform: translateY(0);
+  }
+  75% {
+    transform: translateY(-5px);
+  }
+}
+
+/**
+ * Checkmark animation - Dibuja checkmark animado
+ * Usado en confirmaciones exitosas
+ * Duración: 400ms
+ */
+@keyframes checkmarkDraw {
+  0% {
+    stroke-dashoffset: 50;
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+/* ============================================
+   ANIMACIONES DE NOTIFICACIONES
+   ============================================ */
+
+/**
+ * Toast slide in from top
+ * Duración: 300ms
+ */
+@keyframes toastSlideIn {
+  from {
+    transform: translateY(-100px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/**
+ * Toast slide out to top
+ * Duración: 300ms
+ */
+@keyframes toastSlideOut {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-100px);
+    opacity: 0;
+  }
+}
+
+/* ============================================
+   CLASES UTILITARIAS PARA ANIMACIONES
+   ============================================ */
+
+/**
+ * Clase utilitaria para aplicar spin animation
+ */
+.animate-spin {
+  animation: spin 2s linear infinite;
+}
+
+/**
+ * Clase utilitaria para aplicar pulse animation
+ */
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/**
+ * Clase utilitaria para skeleton loading
+ */
+.animate-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-gray-200) 0%,
+    var(--color-gray-100) 50%,
+    var(--color-gray-200) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+/**
+ * Clase utilitaria para fade in
+ */
+.animate-fade-in {
+  animation: fadeIn var(--transition-normal) ease-out forwards;
+}
+
+/**
+ * Clase utilitaria para slide up
+ */
+.animate-slide-up {
+  animation: slideUp var(--transition-normal) ease-out forwards;
+}
+
+/**
+ * Clase utilitaria para scale + fade
+ */
+.animate-scale-in {
+  animation: scaleUpFadeIn var(--transition-normal) ease-out forwards;
+}
+
+/**
+ * Clase utilitaria para shake (error)
+ */
+.animate-shake {
+  animation: shake 500ms;
+}
+
+/**
+ * Clase utilitaria para bounce
+ */
+.animate-bounce {
+  animation: bounce 600ms;
+}
+
+/* ============================================
+   RESPECTO A MOTION PREFERENCES
+   ============================================ */
+
+/**
+ * Respeta preferencias del usuario para reducir movimiento
+ * Importante para accesibilidad
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

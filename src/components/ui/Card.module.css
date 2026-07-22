@@ -1,0 +1,157 @@
+/**
+ * @file Card.module.css
+ * @description Estilos para el componente Card
+ * Incluye variantes de color y estados interactivos
+ * @author Dicrejart Dev Team
+ */
+
+/* ============================================
+   CARD BASE
+   ============================================ */
+
+.card {
+  /* Display y padding */
+  display: block;
+  padding: var(--space-4);
+
+  /* Estilos: ligeramente translúcida para dejar entrever el fondo de marca */
+  background-color: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+
+  /* Sombra */
+  box-shadow: var(--shadow-md);
+
+  /* Transiciones */
+  transition: all var(--transition-normal) var(--ease-out);
+}
+
+/* Card con figura decorativa de marca en la esquina */
+.hasShape {
+  position: relative;
+  overflow: hidden;
+}
+
+.cornerShape {
+  position: absolute;
+  top: -22%;
+  right: -18%;
+  width: 88px;
+  height: 88px;
+  opacity: 0.12;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================
+   VARIANTE: DEFAULT (Normal, sin énfasis)
+   ============================================ */
+
+.variant-default {
+  background-color: rgba(255, 255, 255, 0.9);
+  border-color: var(--color-gray-200);
+}
+
+/* ============================================
+   VARIANTE: HIGHLIGHT (Énfasis - Borde naranja)
+   ============================================ */
+
+.variant-highlight {
+  background-color: rgba(255, 255, 255, 0.9);
+  border: 2px solid var(--color-primary);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+/* ============================================
+   VARIANTE: SUCCESS (Verde - Éxito)
+   ============================================ */
+
+.variant-success {
+  background-color: rgba(240, 253, 244, 0.9); /* Verde muy claro */
+  border-color: var(--color-success);
+  box-shadow: 0 0 0 1px var(--color-success);
+}
+
+/* ============================================
+   VARIANTE: WARNING (Ámbar - Advertencia)
+   ============================================ */
+
+.variant-warning {
+  background-color: rgba(255, 251, 235, 0.9); /* Ámbar muy claro */
+  border-color: var(--color-warning);
+  box-shadow: 0 0 0 1px var(--color-warning);
+}
+
+/* ============================================
+   VARIANTE: DANGER (Rojo - Peligro/Error)
+   ============================================ */
+
+.variant-danger {
+  background-color: rgba(254, 242, 242, 0.9); /* Rojo muy claro */
+  border-color: var(--color-alert);
+  box-shadow: 0 0 0 1px var(--color-alert);
+}
+
+/* ============================================
+   ESTADO: HOVERABLE
+   ============================================ */
+
+.hoverable {
+  cursor: pointer;
+  
+  /* Sin animación, el hover se maneja en el componente */
+  &:hover {
+    border-color: var(--color-primary);
+  }
+}
+
+/* ============================================
+   ESTADO: CLICKABLE
+   ============================================ */
+
+.clickable {
+  cursor: pointer;
+  user-select: none;
+  
+  /* Visible en focus para accesibilidad */
+  &:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  
+  /* Cambio de cursor para indicar interactividad */
+  &:hover {
+    cursor: pointer;
+  }
+  
+  /* Efecto de presión */
+  &:active {
+    transform: scale(0.98);
+  }
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+@media (max-width: 640px) {
+  /* Reducir padding en mobile */
+  .card {
+    padding: var(--space-3);
+  }
+  
+  /* Reducir border radius */
+  .card {
+    border-radius: var(--radius-md);
+  }
+}
+
+@media (min-width: 1281px) {
+  /* Aumentar sombra en pantallas grandes */
+  .card {
+    box-shadow: var(--shadow-lg);
+  }
+}
