@@ -11,13 +11,16 @@
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { getAuth, connectAuthEmulator, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
   enableIndexedDbPersistence,
   connectFirestoreEmulator,
+  doc,
+  setDoc,
+  getDoc
 } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
@@ -64,6 +67,8 @@ export const auth = app ? getAuth(app) : null;
 // Inicializar y exportar Cloud Firestore. Con emulador se usa caché en memoria (los
 // datos son locales y temporales); en producción se usa caché persistente multi-pestaña
 let db = null;
+let inventorDb = null;
+
 if (app) {
   try {
     db = useEmulator
@@ -77,7 +82,66 @@ if (app) {
     console.error('❌ Error al inicializar Firestore:', error);
   }
 }
-export { db };
+
+// Inicializar la App Secundaria (Inventor Manager)
+const inventorFirebaseConfig = {
+  apiKey: import.meta.env.VITE_INVENTOR_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_INVENTOR_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_INVENTOR_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_INVENTOR_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_INVENTOR_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_INVENTOR_FIREBASE_APP_ID,
+};
+
+if (inventorFirebaseConfig.apiKey) {
+  try {
+    const existingApps = getApps();
+    let inventorApp = existingApps.find(a => a.name === 'InventorApp');
+    if (!inventorApp) {
+      inventorApp = initializeApp(inventorFirebaseConfig, 'InventorApp');
+    }
+    
+    inventorDb = useEmulator
+      ? initializeFirestore(inventorApp, {})
+      : initializeFirestore(inventorApp, {
+          localCache: persistentLocalCache({
+            tabManager: persistentMultipleTabManager(),
+          }),
+        });
+
+    // Cross-Database Authentication (Bridge Account)
+    const inventorAuth = getAuth(inventorApp);
+    const bridgeEmail = 'dicrejart_bridge@system.local';
+    const bridgePass = 'CrossAppBridge2026!';
+
+    signInWithEmailAndPassword(inventorAuth, bridgeEmail, bridgePass)
+      .then(() => console.info('🔗 Conectado a Inventor DB como Bridge'))
+      .catch(async (err) => {
+        if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found') {
+          try {
+            console.info('Creando usuario Bridge en Inventor DB...');
+            const cred = await createUserWithEmailAndPassword(inventorAuth, bridgeEmail, bridgePass);
+            await setDoc(doc(inventorDb, 'users', cred.user.uid), {
+              name: 'Dicrejart Bridge',
+              email: bridgeEmail,
+              role: 'admin',
+              timestamp: new Date()
+            });
+            console.info('Usuario Bridge creado y configurado.');
+          } catch (e) {
+            console.error('❌ Error creando usuario Bridge:', e);
+          }
+        } else {
+          console.error('❌ Error autenticando usuario Bridge:', err);
+        }
+      });
+
+  } catch (error) {
+    console.error('❌ Error al inicializar Inventor DB Secundaria:', error);
+  }
+}
+
+export { db, inventorDb };
 
 // Inicializar y exportar Firebase Storage
 export const storage = app ? getStorage(app) : null;

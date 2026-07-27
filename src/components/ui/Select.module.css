@@ -118,7 +118,7 @@
 /* ============================================
    RESPONSIVE
    ============================================ */
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .select-wrapper {
     min-height: 48px;
   }

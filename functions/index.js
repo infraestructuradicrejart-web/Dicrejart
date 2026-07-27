@@ -270,17 +270,26 @@ exports.onRequisicionUpdated = onDocumentUpdated(
     }
 
     if (after.status === 'comprada') {
-      const solicitanteSnap = await admin.firestore().collection('users').doc(after.requestedByUserId || '').get();
-      await sendMail({
-        to: solicitanteSnap.exists ? solicitanteSnap.data().email : null,
-        subject: `[Dicrejart] Requisición ${id} comprada — confirma su recepción`,
-        html: emailShell(`
-          <h2 style="margin-top:0;">Requisición ${id} comprada</h2>
-          <p><strong>Proveedor:</strong> ${after.supplier} &nbsp; <strong>Costo:</strong> $${after.cost}</p>
-          <p>Cuando recibas el material y el comprobante, confirma la recepción en la app para cerrar el ciclo.</p>
-          <div style="margin-top:20px;">${button(`${appUrl}/compras`, 'Ir a Requisiciones', '#0099cc')}</div>
-        `),
-      });
+      const encargadoSnap = await admin.firestore().collection('users')
+        .where('roleType', '==', 'encargado-area')
+        .where('areaId', '==', 'almacen')
+        .get();
+        
+      const recipients = encargadoSnap.docs.map((d) => d.data().email).filter(Boolean);
+
+      await Promise.all(
+        recipients.map((email) =>
+          sendMail({
+            to: email,
+            subject: `[Dicrejart] Requisición ${id} comprada — confirma su recepción en Almacén`,
+            html: emailShell(`
+              <h2 style="margin-top:0;">Requisición ${id} comprada</h2>
+              <p><strong>Proveedor:</strong> ${after.supplier} &nbsp; <strong>Costo:</strong> $${after.cost}</p>
+              <p>Cuando recibas el material y el comprobante, confirma la recepción en la app <strong>Inventor Manager</strong> para integrar los artículos al inventario y cerrar el ciclo.</p>
+            `),
+          })
+        )
+      );
       return;
     }
 

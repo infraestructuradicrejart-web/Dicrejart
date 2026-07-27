@@ -19,7 +19,7 @@ import Modal from '../../components/ui/Modal';
 import useOperarios from '../../hooks/useOperarios';
 import useToast from '../../hooks/useToast';
 import useAuth from '../../hooks/useAuth';
-import { AREAS_OPERARIOS } from '../../data/operariosData';
+import useAreas from '../../hooks/useAreas';
 import PageHeader from '../../components/ui/PageHeader';
 import styles from './OperariosPage.module.css';
 
@@ -78,6 +78,7 @@ const OperariosPage = () => {
   } = useOperarios();
 
   const { user } = useAuth();
+  const { areas: dynamicAreas } = useAreas();
   const toast = useToast();
 
   const fileInputRef = useRef(null);
@@ -137,7 +138,7 @@ const OperariosPage = () => {
   // HELPERS
   // ============================================
   const getAreaName = (areaId) =>
-    AREAS_OPERARIOS.find((a) => a.id === areaId)?.name || areaId;
+    dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
 
   // Arma el tooltip del badge de disponibilidad, dejando explícito cuando no hay
   // fecha de regreso definida (incapacidad/viaje/actividad externa sin "hasta")
@@ -566,7 +567,7 @@ const OperariosPage = () => {
                 onChange={(e) => setAreaFilter(e.target.value)}
                 options={[
                   { value: 'todas', label: 'Todas las Áreas' },
-                  ...AREAS_OPERARIOS.map((a) => ({ value: a.id, label: a.name })),
+                  ...dynamicAreas.map((a) => ({ value: a.id, label: a.name })),
                 ]}
               />
             </div>
@@ -835,8 +836,8 @@ const OperariosPage = () => {
                 onChange={(e) => setMovRequestModal((prev) => ({ ...prev, toAreaId: e.target.value }))}
                 required
                 options={[
-                  { value: '', label: 'Selecciona un área...' },
-                  ...AREAS_OPERARIOS.filter((a) => a.id !== movRequestModal.operario?.currentArea).map((a) => ({
+                  { value: '', label: 'Selecciona...' },
+                  ...dynamicAreas.filter((a) => a.id !== movRequestModal.operario?.currentArea).map((a) => ({
                     value: a.id,
                     label: a.name,
                   })),

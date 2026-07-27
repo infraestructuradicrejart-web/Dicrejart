@@ -398,7 +398,7 @@
    columna a la izquierda (`data-label` puesto en ProduccionPage.jsx) y el
    valor a la derecha. Antes solo tenía scroll horizontal (vía overflowX
    inline), poco descubrible con el dedo — el texto se veía cortado. */
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .table thead {
     display: none;
   }

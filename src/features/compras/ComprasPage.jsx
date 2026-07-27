@@ -21,10 +21,11 @@ import useAuth from '../../hooks/useAuth';
 import useCompras from '../../hooks/useCompras';
 import useIsMobile from '../../hooks/useIsMobile';
 import { ROLE_TYPES } from '../../data/usersData';
-import { AREAS_CATALOG } from '../../data/areasConfig';
+import useAreas from '../../hooks/useAreas';
 import { REQUISITION_STATUS_LABELS, PRIORITY_LABELS } from '../../data/comprasData';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
+import ItemAutocomplete from '../../components/ui/ItemAutocomplete';
 
 /**
  * Determina si un adjunto es un PDF — funciona tanto con un archivo crudo (File, aún no
@@ -186,7 +187,7 @@ const RequisicionTracker = ({ req }) => {
 
 const EMPTY_FORM = {
   areaId: '',
-  items: [{ name: '', quantity: 1, unit: 'pza' }],
+  items: [{ name: '', itemId: null, quantity: 1, unit: 'pza' }],
   justification: '',
   priority: 'normal',
   attachments: [],
@@ -215,6 +216,7 @@ const ComprasPage = () => {
     markAsReceived,
     deleteRequisicion,
   } = useCompras();
+  const { areas: dynamicAreas } = useAreas();
   const toast = useToast();
 
   // Adjunto actualmente en previsualización (cotización, comprobante o datos de pago)
@@ -264,15 +266,15 @@ const ComprasPage = () => {
     isAdmin;
 
   const solicitanteAreaOptions = useMemo(() => {
-    if (isAdmin) return AREAS_CATALOG;
+    if (isAdmin) return dynamicAreas;
     if (user?.roleType === ROLE_TYPES.SUPERVISOR_AREA) {
-      return AREAS_CATALOG.filter((a) => (user.areaIds || []).includes(a.id));
+      return dynamicAreas.filter((a) => (user.areaIds || []).includes(a.id));
     }
     if (user?.roleType === ROLE_TYPES.ENCARGADO_AREA && user.areaId === 'almacen') {
-      return AREAS_CATALOG.filter((a) => a.id === 'almacen');
+      return dynamicAreas.filter((a) => a.id === 'almacen');
     }
     return [];
-  }, [user, isAdmin]);
+  }, [user, isAdmin, dynamicAreas]);
 
   // ============================================
   // ESTADO - MODAL DE CREACIÓN / REENVÍO
@@ -313,7 +315,7 @@ const ComprasPage = () => {
   };
 
   const handleAddItemRow = () => {
-    setForm((prev) => ({ ...prev, items: [...prev.items, { name: '', quantity: 1, unit: 'pza' }] }));
+    setForm((prev) => ({ ...prev, items: [...prev.items, { name: '', itemId: null, quantity: 1, unit: 'pza' }] }));
   };
 
   const handleRemoveItemRow = (idx) => {
@@ -348,12 +350,13 @@ const ComprasPage = () => {
       toast.danger('Describe la justificación de la requisición.');
       return;
     }
-    if (form.attachments.length === 0) {
-      toast.danger('Adjunta la cotización del proveedor para esta requisición.');
-      return;
-    }
+    // La cotización del proveedor ahora es opcional.
+    // if (form.attachments.length === 0) {
+    //   toast.danger('Adjunta la cotización del proveedor para esta requisición.');
+    //   return;
+    // }
 
-    const areaName = AREAS_CATALOG.find((a) => a.id === form.areaId)?.name || form.areaId;
+    const areaName = dynamicAreas.find((a) => a.id === form.areaId)?.name || form.areaId;
     setIsSubmittingForm(true);
 
     let res;
@@ -609,7 +612,7 @@ const ComprasPage = () => {
   // COMPONENTE INTERNO - TARJETA DE REQUISICIÓN
   // ============================================
   const RequisitionCard = ({ req, children }) => {
-    const areaName = AREAS_CATALOG.find((a) => a.id === req.areaId)?.name || req.areaId;
+    const areaName = dynamicAreas.find((a) => a.id === req.areaId)?.name || req.areaId;
     return (
       <Card variant="default" style={{ marginBottom: '12px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', flexWrap: 'wrap' }}>
@@ -688,7 +691,7 @@ const ComprasPage = () => {
           </div>
         )}
 
-        {isAdmin && (
+        {isAdmin && req.status !== 'recibida' && req.status !== 'comprada' && (
           <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--color-gray-100)', display: 'flex', justifyContent: 'flex-end' }}>
             <Button
               variant="ghost"
@@ -825,13 +828,13 @@ const ComprasPage = () => {
           <div>
             <label style={labelStyle}>Materiales Solicitados</label>
             {form.items.map((it, idx) => (
-              <div key={idx} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
-                <input
-                  type="text"
-                  placeholder="Ej: Tornillo de expansión 1/2&quot;"
-                  value={it.name}
-                  onChange={(e) => handleItemChange(idx, 'name', e.target.value)}
-                  style={{ ...inputStyle, flexGrow: 1 }}
+              <div key={idx} style={{ display: 'flex', gap: '6px', marginBottom: '6px', alignItems: 'flex-start' }}>
+                <ItemAutocomplete
+                  value={{ name: it.name, itemId: it.itemId }}
+                  onChange={(val) => {
+                    handleItemChange(idx, 'name', val.name);
+                    handleItemChange(idx, 'itemId', val.itemId);
+                  }}
                 />
                 <input
                   type="number"
@@ -883,7 +886,7 @@ const ComprasPage = () => {
           </div>
 
           <div>
-            <label style={labelStyle}>Cotización del Proveedor *</label>
+            <label style={labelStyle}>Cotización del Proveedor (Opcional)</label>
             <input
               type="file"
               accept="image/*,application/pdf"

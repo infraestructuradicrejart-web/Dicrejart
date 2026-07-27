@@ -9,8 +9,8 @@
 
 import { useState, useEffect } from 'react';
 
-/** Breakpoint canónico de "celular" para toda la app (JS y CSS) */
-export const MOBILE_BREAKPOINT = 768;
+/** Breakpoint canónico de \"celular\" para toda la app (JS y CSS) */
+export const MOBILE_BREAKPOINT = 480;
 
 /**
  * @param {number} [breakpoint=MOBILE_BREAKPOINT] - Ancho máximo (px) considerado móvil

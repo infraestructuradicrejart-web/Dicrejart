@@ -758,7 +758,7 @@
    evaluación a la derecha. Antes solo tenía scroll horizontal con la columna
    de colaborador "pegada" (sticky) — funcional en desktop, pero poco
    descubrible con el dedo en un celular; el texto se veía cortado. */
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .evalTable thead {
     display: none;
   }

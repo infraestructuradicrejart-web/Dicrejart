@@ -122,7 +122,8 @@ export const ChatProvider = ({ children }) => {
         id: chatId,
         type: 'private',
         participants: [user.id, otherUserId].sort(),
-        participantNames: { [user.id]: user.name, [otherUserId]: otherUserName },
+        participantNames: { [user.id]: user.name || 'Usuario', [otherUserId]: otherUserName || 'Usuario' },
+        clearedAt: { [user.id]: null },
       },
       { merge: true }
     );

@@ -231,7 +231,7 @@
    RESPONSIVE
    ============================================ */
 
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   /* En mobile, aumentar tamaño mínimo de botones */
   .button {
     min-height: 44px; /* WCAG recommendation for touch targets */

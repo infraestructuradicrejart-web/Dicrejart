@@ -303,7 +303,7 @@
    RESPONSIVE
    ============================================ */
 
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   /* Aumentar padding en mobile para mejor touch */
   .input-wrapper {
     min-height: 48px;

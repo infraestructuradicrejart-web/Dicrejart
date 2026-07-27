@@ -18,7 +18,8 @@ import useToast from '../../hooks/useToast';
 import useProduccion from '../../hooks/useProduccion';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection } from '../../utils/roleAccess';
-import { resolveAreaId, normalizeText } from '../../data/areasConfig';
+import { normalizeText } from '../../data/areasConfig';
+import useAreas from '../../hooks/useAreas';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import styles from './JuegosPage.module.css';
@@ -45,21 +46,6 @@ const STATUS_BADGE_VARIANT = {
 };
 
 /**
- * Mapeo de áreas de producción para colores y nombres amigables
- * @constant
- */
-const AREAS_MAP = {
-  almacen: { name: 'Almacén', icon: '📦', color: '#0099CC' },
-  'corte-laser': { name: 'Corte Laser', icon: '⚡', color: '#FF3300' },
-  herreria: { name: 'Herrería', icon: '🔨', color: '#330066' },
-  carpinteria: { name: 'Carpintería', icon: '🪛', color: '#FFCC00' },
-  'costura-acc': { name: 'Costura Accesorios', icon: '🧵', color: '#FF9933' },
-  'costura-colch': { name: 'Costura Colchonetas', icon: '🪡', color: '#990099' },
-  mantenimiento: { name: 'Mantenimiento', icon: '⚙️', color: '#9933FF' },
-  'producto-terminado': { name: 'Producto Terminado', icon: '📦', color: '#663399' },
-};
-
-/**
  * Etiquetas legibles para cada estatus de área
  * @constant
  */
@@ -80,8 +66,17 @@ const JuegosPage = () => {
   // ============================================
   const { juegos: allJuegos, proyectos, addGame, deleteGame } = useProduccion();
   const { user } = useAuth();
+  const { areas: dynamicAreas, resolveAreaId } = useAreas();
   const isEncargado = user?.roleType === 'encargado-area';
   const isReadOnly = isReadOnlySection(user, 'juegos');
+
+  // Construir mapa de áreas para acceso rápido por ID
+  const AREAS_MAP = React.useMemo(() => {
+    return dynamicAreas.reduce((acc, area) => {
+      acc[area.id] = area;
+      return acc;
+    }, {});
+  }, [dynamicAreas]);
 
   // Un Encargado de Área solo consulta (solo lectura) los juegos que pasan por su área
   const juegos = isEncargado ? allJuegos.filter((j) => j.areas.includes(user.areaId)) : allJuegos;
@@ -513,10 +508,10 @@ const JuegosPage = () => {
                 <div className={styles.routeContainer}>
                   <h4 className={styles.routeLabel}>Avance de Piezas por Área</h4>
                   <div className={styles.areaChipsGrid}>
-                    {Object.keys(AREAS_MAP)
-                      .filter((areaId) => juego.areas.includes(areaId))
-                      .map((areaId) => {
-                        const areaInfo = AREAS_MAP[areaId];
+                    {dynamicAreas
+                      .filter((area) => juego.areas.includes(area.id) && area.id !== 'producto-terminado')
+                      .map((areaInfo) => {
+                        const areaId = areaInfo.id;
                         const areaStatus = juego.areaStatus?.[areaId] || 'pendiente';
                         const target = juego.targetPieces?.[areaId] || 10;
                         const produced = juego.producedPieces?.[areaId] || 0;
@@ -553,19 +548,21 @@ const JuegosPage = () => {
 
                   {/* Etapa final: Producto Terminado */}
                   {(() => {
+                    const finalArea = AREAS_MAP['producto-terminado'];
+                    if (!finalArea) return null;
                     const finalStatus = juego.areaStatus?.['producto-terminado'] || 'pendiente';
                     const finalProduced = juego.producedPieces?.['producto-terminado'] || 0;
                     const finalTarget = juego.targetPieces?.['producto-terminado'] || 1;
                     return (
                       <div
                         className={`${styles.areaChip} ${styles.chipFinal} ${styles[`chip-${finalStatus}`]}`}
-                        style={{ borderLeftColor: AREAS_MAP['producto-terminado'].color }}
+                        style={{ borderLeftColor: finalArea.color }}
                       >
                         <span className={styles.chipIcon}>
-                          {finalStatus === 'completado' ? '✓' : '📦'}
+                          {finalStatus === 'completado' ? '✓' : finalArea.icon}
                         </span>
                         <div className={styles.chipTextBlock}>
-                          <span className={styles.chipName}>Producto Terminado</span>
+                          <span className={styles.chipName}>{finalArea.name}</span>
                           <span className={styles.chipStatus}>
                             {AREA_STATUS_LABEL[finalStatus]} ({finalProduced}/{finalTarget} mod)
                           </span>
@@ -665,10 +662,10 @@ const JuegosPage = () => {
               Áreas Requeridas (sin orden; Herrería requiere Corte Láser)
             </label>
             <div className={styles.routeSelectorGrid}>
-              {Object.keys(AREAS_MAP)
-                .filter((id) => id !== 'producto-terminado')
-                .map((areaId) => {
-                  const area = AREAS_MAP[areaId];
+              {dynamicAreas
+                .filter((area) => area.id !== 'producto-terminado')
+                .map((area) => {
+                  const areaId = area.id;
                   const isSelected = newGame.areas.includes(areaId);
 
                   return (

@@ -363,7 +363,7 @@
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 480px) {
   .header {
     flex-direction: column;
     align-items: flex-start;
@@ -391,7 +391,7 @@
    <td> pasa a ocupar su propia fila con la etiqueta de columna a la izquierda
    (inyectada vía `content: attr(data-label)`, ver el atributo puesto en Dashboard.jsx)
    y el valor a la derecha — sin perder ninguna columna ni requerir scroll lateral. */
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .table thead {
     display: none;
   }

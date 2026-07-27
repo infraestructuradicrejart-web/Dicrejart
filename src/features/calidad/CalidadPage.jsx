@@ -689,6 +689,11 @@ const CalidadPage = () => {
 
   // Handlers para Evaluaciones
   const handleOpenEvalModal = (collaborator, block, existingEval) => {
+    if (collaborator.estado?.tipo !== 'activo') {
+      toast.warning(`No se puede calificar. El operario está ${collaborator.estado?.tipo || 'inactivo'}.`);
+      return;
+    }
+
     setEvalModal({
       isOpen: true,
       collaborator,
@@ -1739,7 +1744,7 @@ const CalidadPage = () => {
                                 className={`${styles.evalCell} ${isLive ? styles.activeBlockCell : ''} ${isOvertimeBlock ? styles.overtimeBlockCell : ''}`}
                               >
                                 {existingEval ? (
-                                  isLive ? (
+                                  isLive && op.estado?.tipo === 'activo' ? (
                                     <button
                                       type="button"
                                       className={styles.scoreContainer}
@@ -1761,7 +1766,7 @@ const CalidadPage = () => {
                                   ) : (
                                     <div
                                       className={styles.scoreContainerDisabled}
-                                      title="Evaluación finalizada (solo lectura)"
+                                      title={op.estado?.tipo !== 'activo' ? `Inactivo (${op.estado?.tipo})` : "Evaluación finalizada (solo lectura)"}
                                     >
                                       <Badge variant={getScoreVariant(existingEval.score)}>
                                         ⭐ {existingEval.score} / 10
@@ -1778,18 +1783,24 @@ const CalidadPage = () => {
                                   )
                                 ) : (
                                   isLive ? (
-                                    <div className={styles.calificarBtnContainer}>
-                                      <button
-                                        type="button"
-                                        className={`${styles.calificarBtn} ${styles.pulseCalificarBtn} ${isOvertimeBlock ? styles.overtimeCalificarBtn : ''}`}
-                                        onClick={() => handleOpenEvalModal(op, block, null)}
-                                      >
-                                        ＋ Calificar
-                                      </button>
-                                      {isOvertimeBlock && (
-                                        <span className={styles.overtimeIndicatorText}>Extra</span>
-                                      )}
-                                    </div>
+                                    op.estado?.tipo !== 'activo' ? (
+                                      <span className={styles.closedBlockLabel} title={`Operario inactivo: ${op.estado?.tipo}`}>
+                                        🚫 {op.estado?.tipo}
+                                      </span>
+                                    ) : (
+                                      <div className={styles.calificarBtnContainer}>
+                                        <button
+                                          type="button"
+                                          className={`${styles.calificarBtn} ${styles.pulseCalificarBtn} ${isOvertimeBlock ? styles.overtimeCalificarBtn : ''}`}
+                                          onClick={() => handleOpenEvalModal(op, block, null)}
+                                        >
+                                          ＋ Calificar
+                                        </button>
+                                        {isOvertimeBlock && (
+                                          <span className={styles.overtimeIndicatorText}>Extra</span>
+                                        )}
+                                      </div>
+                                    )
                                   ) : (
                                     <span className={styles.closedBlockLabel} title="Fuera del bloque activo de tiempo">
                                       🔒 Cerrado

@@ -7,8 +7,10 @@
  * @requires react-router-dom
  */
 
-import React, { useState, Suspense, lazy } from 'react';
+import React, { useState, Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { collection, getDocs } from 'firebase/firestore';
+import { inventorDb } from './config/firebase';
 
 // Importar pantalla de carga
 import { DicrejartLoadingScreen } from './components/ui/LoadingScreen';
@@ -18,6 +20,7 @@ import Spinner from './components/ui/Spinner';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { ConfigProvider } from './context/ConfigContext';
+import { AreasProvider } from './context/AreasContext';
 import { OperariosProvider } from './context/OperariosContext';
 import { ProduccionProvider } from './context/ProduccionContext';
 import { CalidadProvider } from './context/CalidadContext';
@@ -38,21 +41,45 @@ import MainLayout from './components/layout/MainLayout';
 // resto se carga de forma perezosa (un chunk de JS por página, descargado solo al
 // entrar a ella) para no engordar el bundle principal con código de páginas que la
 // mayoría de los roles ni siquiera puede visitar (ver src/utils/roleAccess.js).
+/**
+ * Helper para recargar la página automáticamente si falla un import dinámico
+ * (por ejemplo, si hubo un nuevo despliegue y los hashes de los chunks cambiaron)
+ */
+const lazyWithRetry = (componentImport) =>
+  lazy(async () => {
+    const pageHasAlreadyBeenForceRefreshed = JSON.parse(
+      window.sessionStorage.getItem('page-has-been-force-refreshed') || 'false'
+    );
+    try {
+      const component = await componentImport();
+      window.sessionStorage.setItem('page-has-been-force-refreshed', 'false');
+      return component;
+    } catch (error) {
+      if (!pageHasAlreadyBeenForceRefreshed) {
+        window.sessionStorage.setItem('page-has-been-force-refreshed', 'true');
+        window.location.reload();
+        // Devolver una promesa que nunca se resuelve para evitar errores mientras recarga
+        return new Promise(() => {});
+      }
+      throw error;
+    }
+  });
+
 import LoginPage from './features/auth/LoginPage';
-const Dashboard = lazy(() => import('./features/dashboard/Dashboard'));
-const ProyectosPage = lazy(() => import('./features/proyectos/ProyectosPage'));
-const JuegosPage = lazy(() => import('./features/juegos/JuegosPage'));
-const ProduccionPage = lazy(() => import('./features/produccion/ProduccionPage'));
-const OperariosPage = lazy(() => import('./features/operarios/OperariosPage'));
-const ActividadesPage = lazy(() => import('./features/actividades/ActividadesPage'));
-const CalidadPage = lazy(() => import('./features/calidad/CalidadPage'));
-const ReportesPage = lazy(() => import('./features/reportes/ReportesPage'));
-const AdminPage = lazy(() => import('./features/admin/AdminPage'));
-const ComprasPage = lazy(() => import('./features/compras/ComprasPage'));
-const AprobarRequisicionPage = lazy(() => import('./features/compras/AprobarRequisicionPage'));
-const ChatPage = lazy(() => import('./features/chat/ChatPage'));
-const EditorVisualPage = lazy(() => import('./features/editor-visual/EditorVisualPage'));
-const DisenoPage = lazy(() => import('./features/diseno/DisenoPage'));
+const Dashboard = lazyWithRetry(() => import('./features/dashboard/Dashboard'));
+const ProyectosPage = lazyWithRetry(() => import('./features/proyectos/ProyectosPage'));
+const JuegosPage = lazyWithRetry(() => import('./features/juegos/JuegosPage'));
+const ProduccionPage = lazyWithRetry(() => import('./features/produccion/ProduccionPage'));
+const OperariosPage = lazyWithRetry(() => import('./features/operarios/OperariosPage'));
+const ActividadesPage = lazyWithRetry(() => import('./features/actividades/ActividadesPage'));
+const CalidadPage = lazyWithRetry(() => import('./features/calidad/CalidadPage'));
+const ReportesPage = lazyWithRetry(() => import('./features/reportes/ReportesPage'));
+const AdminPage = lazyWithRetry(() => import('./features/admin/AdminPage'));
+const ComprasPage = lazyWithRetry(() => import('./features/compras/ComprasPage'));
+const AprobarRequisicionPage = lazyWithRetry(() => import('./features/compras/AprobarRequisicionPage'));
+const ChatPage = lazyWithRetry(() => import('./features/chat/ChatPage'));
+const EditorVisualPage = lazyWithRetry(() => import('./features/editor-visual/EditorVisualPage'));
+const DisenoPage = lazyWithRetry(() => import('./features/diseno/DisenoPage'));
 
 /**
  * Componente interno AppContent
@@ -140,6 +167,19 @@ function AppContent() {
     logout();
     navigate('/login');
   };
+
+  useEffect(() => {
+    if (inventorDb && user) {
+      setTimeout(() => {
+        getDocs(collection(inventorDb, 'items')).then(snap => {
+          console.info('✅ CONEXIÓN ESTILO ODOO ESTABLECIDA:');
+          console.info(`📦 Se leyeron ${snap.docs.length} artículos directamente desde la base de datos de Inventor Manager.`);
+        }).catch(err => {
+          console.error('❌ Error leyendo inventario cruzado:', err);
+        });
+      }, 3000);
+    }
+  }, [user]);
 
   return (
     <MainLayout
@@ -304,76 +344,78 @@ function App() {
       <ToastProvider>
         <AuthProvider>
           <ConfigProvider>
-            <OperariosProvider>
-              <ProduccionProvider>
-                <CalidadProvider>
-                  <ActividadesProvider>
-                    <ComprasProvider>
-                      <ChatProvider>
-                      {/* Suspense único a este nivel: cubre también las rutas anidadas dentro
-                          de AppContent, ya que un límite de Suspense atrapa cualquier
-                          componente lazy() en todo su subárbol sin importar la profundidad.
-                          Antes no tenía fallback (`null`): mientras se descargaba el chunk de
-                          JS de la página la pantalla se quedaba en blanco sin ningún aviso. Se
-                          probó reutilizar la pantalla de carga de marca (figuras rebotando,
-                          anillos girando) aquí también, pero al aparecer y desaparecer en
-                          menos de un segundo entre secciones se sentía como que la app se
-                          trababa, no como una transición — por eso es un spinner simple
-                          sobre fondo blanco, no la pantalla animada completa (esa se reserva
-                          para el arranque inicial de la app, ver `isLoading` más abajo). */}
-                      <Suspense
-                        fallback={
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', width: '100%', background: '#ffffff' }}>
-                            <Spinner size="lg" label="Cargando..." />
-                          </div>
-                        }
-                      >
-                      <Routes>
-                        {/* Ruta pública: login */}
-                        <Route path="/login" element={<LoginPage />} />
-
-                        {/* Ruta pública: confirmación de autorización de requisiciones desde
-                            el correo de Dirección — sin sesión iniciada, protegida por el
-                            token de un solo uso de la URL (ver AprobarRequisicionPage.jsx) */}
-                        <Route path="/aprobar-requisicion" element={<AprobarRequisicionPage />} />
-
-                        {/* Editor Visual en ventana aparte: sin Sidebar/Header, para aprovechar
-                            todo el espacio cuando se abre desde el botón "Abrir en Ventana Aparte" */}
-                        <Route
-                          path="/editor-visual/ventana"
-                          element={
-                            <ProtectedRoute>
-                              <RoleRoute section="editor-visual">
-                                <DesktopOnlyRoute
-                                  title="Editor Visual de Asignaciones"
-                                  shape="arco-doble"
-                                  accentColor="var(--color-secondary)"
-                                  message="El Editor Visual necesita más espacio en pantalla y funciona mejor con mouse. Ábrelo desde una computadora."
-                                >
-                                  <EditorVisualPage standalone />
-                                </DesktopOnlyRoute>
-                              </RoleRoute>
-                            </ProtectedRoute>
+            <AreasProvider>
+              <OperariosProvider>
+                <ProduccionProvider>
+                  <CalidadProvider>
+                    <ActividadesProvider>
+                      <ComprasProvider>
+                        <ChatProvider>
+                        {/* Suspense único a este nivel: cubre también las rutas anidadas dentro
+                            de AppContent, ya que un límite de Suspense atrapa cualquier
+                            componente lazy() en todo su subárbol sin importar la profundidad.
+                            Antes no tenía fallback (`null`): mientras se descargaba el chunk de
+                            JS de la página la pantalla se quedaba en blanco sin ningún aviso. Se
+                            probó reutilizar la pantalla de carga de marca (figuras rebotando,
+                            anillos girando) aquí también, pero al aparecer y desaparecer en
+                            menos de un segundo entre secciones se sentía como que la app se
+                            trababa, no como una transición — por eso es un spinner simple
+                            sobre fondo blanco, no la pantalla animada completa (esa se reserva
+                            para el arranque inicial de la app, ver `isLoading` más abajo). */}
+                        <Suspense
+                          fallback={
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', width: '100%', background: '#ffffff' }}>
+                              <Spinner size="lg" label="Cargando..." />
+                            </div>
                           }
-                        />
+                        >
+                        <Routes>
+                          {/* Ruta pública: login */}
+                          <Route path="/login" element={<LoginPage />} />
 
-                        {/* Resto de la app: requiere sesión iniciada */}
-                        <Route
-                          path="/*"
-                          element={
-                            <ProtectedRoute>
-                              <AppContent />
-                            </ProtectedRoute>
-                          }
-                        />
-                      </Routes>
-                      </Suspense>
-                      </ChatProvider>
-                    </ComprasProvider>
-                  </ActividadesProvider>
-                </CalidadProvider>
-              </ProduccionProvider>
-            </OperariosProvider>
+                          {/* Ruta pública: confirmación de autorización de requisiciones desde
+                              el correo de Dirección — sin sesión iniciada, protegida por el
+                              token de un solo uso de la URL (ver AprobarRequisicionPage.jsx) */}
+                          <Route path="/aprobar-requisicion" element={<AprobarRequisicionPage />} />
+
+                          {/* Editor Visual en ventana aparte: sin Sidebar/Header, para aprovechar
+                              todo el espacio cuando se abre desde el botón "Abrir en Ventana Aparte" */}
+                          <Route
+                            path="/editor-visual/ventana"
+                            element={
+                              <ProtectedRoute>
+                                <RoleRoute section="editor-visual">
+                                  <DesktopOnlyRoute
+                                    title="Editor Visual de Asignaciones"
+                                    shape="arco-doble"
+                                    accentColor="var(--color-secondary)"
+                                    message="El Editor Visual necesita más espacio en pantalla y funciona mejor con mouse. Ábrelo desde una computadora."
+                                  >
+                                    <EditorVisualPage standalone />
+                                  </DesktopOnlyRoute>
+                                </RoleRoute>
+                              </ProtectedRoute>
+                            }
+                          />
+
+                          {/* Resto de la app: requiere sesión iniciada */}
+                          <Route
+                            path="/*"
+                            element={
+                              <ProtectedRoute>
+                                <AppContent />
+                              </ProtectedRoute>
+                            }
+                          />
+                        </Routes>
+                        </Suspense>
+                        </ChatProvider>
+                      </ComprasProvider>
+                    </ActividadesProvider>
+                  </CalidadProvider>
+                </ProduccionProvider>
+              </OperariosProvider>
+            </AreasProvider>
           </ConfigProvider>
         </AuthProvider>
       </ToastProvider>

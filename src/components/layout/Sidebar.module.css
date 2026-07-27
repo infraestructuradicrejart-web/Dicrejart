@@ -465,7 +465,7 @@
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 480px) {
   .sidebar {
     position: fixed;
     left: 0;

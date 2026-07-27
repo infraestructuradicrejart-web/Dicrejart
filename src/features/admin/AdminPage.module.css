@@ -257,7 +257,7 @@
    vuelve una tarjeta, cada <td> su propia fila con la etiqueta de columna a
    la izquierda (`data-label` puesto en AdminPage.jsx) y el valor a la
    derecha. Antes solo había scroll horizontal, poco descubrible con el dedo. */
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .table thead {
     display: none;
   }

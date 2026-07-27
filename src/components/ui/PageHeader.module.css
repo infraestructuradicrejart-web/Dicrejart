@@ -72,7 +72,7 @@
 /* ============================================
    RESPONSIVE
    ============================================ */
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .banner {
     padding: var(--space-5) var(--space-5);
   }

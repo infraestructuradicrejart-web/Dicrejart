@@ -53,7 +53,7 @@ const ProyectosPage = () => {
   // ============================================
   // ESTADO Y CONTEXTO
   // ============================================
-  const { proyectos: allProyectos, juegos, addProject, deleteProject } = useProduccion();
+  const { proyectos: allProyectos, juegos, addProject, deleteProject, updateProject } = useProduccion();
   const { user } = useAuth();
   const isEncargado = user?.roleType === 'encargado-area';
   const isReadOnly = isReadOnlySection(user, 'proyectos');
@@ -81,6 +81,14 @@ const ProyectosPage = () => {
     description: '',
     startDate: '',
     endDate: '',
+  });
+
+  const [extendDateModal, setExtendDateModal] = useState({
+    isOpen: false,
+    projectId: null,
+    projectName: '',
+    currentEndDate: '',
+    newEndDate: '',
   });
 
   const toast = useToast();
@@ -223,6 +231,44 @@ const ProyectosPage = () => {
       toast.danger(res.error || 'Error al eliminar el proyecto.');
     }
     setDeleteConfirmation({ isOpen: false, projectId: null, projectName: '' });
+  };
+
+  const handleOpenExtendDate = (proj) => {
+    setExtendDateModal({
+      isOpen: true,
+      projectId: proj.id,
+      projectName: proj.name,
+      currentEndDate: proj.endDate,
+      newEndDate: proj.endDate,
+    });
+  };
+
+  const handleCloseExtendDate = () => {
+    setExtendDateModal({
+      isOpen: false,
+      projectId: null,
+      projectName: '',
+      currentEndDate: '',
+      newEndDate: '',
+    });
+  };
+
+  const handleConfirmExtendDate = async (e) => {
+    e.preventDefault();
+    const { projectId, newEndDate, currentEndDate } = extendDateModal;
+    
+    if (newEndDate === currentEndDate) {
+      toast.warning('La fecha seleccionada es igual a la actual.');
+      return;
+    }
+
+    const res = await updateProject(projectId, { endDate: newEndDate });
+    if (res.ok) {
+      toast.success('📅 Fecha de entrega extendida correctamente.');
+      handleCloseExtendDate();
+    } else {
+      toast.danger(res.error || 'Error al actualizar la fecha del proyecto.');
+    }
   };
 
   // ============================================
@@ -422,9 +468,34 @@ const ProyectosPage = () => {
                       <span>Inicio:</span>
                       <strong>{proj.startDate}</strong>
                     </div>
-                    <div>
-                      <span>Entrega:</span>
-                      <strong>{proj.endDate}</strong>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span>Entrega:</span>
+                        <strong>{proj.endDate}</strong>
+                      </div>
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenExtendDate(proj)}
+                          style={{
+                            background: 'rgba(0,0,0,0.05)',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            padding: '6px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px',
+                            transition: 'background-color 0.2s',
+                          }}
+                          title="Extender Fecha Límite"
+                          onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.1)')}
+                          onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'rgba(0,0,0,0.05)')}
+                        >
+                          📅
+                        </button>
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -548,6 +619,73 @@ const ProyectosPage = () => {
               </Button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {/* MODAL: EXTENDER FECHA LÍMITE */}
+      {extendDateModal.isOpen && (
+        <Modal
+          isOpen={extendDateModal.isOpen}
+          onClose={handleCloseExtendDate}
+          title="📅 Extender Fecha Límite"
+        >
+          <form onSubmit={handleConfirmExtendDate} style={{ padding: 'var(--space-2) 0' }}>
+            <div style={{
+              backgroundColor: 'rgba(255, 152, 0, 0.1)',
+              borderLeft: '4px solid var(--color-warning)',
+              padding: '12px',
+              borderRadius: '4px',
+              marginBottom: 'var(--space-4)'
+            }}>
+              <p style={{ margin: 0, fontSize: '14px', color: 'var(--color-dark)', fontWeight: '600' }}>
+                ⚠️ Advertencia de seguridad
+              </p>
+              <p style={{ margin: '8px 0 0', fontSize: '13px', color: 'var(--color-gray-500)' }}>
+                ¿Estás seguro que deseas extender la fecha de entrega del proyecto <strong>{extendDateModal.projectName}</strong>? Esta acción quedará registrada permanentemente en la bitácora de movimientos para auditoría.
+              </p>
+            </div>
+            
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Fecha Anterior</label>
+              <input
+                type="date"
+                className={styles.textInput}
+                value={extendDateModal.currentEndDate}
+                disabled
+                style={{ backgroundColor: 'var(--color-gray-100)', color: 'var(--color-gray-500)' }}
+              />
+            </div>
+
+            <div className={styles.formGroup} style={{ marginTop: 'var(--space-3)' }}>
+              <label className={styles.label}>Nueva Fecha Límite</label>
+              <input
+                type="date"
+                className={styles.textInput}
+                value={extendDateModal.newEndDate}
+                onChange={(e) => setExtendDateModal(prev => ({ ...prev, newEndDate: e.target.value }))}
+                min={extendDateModal.currentEndDate}
+                required
+              />
+            </div>
+
+            <div className={styles.formActions} style={{ marginTop: 'var(--space-5)' }}>
+              <Button
+                type="button"
+                variant="secondary"
+                size="md"
+                onClick={handleCloseExtendDate}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                variant="warning"
+                size="md"
+              >
+                Confirmar y Extender
+              </Button>
+            </div>
+          </form>
         </Modal>
       )}
     </div>

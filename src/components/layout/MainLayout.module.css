@@ -50,7 +50,7 @@
   box-shadow: var(--shadow-md);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 480px) {
   .sidebarToggle {
     display: flex;
   }
@@ -93,8 +93,8 @@
   /* Margin left para no superponer con sidebar */
   margin-left: 309px; /* Sidebar flotante: 45px offset + 248px ancho + 16px gap */
 
-  /* Padding */
-  padding: var(--space-7);
+  /* Padding: 76px arriba para evitar que el UserMenu (fijo en la esquina) tape el contenido */
+  padding: 76px var(--space-7) var(--space-7);
 
   /* Fondo transparente: deja ver el BrandBackdrop detrás */
   background-color: transparent;
@@ -153,7 +153,7 @@
   /* Tablet - Reducir padding */
   
   .content {
-    padding: var(--space-6);
+    padding: 76px var(--space-6) var(--space-6);
     margin-left: 295px;
   }
   
@@ -162,7 +162,7 @@
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 480px) {
   /* Tablet pequeño y mobile - Sidebar como overlay */
   
   /* Mostrar overlay en mobile */
@@ -213,7 +213,7 @@
  * Estado: Sidebar cerrado (mobile)
  * El overlay y sidebar están ocultos
  */
-@media (max-width: 768px) {
+@media (max-width: 480px) {
   .main-container {
     /* Position relative mantiene el layering */
   }

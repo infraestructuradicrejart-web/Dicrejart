@@ -162,7 +162,7 @@ export const AuthProvider = ({ children }) => {
           (snapshot) => {
             const list = [];
             snapshot.forEach((doc) => {
-              list.push(doc.data());
+              list.push({ id: doc.id, ...doc.data() });
             });
             setUsers(list);
           },

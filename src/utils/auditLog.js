@@ -10,6 +10,7 @@
 
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { auth } from '../config/firebase';
 
 let auditCounter = 0;
 
@@ -25,6 +26,8 @@ let auditCounter = 0;
  */
 export const logAudit = ({ user, module, action, details }) => {
   if (!db) return;
+  // No intentar escribir si no hay sesión activa en Firebase Auth (evita error de permisos)
+  if (!auth?.currentUser) return;
   auditCounter += 1;
   const id = `LOG-${Date.now()}-${auditCounter}`;
 

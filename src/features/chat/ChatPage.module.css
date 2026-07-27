@@ -343,7 +343,7 @@
 
 /* En mobile se muestra un solo panel a la vez (ver ChatPage.jsx: showList /
    showConversation), así que cada uno pasa a ocupar el 100% del ancho. */
-@media (max-width: 768px) {
+@media (max-width: 480px) {
   .layout {
     height: calc(100vh - 200px);
   }

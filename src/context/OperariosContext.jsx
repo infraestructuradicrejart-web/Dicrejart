@@ -23,7 +23,7 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
-import { resolveAreaId } from '../data/operariosData';
+import useAreas from '../hooks/useAreas';
 import { AuthContext } from './AuthContext';
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
@@ -70,6 +70,8 @@ export const OperariosProvider = ({ children }) => {
   const { verifyAreaAuthorizer, user } = useContext(AuthContext) || {};
   const { limits } = useContext(ConfigContext) || {};
   const movimientosPersonalLimit = limits?.movimientosPersonalLimit || DEFAULT_LIMITS.movimientosPersonalLimit;
+  
+  const { resolveAreaId } = useAreas();
 
   // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE
@@ -249,7 +251,7 @@ export const OperariosProvider = ({ children }) => {
 
     logAudit({ user, module: 'operarios', action: 'Importó padrón de operarios desde Excel', details: `${added} agregados, ${duplicates} duplicados, ${skipped} omitidos` });
     return { added, skipped, duplicates };
-  }, [operarios, user]);
+  }, [operarios, user, resolveAreaId]);
 
   /**
    * Elimina un operario de Firestore

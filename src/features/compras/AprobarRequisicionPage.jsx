@@ -15,7 +15,7 @@ import { Logo } from '../../components/ui/Logo';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
-import { AREAS_CATALOG } from '../../data/areasConfig';
+import useAreas from '../../hooks/useAreas';
 import { PRIORITY_LABELS } from '../../data/comprasData';
 
 /**
@@ -60,6 +60,7 @@ const textareaStyle = {
 };
 
 const AprobarRequisicionPage = () => {
+  const { areas: dynamicAreas } = useAreas();
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
   const initialAccion = searchParams.get('accion') === 'regresar' ? 'regresar' : 'autorizar';
@@ -155,7 +156,7 @@ const AprobarRequisicionPage = () => {
             </div>
 
             <p style={{ fontSize: '13px', margin: '4px 0' }}>
-              <strong>Área:</strong> {AREAS_CATALOG.find((a) => a.id === data.requisicion.areaId)?.name || data.requisicion.areaId}
+              <strong>Área:</strong> {dynamicAreas.find((a) => a.id === data.requisicion.areaId)?.name || data.requisicion.areaId}
             </p>
             <p style={{ fontSize: '13px', margin: '4px 0' }}>
               <strong>Solicitó:</strong> {data.requisicion.requestedBy} • {new Date(data.requisicion.createdAt).toLocaleDateString()}

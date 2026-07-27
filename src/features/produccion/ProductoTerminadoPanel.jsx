@@ -48,6 +48,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     addTarima,
     deleteTarima,
     addEnvio,
+    editEnvio,
     updateEnvioStatus,
     deleteEnvio,
     palletizePieces,
@@ -69,6 +70,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
   // Control de Modales
   const [isPalletModalOpen, setIsPalletModalOpen] = useState(false);
   const [isShipmentModalOpen, setIsShipmentModalOpen] = useState(false);
+  const [editingShipmentId, setEditingShipmentId] = useState(null);
 
   // Estados para Creación de Tarima
   const [newPallet, setNewPallet] = useState({
@@ -166,13 +168,18 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
 
   // Tarimas disponibles para cargar en el modal de envío (cualquier proyecto)
   const availableTarimas = useMemo(() => {
-    return tarimas.filter((t) => t.status === 'preparada');
-  }, [tarimas]);
+    return tarimas.filter((t) => {
+      if (t.status === 'preparada') return true;
+      if (editingShipmentId && newShipment.selectedTarimas[t.id]) return true;
+      return false;
+    });
+  }, [tarimas, editingShipmentId, newShipment.selectedTarimas]);
 
   // Todos los juegos disponibles para selección de envío (se cargarán con sus respectivas tarimas de forma automática)
   const gamesForShipmentSelection = useMemo(() => {
     const assignedGameIds = new Set();
     envios.forEach((e) => {
+      if (editingShipmentId && e.id === editingShipmentId) return;
       e.items.forEach((item) => {
         if (item.type === 'juego') {
           assignedGameIds.add(item.id);
@@ -180,7 +187,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
       });
     });
     return juegos.filter((j) => !assignedGameIds.has(j.id));
-  }, [juegos, envios]);
+  }, [juegos, envios, editingShipmentId]);
 
   // Tarimas que contienen piezas de los juegos seleccionados
   const associatedTarimasForCurrentSelection = useMemo(() => {
@@ -371,6 +378,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
 
   const handleOpenShipmentModal = () => {
     setIsShipmentModalOpen(true);
+    setEditingShipmentId(null);
     setNewShipment({
       scheduledDate: '',
       scheduledTime: '',
@@ -386,6 +394,43 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
 
   const handleCloseShipmentModal = () => {
     setIsShipmentModalOpen(false);
+    setEditingShipmentId(null);
+    setShipmentExtraInput({ name: '', quantity: 1, projectName: '', destinationAddress: '' });
+  };
+
+  const handleEditShipment = (envio) => {
+    setIsShipmentModalOpen(true);
+    setEditingShipmentId(envio.id);
+    
+    const selectedTarimas = {};
+    const selectedGames = {};
+    const extraItems = [];
+
+    envio.items.forEach(item => {
+      if (item.type === 'tarima') {
+        selectedTarimas[item.id] = { destinationAddress: item.destinationAddress || '' };
+      } else if (item.type === 'juego') {
+        selectedGames[item.id] = { destinationAddress: item.destinationAddress || '' };
+      } else if (item.type === 'refaccion') {
+        extraItems.push({
+          name: item.name,
+          quantity: item.quantity,
+          projectName: item.projectName,
+          destinationAddress: item.destinationAddress || '',
+        });
+      }
+    });
+
+    setNewShipment({
+      scheduledDate: envio.scheduledDate || '',
+      scheduledTime: envio.scheduledTime || '',
+      driverName: envio.driverName || '',
+      vehicleInfo: envio.vehicleInfo || '',
+      lockNumber: envio.lockNumber || '',
+      selectedTarimas,
+      selectedGames,
+      extraItems,
+    });
     setShipmentExtraInput({ name: '', quantity: 1, projectName: '', destinationAddress: '' });
   };
 
@@ -543,26 +588,29 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
       });
     });
 
-    if (items.length === 0) {
-      toast.warning('Debes añadir al menos un juego completo o refacción al envío.');
-      return;
-    }
 
     if (hasMissingAddress) {
       toast.danger('Por favor introduce la dirección de entrega de todos los juegos seleccionados.');
       return;
     }
 
-    addEnvio({
+    const envioData = {
       scheduledDate: newShipment.scheduledDate,
       scheduledTime: newShipment.scheduledTime || 'Sin hora',
       driverName: newShipment.driverName || 'Por asignar',
       vehicleInfo: newShipment.vehicleInfo || 'Por asignar',
       lockNumber: newShipment.lockNumber,
       items,
-    });
+    };
 
-    toast.success('🚚 Envío programado con éxito. Listo para coordinar carga.');
+    if (editingShipmentId) {
+      editEnvio(editingShipmentId, envioData);
+      toast.success('✏️ Envío modificado con éxito.');
+    } else {
+      addEnvio(envioData);
+      toast.success('🚚 Envío programado con éxito. Listo para coordinar carga.');
+    }
+    
     handleCloseShipmentModal();
   };
 
@@ -941,7 +989,18 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                         <Button
                           variant="secondary"
                           size="sm"
+                          onClick={() => handleEditShipment(e)}
+                        >
+                          ✏️ Editar
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={() => {
+                            if (!e.items || e.items.length === 0) {
+                              toast.danger('No se puede iniciar la carga: el envío está vacío. Por favor, edita y agrega elementos primero.');
+                              return;
+                            }
                             updateEnvioStatus(e.id, 'carga');
                             toast.warning(`🏗️ Carga de envío ${e.id} iniciada.`);
                           }}
@@ -967,6 +1026,10 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                         variant="primary"
                         size="sm"
                         onClick={() => {
+                          if (!e.items || e.items.length === 0) {
+                            toast.danger('No se puede despachar: el envío está vacío. Por favor, edita y agrega elementos primero.');
+                            return;
+                          }
                           updateEnvioStatus(e.id, 'enviado');
                           toast.success(`🟢 Envío ${e.id} despachado. ¡Camión en ruta!`);
                         }}
@@ -1203,7 +1266,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
       {/* ============================================
           MODAL PROGRAMAR ENVÍO
           ============================================ */}
-      <Modal isOpen={isShipmentModalOpen} onClose={handleCloseShipmentModal} title="Programar Embarque / Envío">
+      <Modal isOpen={isShipmentModalOpen} onClose={handleCloseShipmentModal} title={editingShipmentId ? "Editar Embarque / Envío" : "Programar Embarque / Envío"}>
         <form onSubmit={handleCreateShipmentSubmit} className={styles.form}>
           <div className={styles.row}>
             <div className={styles.formGroup}>
@@ -1428,7 +1491,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
               Cancelar
             </Button>
             <Button type="submit" variant="primary" size="md">
-              Programar Envío
+              {editingShipmentId ? 'Guardar Cambios' : 'Programar Envío'}
             </Button>
           </div>
         </form>

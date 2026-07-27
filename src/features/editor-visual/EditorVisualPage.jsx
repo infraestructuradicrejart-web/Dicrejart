@@ -25,7 +25,7 @@ import useActividades from '../../hooks/useActividades';
 import useOperarios from '../../hooks/useOperarios';
 import useAuth from '../../hooks/useAuth';
 import { AREA_SEQUENCE_DEPENDENCIES, isAreaBlockedBySequence } from '../../context/ProduccionContext';
-import { AREAS_CATALOG } from '../../data/areasConfig';
+import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import styles from './EditorVisualPage.module.css';
 
@@ -43,8 +43,7 @@ const NODE_TYPES = {
   bloque: { icon: '📦', label: 'Bloque de Actividades', colorVar: 'var(--color-alert)', allowCreate: true },
 };
 
-/** Áreas seleccionables al crear un Bloque: las 8 de manufactura + las no productivas (ej. Diseño) */
-const ALL_BLOCK_AREAS = [...AREAS_CATALOG, ...NON_PRODUCTION_AREAS];
+// ALL_BLOCK_AREAS is computed dynamically inside components
 
 const PRIORITY_OPTIONS = [
   { value: 'baja', label: 'Baja' },
@@ -84,6 +83,8 @@ const EditorVisualPage = ({ standalone = false }) => {
   const { proyectos, juegos, addProject, addGame } = useProduccion();
   const { actividades, addActividad, deleteActividad } = useActividades();
   const { operarios, assignToArea } = useOperarios();
+  const { areas: dynamicAreas } = useAreas();
+  const allBlockAreas = useMemo(() => [...dynamicAreas, ...NON_PRODUCTION_AREAS], [dynamicAreas]);
   const { user } = useAuth();
   const toast = useToast();
 
@@ -199,10 +200,10 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (node.type === 'juego') return juegos.find((j) => j.id === node.refId);
       if (node.type === 'actividad') return actividades.find((a) => a.id === node.refId);
       if (node.type === 'colaborador') return operarios.find((o) => o.id === node.refId);
-      if (node.type === 'area') return AREAS_CATALOG.find((a) => a.id === node.refId);
+      if (node.type === 'area') return dynamicAreas.find((a) => a.id === node.refId);
       return null;
     },
-    [proyectos, juegos, actividades, operarios]
+    [proyectos, juegos, actividades, operarios, dynamicAreas]
   );
 
   const nodeTitle = useCallback(
@@ -227,7 +228,7 @@ const EditorVisualPage = ({ standalone = false }) => {
   const nodeSummary = useCallback(
     (node) => {
       if (node.type === 'bloque') {
-        const areaName = ALL_BLOCK_AREAS.find((a) => a.id === node.areaId)?.name || node.areaId;
+        const areaName = allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId;
         const count = node.activityIds?.length || 0;
         return `${areaName} · ${count} actividad${count === 1 ? '' : 'es'}`;
       }
@@ -238,23 +239,23 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (node.type === 'juego') {
         const blocked = getBlockedAreas(entity);
         const blockedSuffix = blocked.length > 0
-          ? ` · 🔒 ${blocked.map((a) => AREAS_CATALOG.find((c) => c.id === a)?.name || a).join(', ')} bloqueada(s)`
+          ? ` · 🔒 ${blocked.map((a) => dynamicAreas.find((c) => c.id === a)?.name || a).join(', ')} bloqueada(s)`
           : '';
         const rejected = (entity.areas || []).filter((a) => entity.qualityReview?.[a]?.status === 'rechazado');
         const rejectedSuffix = rejected.length > 0
-          ? ` · ❌ Calidad rechazó ${rejected.map((a) => AREAS_CATALOG.find((c) => c.id === a)?.name || a).join(', ')}`
+          ? ` · ❌ Calidad rechazó ${rejected.map((a) => dynamicAreas.find((c) => c.id === a)?.name || a).join(', ')}`
           : '';
         return `${entity.projectName || ''} · ${entity.progress ?? 0}%${blockedSuffix}${rejectedSuffix}`;
       }
       if (node.type === 'actividad') {
         const responsable = operarios.find((o) => o.id === entity.operarioId)?.name;
-        return `Área: ${AREAS_CATALOG.find((a) => a.id === entity.areaId)?.name || entity.areaId} · ${entity.status}${responsable ? ` · 👷 ${responsable}` : ''}`;
+        return `Área: ${dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId} · ${entity.status}${responsable ? ` · 👷 ${responsable}` : ''}`;
       }
-      if (node.type === 'colaborador') return `Área actual: ${AREAS_CATALOG.find((a) => a.id === entity.currentArea)?.name || entity.currentArea}`;
+      if (node.type === 'colaborador') return `Área actual: ${dynamicAreas.find((a) => a.id === entity.currentArea)?.name || entity.currentArea}`;
       if (node.type === 'area') return 'Área de manufactura';
       return '';
     },
-    [getLinkedEntity, getBlockedAreas, operarios]
+    [getLinkedEntity, getBlockedAreas, operarios, dynamicAreas, allBlockAreas]
   );
 
   // ============================================
@@ -462,15 +463,15 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (type === 'actividad') return actividades.map((a) => ({ id: a.id, label: a.title }));
       if (type === 'colaborador') {
         return operarios.map((o) => {
-          const areaName = AREAS_CATALOG.find((a) => a.id === o.currentArea)?.name || o.currentArea;
+          const areaName = dynamicAreas.find((a) => a.id === o.currentArea)?.name || o.currentArea;
           const loanTag = o.currentArea !== o.homeArea ? ' · prestado' : '';
           return { id: o.id, label: `${o.name} — ${areaName}${loanTag}` };
         });
       }
-      if (type === 'area') return AREAS_CATALOG.map((a) => ({ id: a.id, label: a.name }));
+      if (type === 'area') return dynamicAreas.map((a) => ({ id: a.id, label: a.name }));
       return [];
     },
-    [proyectos, juegos, actividades, operarios]
+    [proyectos, juegos, actividades, operarios, dynamicAreas]
   );
 
   const openPicker = (type) => {
@@ -546,8 +547,8 @@ const EditorVisualPage = ({ standalone = false }) => {
     setNodes((prev) => prev.map((n) => (n.id === nodeId ? { ...n, blockName: value } : n)));
   };
 
-  /** true si el área del bloque es una de las 8 de manufactura (con Operarios reales asignables) */
-  const isProductionArea = (areaId) => AREAS_CATALOG.some((a) => a.id === areaId);
+  /** true si el área del bloque es una de las de manufactura (con Operarios reales asignables) */
+  const isProductionArea = (areaId) => dynamicAreas.some((a) => a.id === areaId);
 
   // ---- Crear una actividad NUEVA (real, en Firestore) directamente dentro de un Bloque ----
   const EMPTY_BLOCK_ACTIVITY = { isOpen: false, blockNodeId: null, title: '', description: '', priority: 'media', dueDate: '', operarioId: '' };
@@ -888,7 +889,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                     >
                       <title>
                         {isBlockedLink
-                          ? `🔒 Bloqueado: ${AREAS_CATALOG.find((a) => a.id === AREA_SEQUENCE_DEPENDENCIES[areaEntity.id])?.name} todavía no completa su meta. Clic para eliminar esta conexión.`
+                          ? `🔒 Bloqueado: ${dynamicAreas.find((a) => a.id === AREA_SEQUENCE_DEPENDENCIES[areaEntity.id])?.name} todavía no completa su meta. Clic para eliminar esta conexión.`
                           : 'Clic para eliminar esta conexión'}
                       </title>
                     </path>
@@ -1044,6 +1045,8 @@ const EditorVisualPage = ({ standalone = false }) => {
                 canEditDiagram={canEditDiagram}
                 updateBlockName={(value) => updateBlockName(selectedNode.id, value)}
                 onSaveBlockName={() => saveToFirestore(nodes, edges)}
+                dynamicAreas={dynamicAreas}
+                allBlockAreas={allBlockAreas}
               />
             </aside>
           )}
@@ -1114,7 +1117,7 @@ const EditorVisualPage = ({ standalone = false }) => {
           >
             <option value="">Seleccionar área...</option>
             <optgroup label="🏭 Áreas de manufactura">
-              {AREAS_CATALOG.map((a) => (
+              {dynamicAreas.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </optgroup>
@@ -1177,7 +1180,7 @@ const EditorVisualPage = ({ standalone = false }) => {
           if (!isProductionArea(blockNode.areaId)) {
             return (
               <div className={styles.calloutBox} style={{ background: 'rgba(153, 51, 255, 0.08)', border: '1px solid rgba(153, 51, 255, 0.25)' }}>
-                ℹ️ El área &ldquo;{ALL_BLOCK_AREAS.find((a) => a.id === blockNode.areaId)?.name}&rdquo; todavía no tiene
+                ℹ️ El área &ldquo;{allBlockAreas.find((a) => a.id === blockNode.areaId)?.name}&rdquo; todavía no tiene
                 colaboradores dados de alta en el sistema — la actividad se creará sin responsable asignado.
               </div>
             );
@@ -1217,7 +1220,7 @@ const EditorVisualPage = ({ standalone = false }) => {
           {blockLinkCandidates.map((a) => (
             <button key={a.id} type="button" className={styles.pickerItem} onClick={() => handleLinkExistingActivity(a.id)}>
               📌 <span>{a.title}</span>
-              <span className={styles.pickerBadge}>{AREAS_CATALOG.find((ar) => ar.id === a.areaId)?.name || a.areaId}</span>
+              <span className={styles.pickerBadge}>{dynamicAreas.find((ar) => ar.id === a.areaId)?.name || a.areaId}</span>
             </button>
           ))}
           {blockLinkCandidates.length === 0 && (
@@ -1308,6 +1311,8 @@ const NodeInspector = ({
   canEditDiagram,
   updateBlockName,
   onSaveBlockName,
+  dynamicAreas,
+  allBlockAreas,
 }) => {
   const meta = NODE_TYPES[node.type];
 
@@ -1406,8 +1411,8 @@ const NodeInspector = ({
             .filter((areaId) => isAreaBlockedBySequence(entity, areaId))
             .map((areaId) => {
               const requiredAreaId = AREA_SEQUENCE_DEPENDENCIES[areaId];
-              const requiredAreaName = AREAS_CATALOG.find((a) => a.id === requiredAreaId)?.name;
-              const blockedAreaName = AREAS_CATALOG.find((a) => a.id === areaId)?.name;
+              const requiredAreaName = dynamicAreas.find((a) => a.id === requiredAreaId)?.name;
+              const blockedAreaName = dynamicAreas.find((a) => a.id === areaId)?.name;
               const produced = entity.producedPieces?.[requiredAreaId] || 0;
               const target = entity.targetPieces?.[requiredAreaId] || 0;
               return (
@@ -1423,7 +1428,7 @@ const NodeInspector = ({
             {[...(entity.areas || []), 'producto-terminado'].map((areaId) => {
               const areaName = areaId === 'producto-terminado'
                 ? 'Producto Terminado'
-                : AREAS_CATALOG.find((a) => a.id === areaId)?.name || areaId;
+                : dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
               const produced = entity.producedPieces?.[areaId] || 0;
               const target = entity.targetPieces?.[areaId] || 0;
               const areaStat = entity.areaStatus?.[areaId] || 'pendiente';
@@ -1452,7 +1457,7 @@ const NodeInspector = ({
       {!node.draft && entity && node.type === 'actividad' && (
         <>
           <div className={styles.field}><label>Título</label><input type="text" value={entity.title} disabled /></div>
-          <div className={styles.field}><label>Área</label><input type="text" value={AREAS_CATALOG.find((a) => a.id === entity.areaId)?.name || entity.areaId} disabled /></div>
+          <div className={styles.field}><label>Área</label><input type="text" value={dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId} disabled /></div>
           <div className={styles.field}><label>Estado</label><input type="text" value={entity.status} disabled /></div>
           <div className={styles.field}><label>Prioridad</label><input type="text" value={entity.priority} disabled /></div>
           <div className={styles.field}>
@@ -1469,7 +1474,7 @@ const NodeInspector = ({
       {!node.draft && entity && node.type === 'colaborador' && (
         <>
           <div className={styles.field}><label>Nombre</label><input type="text" value={entity.name} disabled /></div>
-          <div className={styles.field}><label>Área Actual</label><input type="text" value={AREAS_CATALOG.find((a) => a.id === entity.currentArea)?.name || entity.currentArea} disabled /></div>
+          <div className={styles.field}><label>Área Actual</label><input type="text" value={dynamicAreas.find((a) => a.id === entity.currentArea)?.name || entity.currentArea} disabled /></div>
           {(() => {
             const areaNode = getConnectedAreaNode(node.id);
             if (!areaNode) return null;
@@ -1481,7 +1486,7 @@ const NodeInspector = ({
             ) : (
               canEditDiagram && (
                 <Button variant="primary" size="md" onClick={() => onAssignColaborador(entity, areaNode)}>
-                  🔁 Asignar a {AREAS_CATALOG.find((a) => a.id === areaNode.refId)?.name}
+                  🔁 Asignar a {dynamicAreas.find((a) => a.id === areaNode.refId)?.name}
                 </Button>
               )
             );
@@ -1499,7 +1504,7 @@ const NodeInspector = ({
                   <div key={a.id} className={styles.areaStatusRow}>
                     <strong>📌 {a.title}</strong>
                     <div className={styles.areaStatusMeta}>
-                      <span>{AREAS_CATALOG.find((ar) => ar.id === a.areaId)?.name || a.areaId}</span>
+                      <span>{dynamicAreas.find((ar) => ar.id === a.areaId)?.name || a.areaId}</span>
                       <span>· {a.status}</span>
                     </div>
                   </div>
@@ -1524,7 +1529,7 @@ const NodeInspector = ({
           </div>
           <div className={styles.field}>
             <label>Área</label>
-            <input type="text" value={ALL_BLOCK_AREAS.find((a) => a.id === node.areaId)?.name || node.areaId} disabled />
+            <input type="text" value={allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId} disabled />
           </div>
           <div className={styles.calloutBox} style={{ background: 'rgba(255, 51, 0, 0.06)', border: '1px solid rgba(255, 51, 0, 0.2)' }}>
             Haz clic en el cuerpo del bloque (en el lienzo) para desplegar o cerrar su lista de actividades.

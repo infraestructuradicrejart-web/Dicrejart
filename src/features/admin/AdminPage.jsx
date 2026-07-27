@@ -20,7 +20,7 @@ import useOperarios from '../../hooks/useOperarios';
 import useAuth from '../../hooks/useAuth';
 import useConfig from '../../hooks/useConfig';
 import { ROLE_TYPES } from '../../data/usersData';
-import { AREAS_CATALOG } from '../../data/areasConfig';
+import useAreas from '../../hooks/useAreas';
 import PageHeader from '../../components/ui/PageHeader';
 import styles from './AdminPage.module.css';
 
@@ -59,17 +59,17 @@ const ROLE_TYPE_LABELS = {
  * @param {Array<string>} areaIds - Solo relevante para 'supervisor-area'
  * @returns {string} Nombre de rol para mostrar en la tabla
  */
-const computeRoleLabel = (roleType, areaId, areaIds) => {
+const computeRoleLabel = (roleType, areaId, areaIds, dynamicAreas) => {
   if (roleType === ROLE_TYPES.ADMIN) return 'Administrador';
   if (roleType === ROLE_TYPES.CALIDAD) return 'Inspector de Calidad';
 
   if (roleType === ROLE_TYPES.ENCARGADO_AREA) {
-    const areaName = AREAS_CATALOG.find((a) => a.id === areaId)?.name || 'Área';
+    const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || 'Área';
     return `Encargado de ${areaName}`;
   }
 
   if (roleType === ROLE_TYPES.SUPERVISOR_AREA) {
-    const names = (areaIds || []).map((id) => AREAS_CATALOG.find((a) => a.id === id)?.name || id);
+    const names = (areaIds || []).map((id) => dynamicAreas.find((a) => a.id === id)?.name || id);
     return names.length > 0 ? `Supervisor de ${names.join(' y ')}` : 'Supervisor de Área';
   }
 
@@ -84,12 +84,12 @@ const computeRoleLabel = (roleType, areaId, areaIds) => {
  * @param {Object} usr
  * @returns {string}
  */
-const getUserAreasText = (usr) => {
+const getUserAreasText = (usr, dynamicAreas) => {
   if (usr.roleType === ROLE_TYPES.ENCARGADO_AREA) {
-    return AREAS_CATALOG.find((a) => a.id === usr.areaId)?.name || usr.areaId || '—';
+    return dynamicAreas.find((a) => a.id === usr.areaId)?.name || usr.areaId || '—';
   }
   if (usr.roleType === ROLE_TYPES.SUPERVISOR_AREA) {
-    const names = (usr.areaIds || []).map((id) => AREAS_CATALOG.find((a) => a.id === id)?.name || id);
+    const names = (usr.areaIds || []).map((id) => dynamicAreas.find((a) => a.id === id)?.name || id);
     return names.length > 0 ? names.join(', ') : '—';
   }
   return '—';
@@ -107,6 +107,7 @@ const AdminPage = () => {
   const { blockDuration, updateBlockDuration } = useOperarios();
   const { users, addUser, updateUser, deleteUser, resetUserPassword } = useAuth();
   const { limits, updateLimit, generalConfig, updateGeneralConfig, auditLog } = useConfig();
+  const { areas: dynamicAreas, addArea, updateArea, deleteArea } = useAreas();
   const toast = useToast();
 
   /** Etiquetas legibles para cada límite dinámico de historial (colecciones tipo bitácora) */
@@ -155,6 +156,11 @@ const AdminPage = () => {
   const [resetPasswordModal, setResetPasswordModal] = useState({ isOpen: false, userId: null, userName: '' });
   const [resetPasswordForm, setResetPasswordForm] = useState({ newPassword: '', confirmPassword: '' });
 
+  // Modales de Áreas
+  const [areaModal, setAreaModal] = useState({ isOpen: false, mode: 'create', editingId: null });
+  const [areaForm, setAreaForm] = useState({ id: '', name: '' });
+  const [deleteAreaConfirm, setDeleteAreaConfirm] = useState({ isOpen: false, area: null });
+
   // ============================================
   // HANDLERS - CONFIGURACIÓN
   // ============================================
@@ -168,6 +174,64 @@ const AdminPage = () => {
 
   const handleToleranceChange = (e) => {
     updateGeneralConfig('qualityTolerance', Number(e.target.value));
+  };
+
+  // ============================================
+  // HANDLERS - GESTIÓN DE ÁREAS
+  // ============================================
+  const handleOpenCreateAreaModal = () => {
+    setAreaForm({ id: '', name: '' });
+    setAreaModal({ isOpen: true, mode: 'create', editingId: null });
+  };
+
+  const handleOpenEditAreaModal = (area) => {
+    setAreaForm({ id: area.id, name: area.name });
+    setAreaModal({ isOpen: true, mode: 'edit', editingId: area.id });
+  };
+
+  const handleCloseAreaModal = () => {
+    setAreaModal({ isOpen: false, mode: 'create', editingId: null });
+    setAreaForm({ id: '', name: '' });
+  };
+
+  const handleSubmitArea = async (e) => {
+    e.preventDefault();
+    if (!areaForm.id || !areaForm.name) {
+      toast.danger('Completa el ID y el nombre del área.');
+      return;
+    }
+
+    if (areaModal.mode === 'create') {
+      const res = await addArea(areaForm);
+      if (!res.ok) {
+        toast.danger(res.error);
+        return;
+      }
+      toast.success(`Área ${areaForm.name} creada correctamente.`);
+    } else {
+      const res = await updateArea(areaModal.editingId, { name: areaForm.name });
+      if (!res.ok) {
+        toast.danger(res.error);
+        return;
+      }
+      toast.success(`Área actualizada correctamente.`);
+    }
+    handleCloseAreaModal();
+  };
+
+  const handleDeleteArea = (area) => {
+    setDeleteAreaConfirm({ isOpen: true, area });
+  };
+
+  const handleConfirmDeleteArea = async () => {
+    if (!deleteAreaConfirm.area) return;
+    const res = await deleteArea(deleteAreaConfirm.area.id);
+    if (!res.ok) {
+      toast.danger(res.error);
+    } else {
+      toast.success(`Área eliminada.`);
+    }
+    setDeleteAreaConfirm({ isOpen: false, area: null });
   };
 
   // ============================================
@@ -278,7 +342,7 @@ const AdminPage = () => {
       email: userForm.email,
       password: userForm.password,
       roleType: userForm.roleType,
-      role: computeRoleLabel(userForm.roleType, userForm.areaId, userForm.areaIds),
+      role: computeRoleLabel(userForm.roleType, userForm.areaId, userForm.areaIds, dynamicAreas),
       areaId: userForm.roleType === ROLE_TYPES.ENCARGADO_AREA ? userForm.areaId : null,
       areaIds: userForm.roleType === ROLE_TYPES.SUPERVISOR_AREA ? userForm.areaIds : undefined,
       status: userForm.status,
@@ -483,7 +547,7 @@ const AdminPage = () => {
                         <td data-label="Usuario">
                           <div className={styles.userInfoBlock}>
                             <span className={styles.avatarMini}>
-                              {usr.name[0].toUpperCase()}
+                              {usr.name?.[0]?.toUpperCase() || 'U'}
                             </span>
                             <div className={styles.userDetails}>
                               <strong className={styles.userName}>{usr.name}</strong>
@@ -492,10 +556,10 @@ const AdminPage = () => {
                           </div>
                         </td>
                         <td data-label="Rol" className={styles.userRole}>{usr.role || ROLE_TYPE_LABELS[usr.roleType]}</td>
-                        <td data-label="Área(s)" style={{ fontSize: '12px' }}>{getUserAreasText(usr)}</td>
+                        <td data-label="Área(s)" style={{ fontSize: '12px' }}>{getUserAreasText(usr, dynamicAreas)}</td>
                         <td data-label="Estado">
                           <Badge variant={usr.status === 'activo' ? 'success' : 'neutral'}>
-                            {usr.status.toUpperCase()}
+                            {usr.status?.toUpperCase() || 'DESCONOCIDO'}
                           </Badge>
                         </td>
                         <td data-label="Acciones">
@@ -519,6 +583,57 @@ const AdminPage = () => {
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          {/* ÁREAS DE PRODUCCIÓN */}
+          <Card variant="default" style={{ marginTop: 'var(--space-5)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <h3 className={styles.sectionTitle} style={{ margin: 0 }}>Áreas de Producción</h3>
+              <Button variant="primary" size="sm" onClick={handleOpenCreateAreaModal}>
+                ➕ Nueva Área
+              </Button>
+            </div>
+            <div className={styles.tableResponsive}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Nombre</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dynamicAreas.map((area) => (
+                    <tr key={area.id}>
+                      <td data-label="ID"><code>{area.id}</code></td>
+                      <td data-label="Nombre">{area.name}</td>
+                      <td data-label="Acciones">
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          <Button variant="ghost" size="sm" onClick={() => handleOpenEditAreaModal(area)}>
+                            ✏️ Editar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            style={{ color: 'var(--color-danger)' }}
+                            onClick={() => handleDeleteArea(area)}
+                          >
+                            🗑️
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {dynamicAreas.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className={styles.emptyCell} style={{ padding: 'var(--space-4)', textAlign: 'center', color: 'var(--color-gray-500)' }}>
+                        No hay áreas configuradas.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -649,7 +764,7 @@ const AdminPage = () => {
                 onChange={handleUserFormChange}
                 required
                 placeholder="-- Selecciona el Área --"
-                options={AREAS_CATALOG.map((a) => ({ value: a.id, label: a.name }))}
+                options={dynamicAreas.map((a) => ({ value: a.id, label: a.name }))}
               />
             </div>
           )}
@@ -659,7 +774,7 @@ const AdminPage = () => {
             <div className={styles.formGroup}>
               <label className={styles.label}>Áreas Supervisadas</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', border: '1px solid var(--color-gray-200)', borderRadius: '6px', padding: '10px' }}>
-                {AREAS_CATALOG.map((a) => (
+                {dynamicAreas.map((a) => (
                   <label key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
@@ -776,6 +891,76 @@ const AdminPage = () => {
                 onClick={handleConfirmDeleteUser}
               >
                 Eliminar Usuario
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* MODAL: CREAR/EDITAR ÁREA */}
+      <Modal
+        isOpen={areaModal.isOpen}
+        onClose={handleCloseAreaModal}
+        title={areaModal.mode === 'create' ? 'Crear Nueva Área' : 'Editar Área'}
+      >
+        <form onSubmit={handleSubmitArea} className={styles.form}>
+          <div className={styles.formGroup}>
+            <label className={styles.label}>ID del Área</label>
+            <input
+              type="text"
+              className={styles.textInput}
+              placeholder="Ej: corte-laser (sin espacios)"
+              value={areaForm.id}
+              onChange={(e) => setAreaForm({ ...areaForm, id: e.target.value })}
+              disabled={areaModal.mode === 'edit'}
+              required
+            />
+            {areaModal.mode === 'create' && (
+              <p style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>El ID es permanente y no podrá modificarse luego.</p>
+            )}
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.label}>Nombre del Área</label>
+            <input
+              type="text"
+              className={styles.textInput}
+              placeholder="Ej: Corte Láser"
+              value={areaForm.name}
+              onChange={(e) => setAreaForm({ ...areaForm, name: e.target.value })}
+              required
+            />
+          </div>
+          <div className={styles.formActions} style={{ marginTop: 'var(--space-4)' }}>
+            <Button type="button" variant="secondary" size="md" onClick={handleCloseAreaModal}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="primary" size="md">
+              {areaModal.mode === 'create' ? 'Crear Área' : 'Guardar Cambios'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* MODAL: CONFIRMAR ELIMINACIÓN DE ÁREA */}
+      {deleteAreaConfirm.isOpen && (
+        <Modal
+          isOpen={deleteAreaConfirm.isOpen}
+          onClose={() => setDeleteAreaConfirm({ isOpen: false, area: null })}
+          title="🗑️ Confirmar Eliminación"
+        >
+          <div style={{ padding: 'var(--space-2) 0' }}>
+            <p style={{ marginBottom: 'var(--space-4)', fontSize: 'var(--body-size)', color: 'var(--color-dark)' }}>
+              ¿Estás seguro de que deseas eliminar el área <strong>{deleteAreaConfirm.area?.name}</strong>?
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--color-danger)', marginBottom: 'var(--space-5)' }}>
+              ¡Atención! Eliminar un área podría romper registros históricos que dependan de ella (producción, operarios, etc).
+            </p>
+            <div className={styles.formActions} style={{ marginTop: 'var(--space-4)' }}>
+              <Button type="button" variant="secondary" size="md" onClick={() => setDeleteAreaConfirm({ isOpen: false, area: null })}>
+                Cancelar
+              </Button>
+              <Button type="button" variant="danger" size="md" onClick={handleConfirmDeleteArea}>
+                Eliminar Área
               </Button>
             </div>
           </div>

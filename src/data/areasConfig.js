@@ -1,16 +1,16 @@
 /**
  * @file areasConfig.js
- * @description Catálogo único de las 8 áreas de producción de Dicrejart
- * Fuente compartida para resolver nombres de área provenientes de Excel
- * (usado por la carga de Operarios, Juegos y Actividades)
+ * @description Catálogo por defecto de las áreas de producción de Dicrejart
+ * y utilidades de normalización de texto.
  * @author Dicrejart Dev Team
  */
 
 /**
- * Catálogo de las 8 áreas de producción (id + nombre)
+ * Catálogo por defecto de las 8 áreas de producción (id + nombre)
+ * Usado para inicializar la base de datos si está vacía.
  * @constant
  */
-export const AREAS_CATALOG = [
+export const DEFAULT_AREAS = [
   { id: 'almacen', name: 'Almacén' },
   { id: 'corte-laser', name: 'Corte Laser' },
   { id: 'herreria', name: 'Herrería' },
@@ -44,13 +44,13 @@ const normalize = (value) =>
     .toLowerCase();
 
 /**
- * Resuelve un valor de área proveniente de un Excel (puede venir como id
- * "corte-laser" o como nombre "Corte Laser") al id canónico del área
+ * Resuelve un valor de área proveniente de un Excel al id canónico del área
  *
  * @param {string} rawValue - Valor crudo de la celda de área
+ * @param {Array} catalog - Catálogo de áreas dinámico (opcional, usa fallback)
  * @returns {string|null} El id del área si hay coincidencia, o null si no se reconoce
  */
-export const resolveAreaId = (rawValue) => {
+export const resolveAreaId = (rawValue, catalog = DEFAULT_AREAS) => {
   const normalized = normalize(rawValue);
   
   // Mapeo flexible de sinónimos o subpalabras comunes en el Excel
@@ -63,7 +63,7 @@ export const resolveAreaId = (rawValue) => {
   if (/mantenimiento|pintura/i.test(normalized)) return 'mantenimiento';
   if (/terminado|pt|empaque/i.test(normalized)) return 'producto-terminado';
 
-  const match = AREAS_CATALOG.find(
+  const match = catalog.find(
     (area) => normalize(area.id) === normalized || normalize(area.name) === normalized
   );
   return match ? match.id : null;

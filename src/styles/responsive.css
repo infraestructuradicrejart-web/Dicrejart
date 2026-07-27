@@ -59,7 +59,7 @@
    MOBILE NORMAL (481px - 640px)
    ============================================ */
 
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   /* Estilos para mobile normal */
   
   /* Sidebar oculto, se abre con menú hamburguesa */
@@ -103,7 +103,7 @@
    TABLET PEQUEÑA (641px - 768px)
    ============================================ */
 
-@media (max-width: 768px) {
+@media (max-width: 480px) {
   /* Estilos tablet pequeña */
   
   /* Grid de 2 columnas */
@@ -131,7 +131,7 @@
    TABLET NORMAL (769px - 1024px)
    ============================================ */
 
-@media (min-width: 769px) and (max-width: 1024px) {
+@media (min-width: 481px) and (max-width: 1024px) {
   /* Estilos tablet */
   
   /* Sidebar colapsable pero visible */

@@ -2,20 +2,97 @@
  * @file vite.config.js
  * @description Configuración de Vite para el proyecto Dicrejart
  * Define las opciones de compilación, servidor de desarrollo y optimizaciones
+ * Incluye configuración PWA para instalación como app nativa
  * @author Dicrejart Dev Team
  */
 
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 
 /**
  * Configuración de Vite
  * - Puerto de desarrollo: 5173
  * - Soporte para React (JSX)
+ * - PWA con Service Worker para instalación
  * - Optimizaciones para producción
  */
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+      manifest: {
+        name: 'Dicrejart - Sistema de Producción',
+        short_name: 'Dicrejart',
+        description: 'Sistema integral de gestión de producción, calidad y proyectos para Dicrejart',
+        theme_color: '#1a1a2e',
+        background_color: '#0f0f1a',
+        display: 'standalone',
+        orientation: 'any',
+        scope: '/',
+        start_url: '/',
+        categories: ['business', 'productivity'],
+        icons: [
+          {
+            src: 'pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        // Precachear los archivos generados por Vite
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Caché de rutas de navegación (SPA)
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
+        // Runtime caching para Google Fonts
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'google-fonts-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 año
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+          {
+            urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'gstatic-fonts-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 año
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+        ],
+      },
+    }),
+  ],
   
   server: {
     // Puerto en el que se ejecuta el servidor de desarrollo

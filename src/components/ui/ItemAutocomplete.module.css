@@ -1,0 +1,73 @@
+.container {
+  position: relative;
+  width: 100%;
+  flex-grow: 1;
+}
+
+.input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-gray-200);
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(255, 153, 51, 0.2);
+}
+
+.dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: 6px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  z-index: 50;
+  margin-top: 4px;
+}
+
+.option {
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--color-gray-100);
+}
+
+.option:last-child {
+  border-bottom: none;
+}
+
+.option:hover {
+  background: var(--color-gray-50);
+}
+
+.optionText {
+  color: var(--color-gray-800);
+}
+
+.optionSubtext {
+  font-size: 11px;
+  color: var(--color-gray-500);
+}
+
+.createNew {
+  color: var(--color-primary);
+  font-weight: 600;
+  background: rgba(255, 153, 51, 0.05);
+}
+
+.createNew:hover {
+  background: rgba(255, 153, 51, 0.1);
+}

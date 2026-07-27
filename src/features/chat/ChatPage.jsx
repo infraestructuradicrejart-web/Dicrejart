@@ -83,9 +83,9 @@ const ChatPage = () => {
   // Autocompletado de menciones (@) mientras se escribe un mensaje
   const mentionQuery = getMentionQuery(text);
   const mentionMatches = useMemo(() => {
-    if (mentionQuery === null) return [];
+    if (activeChatId !== 'global' || mentionQuery === null) return [];
     return users.filter((u) => u.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6);
-  }, [mentionQuery, users]);
+  }, [mentionQuery, users, activeChatId]);
 
   const activeChat = chats.find((c) => c.id === activeChatId) || null;
 
@@ -137,7 +137,7 @@ const ChatPage = () => {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <PageHeader
         title="Chat"
-        subtitle="Conversa con toda la empresa en el chat global, o directamente con alguien en privado."
+        subtitle="Conversa con toda la empresa en el chat global, o directamente con alguien en privado. (Actualizado)"
         shape="mancha"
         accentColor="var(--color-tiffany-blue)"
       />
@@ -251,7 +251,7 @@ const ChatPage = () => {
                   type="text"
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  placeholder="Escribe un mensaje... (usa @ para mencionar a alguien)"
+                  placeholder={activeChatId === 'global' ? "Escribe un mensaje... (usa @ para mencionar a alguien)" : "Escribe un mensaje..."}
                   className={styles.textInput}
                 />
                 <Button type="submit" variant="primary" size="md" disabled={!text.trim()}>Enviar</Button>

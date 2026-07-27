@@ -21,7 +21,7 @@ import useOperarios from '../../hooks/useOperarios';
 import useActividades from '../../hooks/useActividades';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection } from '../../utils/roleAccess';
-import { AREAS_CATALOG } from '../../data/areasConfig';
+import useAreas from '../../hooks/useAreas';
 import { PRIORITY_LABELS, ACTIVITY_STATUS_LABELS } from '../../data/actividadesData';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
@@ -83,6 +83,7 @@ const ActividadesPage = () => {
 
   const { operarios } = useOperarios();
   const { user } = useAuth();
+  const { areas: dynamicAreas } = useAreas();
   const toast = useToast();
 
   // Un Encargado de Área solo consulta (solo lectura) las actividades de su área
@@ -95,7 +96,7 @@ const ActividadesPage = () => {
   // ============================================
   // HELPERS
   // ============================================
-  const getAreaName = (areaId) => AREAS_CATALOG.find((a) => a.id === areaId)?.name || areaId;
+  const getAreaName = (areaId) => dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
   const getOperarioName = (operarioId) =>
     operarios.find((op) => op.id === operarioId)?.name || null;
 
@@ -229,7 +230,7 @@ const ActividadesPage = () => {
             onChange={(e) => setAreaFilter(e.target.value)}
             options={[
               { value: 'todas', label: 'Todas las Áreas' },
-              ...AREAS_CATALOG.map((a) => ({ value: a.id, label: a.name })),
+              ...dynamicAreas.map((a) => ({ value: a.id, label: a.name })),
             ]}
           />
         </div>
@@ -374,7 +375,7 @@ const ActividadesPage = () => {
                 onChange={handleFormChange}
                 required
                 placeholder="-- Selecciona el Área --"
-                options={AREAS_CATALOG.map((a) => ({ value: a.id, label: a.name }))}
+                options={dynamicAreas.map((a) => ({ value: a.id, label: a.name }))}
               />
             </div>
             <div className={styles.formGroup}>

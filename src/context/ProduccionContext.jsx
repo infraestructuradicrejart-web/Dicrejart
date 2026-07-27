@@ -268,6 +268,31 @@ export const ProduccionProvider = ({ children }) => {
   }, [proyectos, user]);
 
   /**
+   * Actualiza un proyecto existente, por ejemplo para extender su fecha límite
+   */
+  const updateProject = useCallback(async (projectId, updatedFields) => {
+    if (!db) return { ok: false, error: 'Firebase no inicializado' };
+    const project = proyectos.find((p) => p.id === projectId);
+    if (!project) return { ok: false, error: 'Proyecto no encontrado' };
+
+    try {
+      await updateDoc(doc(db, 'proyectos', projectId), updatedFields);
+      
+      // Si se está cambiando la fecha endDate, podemos armar un texto más descriptivo en la bitácora
+      let logDetails = project.name || projectId;
+      if (updatedFields.endDate && updatedFields.endDate !== project.endDate) {
+        logDetails = `${project.name} (Fecha extendida de ${project.endDate} a ${updatedFields.endDate})`;
+      }
+
+      logAudit({ user, module: 'produccion', action: 'Actualizó un proyecto', details: logDetails });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al actualizar proyecto en Firestore:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [proyectos, user]);
+
+  /**
    * Registra un nuevo modelo de juego en el sistema
    */
   const addGame = useCallback(async (gameData) => {
@@ -537,6 +562,33 @@ export const ProduccionProvider = ({ children }) => {
     }
   }, [user]);
 
+  const editEnvio = useCallback(async (envioId, envioData) => {
+    if (!db) return;
+    try {
+      const envioRef = doc(db, 'envios', envioId);
+      const envioSnap = await getDoc(envioRef);
+      if (envioSnap.exists()) {
+        const oldEnvio = envioSnap.data();
+        const oldTarimaIds = oldEnvio.items?.filter(i => i.type === 'tarima').map(i => i.id) || [];
+        const newTarimaIds = envioData.items?.filter(i => i.type === 'tarima').map(i => i.id) || [];
+        
+        const removedTarimaIds = oldTarimaIds.filter(id => !newTarimaIds.includes(id));
+        for (const tId of removedTarimaIds) {
+          await updateDoc(doc(db, 'tarimas', tId), { status: 'preparada' });
+        }
+        
+        for (const tId of newTarimaIds) {
+          await updateDoc(doc(db, 'tarimas', tId), { status: 'cargada' });
+        }
+      }
+
+      await updateDoc(envioRef, envioData);
+      logAudit({ user, module: 'produccion', action: 'Editó un envío', details: envioId });
+    } catch (error) {
+      console.error('Error al editar envío en Firestore:', error);
+    }
+  }, [user]);
+
   /**
    * Actualiza el estatus de un envío (despachado, completado, etc.)
    */
@@ -556,7 +608,18 @@ export const ProduccionProvider = ({ children }) => {
   const deleteEnvio = useCallback(async (envioId) => {
     if (!db) return;
     try {
-      await deleteDoc(doc(db, 'envios', envioId));
+      const envioRef = doc(db, 'envios', envioId);
+      const envioSnap = await getDoc(envioRef);
+      if (envioSnap.exists()) {
+        const envioData = envioSnap.data();
+        if (envioData.items) {
+          const tarimaIds = envioData.items.filter((item) => item.type === 'tarima').map((item) => item.id);
+          for (const tId of tarimaIds) {
+            await updateDoc(doc(db, 'tarimas', tId), { status: 'preparada' });
+          }
+        }
+      }
+      await deleteDoc(envioRef);
       logAudit({ user, module: 'produccion', action: 'Eliminó un envío', details: envioId });
     } catch (error) {
       console.error('Error al eliminar envío de Firestore:', error);
@@ -1299,6 +1362,7 @@ export const ProduccionProvider = ({ children }) => {
       areaHistorial,
       subscribeAreaHistorial,
       addProject,
+      updateProject,
       addGame,
       deleteProject,
       deleteGame,
@@ -1313,6 +1377,7 @@ export const ProduccionProvider = ({ children }) => {
       addTarima,
       deleteTarima,
       addEnvio,
+      editEnvio,
       updateEnvioStatus,
       deleteEnvio,
       palletizePieces,
@@ -1338,6 +1403,7 @@ export const ProduccionProvider = ({ children }) => {
       areaHistorial,
       subscribeAreaHistorial,
       addProject,
+      updateProject,
       addGame,
       deleteProject,
       deleteGame,
@@ -1352,6 +1418,7 @@ export const ProduccionProvider = ({ children }) => {
       addTarima,
       deleteTarima,
       addEnvio,
+      editEnvio,
       updateEnvioStatus,
       deleteEnvio,
       palletizePieces,
