@@ -462,15 +462,31 @@ const EditorVisualPage = ({ standalone = false }) => {
         if (targetId !== fromId && targetSide !== side) {
           const from = side === 'out' ? fromId : targetId;
           const to = side === 'out' ? targetId : fromId;
+          let didCreateEdge = false;
           setEdges((latestEdges) => {
             const alreadyExists = latestEdges.some((ed) => ed.from === from && ed.to === to);
             if (!alreadyExists) {
               const nextEdges = [...latestEdges, { id: nextEdgeId(), from, to }];
               saveToFirestore(nodes, nextEdges);
+              didCreateEdge = true;
               return nextEdges;
             }
             return latestEdges;
           });
+
+          // Si el cable nuevo conecta un Bloque con un Colaborador, se asignan de
+          // inmediato las actividades que el bloque ya tenía (no hace falta acordarse
+          // de dar clic aparte en "Reasignar todas") — conectar el cable ya ES la
+          // acción de asignar, sin importar el orden en que se hicieron las cosas.
+          if (didCreateEdge) {
+            const fromNode = findNode(from);
+            const toNode = findNode(to);
+            const blockNode = fromNode?.type === 'bloque' ? fromNode : toNode?.type === 'bloque' ? toNode : null;
+            const colabNode = fromNode?.type === 'colaborador' ? fromNode : toNode?.type === 'colaborador' ? toNode : null;
+            if (blockNode && colabNode && (blockNode.activityIds || []).length > 0) {
+              handleReassignBlockActivities(blockNode, colabNode);
+            }
+          }
         }
       }
       connectStateRef.current = null;
@@ -855,8 +871,12 @@ const EditorVisualPage = ({ standalone = false }) => {
    * conectado — para cuando el cable se conecta (o se cambia) después de que el bloque
    * ya tenía actividades creadas con otro responsable (o sin ninguno).
    */
-  const handleReassignBlockActivities = async (blockNode) => {
-    const colaboradorNode = getConnectedColaboradorNode(blockNode.id);
+  const handleReassignBlockActivities = async (blockNode, colaboradorNodeOverride) => {
+    // Acepta el nodo Colaborador ya resuelto (colaboradorNodeOverride) para cuando se
+    // llama justo al terminar de crear el cable: en ese instante el estado "edges" del
+    // render todavía no incluye el cable nuevo (setState es asíncrono), así que
+    // getConnectedColaboradorNode(blockNode.id) — que lee "edges" — no lo encontraría.
+    const colaboradorNode = colaboradorNodeOverride || getConnectedColaboradorNode(blockNode.id);
     if (!colaboradorNode) return;
     const activityIds = blockNode.activityIds || [];
     if (activityIds.length === 0) return;
