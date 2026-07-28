@@ -408,6 +408,39 @@ const notifyDisenoAssignment = async (actividad) => {
   );
 };
 
+/**
+ * Notifica a quien TENÍA la tarea antes de este cambio que ya no es su responsable —
+ * ya sea porque se reasignó a alguien más, o porque se quedó sin responsable (el bloque
+ * se desconectó del colaborador). La tarea en sí NO se elimina, solo cambia de dueño;
+ * el correo lo deja explícito para que no se lea como si la tarea hubiera desaparecido.
+ */
+const notifyDisenoUnassignment = async (before, after) => {
+  if (!before || before.areaId !== 'diseno' || !before.operarioId) return;
+
+  const usersSnap = await admin.firestore().collection('users').where('operarioId', '==', before.operarioId).get();
+  if (usersSnap.empty) return;
+
+  const statusText = after.operarioId
+    ? 'La tarea se reasignó a otro colaborador.'
+    : 'Por ahora la tarea se quedó sin responsable asignado.';
+
+  await Promise.all(
+    usersSnap.docs.map((userDoc) => {
+      const email = userDoc.data().email;
+      if (!email) return null;
+      return sendMail({
+        to: email,
+        subject: `[Dicrejart] Ya no eres responsable de la tarea "${after.title}"`,
+        html: emailShell(`
+          <h2 style="margin-top:0;">↩️ Tarea reasignada</h2>
+          <p>La tarea <strong>"${after.title}"</strong> del departamento de Diseño ya no está bajo tu responsabilidad. ${statusText}</p>
+          <p style="font-size:12px; color:#777;">La tarea no se eliminó del sistema, solo cambió de responsable.</p>
+        `),
+      });
+    })
+  );
+};
+
 exports.onActividadCreated = onDocumentCreated(
   { document: 'actividades/{id}', secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS] },
   async (event) => {
@@ -424,7 +457,10 @@ exports.onActividadUpdated = onDocumentUpdated(
     // Solo notificar cuando el responsable realmente cambió (asignación nueva o
     // reasignación) — no en cada edición de la actividad (título, estatus, etc.)
     if (before.operarioId === after.operarioId) return;
-    await notifyDisenoAssignment(after);
+    await Promise.all([
+      notifyDisenoAssignment(after),
+      notifyDisenoUnassignment(before, after),
+    ]);
   }
 );
 
