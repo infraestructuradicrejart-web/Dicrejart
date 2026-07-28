@@ -8,6 +8,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import ErrorBoundary from './components/ui/ErrorBoundary';
 
 // Importar estilos globales
 // El orden es importante: variables → global → animations → responsive
@@ -23,8 +24,9 @@ import './styles/responsive.css';
  * .render() renderiza el componente App dentro del raíz
  */
 ReactDOM.createRoot(document.getElementById('root')).render(
-  // StrictMode ayuda a identificar problemas potenciales en el desarrollo
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );

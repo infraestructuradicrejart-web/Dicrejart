@@ -16,6 +16,10 @@
  * - 'direccion': solo lectura de Producción (todas las áreas), Juegos, Proyectos,
  *   Actividades, Dashboard y Reportes. Rol de supervisión y consulta de avance general
  * - 'compras': gestiona requisiciones de compra de materiales para áreas/fábrica
+ * - 'disenador' / 'arquitecto': personal del departamento de Diseño (jerarquía distinta
+ *   a la de los Operarios de piso). Inician sesión como Usuario y solo consultan (sin
+ *   editar) las tareas que se les asignaron, vinculadas a su propio registro del padrón
+ *   de Operarios (área "Diseño") a través de `operarioId` en su perfil de Usuario
  * @constant
  */
 export const ROLE_TYPES = {
@@ -25,6 +29,25 @@ export const ROLE_TYPES = {
   SUPERVISOR_AREA: 'supervisor-area',
   DIRECCION: 'direccion',
   COMPRAS: 'compras',
+  DISENADOR: 'disenador',
+  ARQUITECTO: 'arquitecto',
+};
+
+/**
+ * Etiquetas legibles de cada rol — fuente única compartida por AdminPage (tabla de
+ * Usuarios), la Bitácora del Sistema y el Historial de Movimientos de Operarios, para
+ * no repetir el mismo mapeo en cada pantalla que necesite mostrar "qué rol hizo esto".
+ * @constant
+ */
+export const ROLE_TYPE_LABELS = {
+  [ROLE_TYPES.ADMIN]: 'Administrador',
+  [ROLE_TYPES.CALIDAD]: 'Inspector de Calidad',
+  [ROLE_TYPES.ENCARGADO_AREA]: 'Encargado de Área',
+  [ROLE_TYPES.SUPERVISOR_AREA]: 'Supervisor de Área',
+  [ROLE_TYPES.DIRECCION]: 'Dirección',
+  [ROLE_TYPES.COMPRAS]: 'Compras',
+  [ROLE_TYPES.DISENADOR]: 'Diseñador',
+  [ROLE_TYPES.ARQUITECTO]: 'Arquitecto',
 };
 
 // ============================================

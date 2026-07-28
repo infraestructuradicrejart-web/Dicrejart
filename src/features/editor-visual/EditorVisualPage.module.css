@@ -99,6 +99,106 @@
   margin: 0;
 }
 
+/* ---------- Buscador de nodos (rail) ---------- */
+.searchInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-family: var(--font-family);
+  font-size: 13px;
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  background: var(--color-white);
+  color: var(--color-dark);
+}
+.searchInput:focus { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+
+.searchResults {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.searchResultItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-family);
+  font-size: 12.5px;
+  color: var(--color-dark);
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  padding: 7px 9px;
+  cursor: pointer;
+  text-align: left;
+}
+.searchResultItem:hover { background: var(--color-gray-50); }
+.searchResultItem span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.searchResultEmpty {
+  font-size: 12px;
+  color: var(--color-gray-500);
+  padding: 6px 2px;
+}
+
+/* ---------- Controles de Zoom (flotantes sobre el lienzo) ---------- */
+.zoomControls {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: 5;
+}
+
+.zoomBtn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-dark);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+}
+.zoomBtn:hover { background: var(--color-gray-100); }
+
+.zoomLabel {
+  min-width: 42px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-gray-600);
+}
+
+.zoomResetBtn {
+  margin-left: 4px;
+  padding: 0 8px;
+  height: 28px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-gray-600);
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--color-gray-200);
+  cursor: pointer;
+}
+.zoomResetBtn:hover { color: var(--color-primary); }
+
 /* ---------- Lienzo ---------- */
 .canvasWrap {
   flex: 1;
@@ -274,6 +374,47 @@
   text-align: center;
 }
 .blockDropdownAction:hover { background: var(--color-gray-100); }
+
+/* Responsable del bloque (colaborador conectado por cable) — franja fija arriba de la
+   lista de actividades, con el botón de reasignar en lote cuando aplica */
+.blockDropdownResponsable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 6px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--color-gray-100);
+  font-size: 11.5px;
+  color: var(--color-dark);
+}
+.blockDropdownLinks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+}
+.blockDropdownLinks a {
+  font-size: 10.5px;
+  color: var(--color-primary);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+/* Botón para abrir el archivo/link del modelo 3D (Diseño) o plano (Arquitectura) de
+   una actividad — preparación para integrarse más adelante con el visualizador propio. */
+.blockDropdownModelBtn {
+  margin-top: 5px;
+  background: var(--color-secondary);
+  color: var(--color-white);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.blockDropdownModelBtn:hover { opacity: 0.85; }
 
 /* ---------- Inspector ---------- */
 .inspector {

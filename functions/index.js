@@ -367,6 +367,67 @@ exports.onInspeccionCreated = onDocumentCreated(
   }
 );
 
+// ============================================================
+// NOTIFICACIONES DE TAREAS ASIGNADAS EN DISEÑO
+// ============================================================
+/**
+ * Notifica por correo a quien quede como responsable de una actividad del departamento
+ * de Diseño (`areaId === 'diseno'`) — se dispara tanto al crearla ya asignada (el
+ * Colaborador ya estaba conectado al Bloque cuando se creó) como al asignarla/reasignarla
+ * después (ej. el botón "🔗 Reasignar todas" del bloque, o conectar un Colaborador a un
+ * nodo de Actividad suelto). Es la tarea en sí lo que se notifica —no el bloque ni el
+ * cable— porque la idea es que la persona entre a CONSULTARLA en la sección Diseño.
+ */
+const notifyDisenoAssignment = async (actividad) => {
+  if (!actividad || actividad.areaId !== 'diseno' || !actividad.operarioId) return;
+
+  const usersSnap = await admin.firestore().collection('users').where('operarioId', '==', actividad.operarioId).get();
+  if (usersSnap.empty) return;
+
+  const operarioSnap = await admin.firestore().collection('operarios').doc(actividad.operarioId).get();
+  const operarioName = operarioSnap.exists ? operarioSnap.data().name : 'Colaborador';
+  const appUrl = APP_BASE_URL.value();
+
+  await Promise.all(
+    usersSnap.docs.map((userDoc) => {
+      const email = userDoc.data().email;
+      if (!email) return null;
+      return sendMail({
+        to: email,
+        subject: `[Dicrejart] Se te asignó la tarea "${actividad.title}"`,
+        html: emailShell(`
+          <h2 style="margin-top:0;">📌 Nueva tarea asignada</h2>
+          <p>Hola ${operarioName}, se te asignó la tarea <strong>"${actividad.title}"</strong> del departamento de Diseño.</p>
+          ${actividad.description ? `<p>${actividad.description}</p>` : ''}
+          <p><strong>Prioridad:</strong> ${actividad.priority || 'media'} ${actividad.dueDate ? `&nbsp; <strong>Fecha límite:</strong> ${actividad.dueDate}` : ''}</p>
+          <p>Entra a la sección Diseño para consultar todos los detalles.</p>
+          <div style="margin-top:20px;">${button(`${appUrl}/diseno`, 'Consultar Tarea', '#330066')}</div>
+        `),
+      });
+    })
+  );
+};
+
+exports.onActividadCreated = onDocumentCreated(
+  { document: 'actividades/{id}', secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    await notifyDisenoAssignment(event.data?.data());
+  }
+);
+
+exports.onActividadUpdated = onDocumentUpdated(
+  { document: 'actividades/{id}', secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after) return;
+    // Solo notificar cuando el responsable realmente cambió (asignación nueva o
+    // reasignación) — no en cada edición de la actividad (título, estatus, etc.)
+    if (before.operarioId === after.operarioId) return;
+    await notifyDisenoAssignment(after);
+  }
+);
+
 /**
  * `getRequisicionByToken` y `resolveRequisicionByToken` son funciones HTTP planas
  * (`onRequest`), no `onCall` — porque `onCall` solo es alcanzable si el proyecto puede

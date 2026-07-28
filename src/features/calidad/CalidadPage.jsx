@@ -22,6 +22,7 @@ import useProduccion from '../../hooks/useProduccion';
 import useAuth from '../../hooks/useAuth';
 import PageHeader from '../../components/ui/PageHeader';
 import { isReadOnlySection } from '../../utils/roleAccess';
+import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import styles from './CalidadPage.module.css';
 
 /**
@@ -243,6 +244,7 @@ const CalidadPage = () => {
 
   // Tick para forzar el recálculo del bloque activo cada 30 segundos
   const [tick, setTick] = useState(0);
+  const [selectedDate, setSelectedDate] = useState(() => getTodayLocalDateStr());
   const tableContainerRef = useRef(null);
 
   useEffect(() => {
@@ -269,7 +271,7 @@ const CalidadPage = () => {
     return operarios.filter((op) => op.currentArea === evalAreaId);
   }, [operarios, evalAreaId]);
 
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => getTodayLocalDateStr(), []);
   const isSaturday = useMemo(() => new Date().getDay() === 6, []);
   const defaultEnd = useMemo(() => (isSaturday ? 13 : 18), [isSaturday]);
 
@@ -300,6 +302,14 @@ const CalidadPage = () => {
   const liveBlockId = useMemo(() => {
     return getLiveBlockId(activeBlocks);
   }, [activeBlocks, tick]);
+
+  // Evaluaciones correspondientes a la fecha seleccionada en el calendario
+  const dailyEvaluaciones = useMemo(() => {
+    return evaluaciones.filter((ev) => {
+      const evDate = ev.date || (ev.createdAt ? ev.createdAt.split('T')[0] : null);
+      return evDate ? evDate === selectedDate : selectedDate === todayStr;
+    });
+  }, [evaluaciones, selectedDate, todayStr]);
 
   // Auto-scroll dinámico hacia la columna del bloque actual (EN CURSO)
   useEffect(() => {
@@ -687,10 +697,42 @@ const CalidadPage = () => {
     handleCloseRejectModal();
   };
 
+  const handlePrevDay = () => {
+    const d = new Date(`${selectedDate}T00:00:00`);
+    d.setDate(d.getDate() - 1);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    setSelectedDate(`${yyyy}-${mm}-${dd}`);
+  };
+
+  const handleNextDay = () => {
+    const d = new Date(`${selectedDate}T00:00:00`);
+    d.setDate(d.getDate() + 1);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    setSelectedDate(`${yyyy}-${mm}-${dd}`);
+  };
+
+  const handleToday = () => {
+    setSelectedDate(getTodayLocalDateStr());
+  };
+
+  const ESTADO_AUSENCIA_DESCRIP = {
+    falta: 'Falta (Inasistencia)',
+    incapacidad: 'Incapacidad Médica',
+    salida_campo: 'Salida Fuera / Actividad Externa',
+    actividad_externa: 'Comisión Externa',
+    viaje: 'Viaje / Ensamble Foráneo',
+    vacaciones: 'Vacaciones / Permiso',
+  };
+
   // Handlers para Evaluaciones
-  const handleOpenEvalModal = (collaborator, block, existingEval) => {
+  const handleOpenEvalModal = (collaborator, block, existingEval, isPastBlock = false) => {
     if (collaborator.estado?.tipo !== 'activo') {
-      toast.warning(`No se puede calificar. El operario está ${collaborator.estado?.tipo || 'inactivo'}.`);
+      const estadoNombre = ESTADO_AUSENCIA_DESCRIP[collaborator.estado?.tipo] || collaborator.estado?.tipo || 'Ausente';
+      toast.warning(`No se puede evaluar el desempeño de ${collaborator.name}. Estado actual: ${estadoNombre}. Solo el personal "En Planta" es evaluable.`);
       return;
     }
 
@@ -700,6 +742,7 @@ const CalidadPage = () => {
       block,
       score: existingEval ? String(existingEval.score) : '10',
       notes: existingEval ? existingEval.notes : '',
+      isPastBlockEdit: Boolean(isPastBlock),
     });
   };
 
@@ -710,24 +753,33 @@ const CalidadPage = () => {
       block: null,
       score: '10',
       notes: '',
+      isPastBlockEdit: false,
     });
   };
 
-  const handleSaveEval = (e) => {
+  const handleSaveEval = async (e) => {
     e.preventDefault();
-    const { collaborator, block, score, notes } = evalModal;
+    const { collaborator, block, score, notes, isPastBlockEdit } = evalModal;
 
     if (!notes.trim()) {
       toast.warning('Por favor ingresa observaciones antes de guardar.');
       return;
     }
 
-    const wasUpdate = saveEvaluacion(collaborator.id, block.id, Number(score), notes);
+    const res = await saveEvaluacion(collaborator.id, block.id, Number(score), notes, selectedDate, isPastBlockEdit);
 
-    if (wasUpdate) {
-      toast.success(`📝 Evaluación actualizada para ${collaborator.name}.`);
+    if (res && res.ok) {
+      if (isPastBlockEdit) {
+        toast.warning(
+          `⚠️ ALERTA DE AUDITORÍA: Se registró la modificación del bloque previo "${block.name}" (${selectedDate}) para ${collaborator.name}. Evento guardado en la bitácora a las ${new Date().toLocaleTimeString('es-MX')} por ${user?.name || 'Usuario'}.`
+        );
+      } else if (res.wasUpdate) {
+        toast.success(`📝 Evaluación actualizada para ${collaborator.name}.`);
+      } else {
+        toast.success(`✅ Calificación registrada para ${collaborator.name}.`);
+      }
     } else {
-      toast.success(`✅ Calificación registrada para ${collaborator.name}.`);
+      toast.danger(res?.error || 'No se pudo guardar la evaluación.');
     }
 
     handleCloseEvalModal();
@@ -735,7 +787,7 @@ const CalidadPage = () => {
 
   // Handales para editar jornada y horas extras del operario directamente
   const handleOpenScheduleModal = (op) => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayLocalDateStr();
     setScheduleModal({
       isOpen: true,
       collaborator: op,
@@ -1598,25 +1650,49 @@ const CalidadPage = () => {
       {/* 2. EVALUACIÓN DE DESEMPEÑO DE COLABORADORES */}
       {activeTab === 'evaluaciones' && (
         <div className={styles.evaluacionesSection}>
-          {/* Tarjeta de Filtro */}
+          {/* Tarjeta de Filtro y Navegador por Calendario */}
           <motion.div variants={itemVariants}>
-            <Card variant="default" className={styles.filterCard}>
+            <Card variant="default" className={styles.filterCard} style={{ marginBottom: '16px' }}>
               <div className={styles.evalFilterBar} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-                <h3 className={styles.evalSectionTitle} style={{ margin: 0 }}>
-                  Calificación de Colaboradores
-                </h3>
+                {/* Navegación por Calendario */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <Button variant="secondary" size="sm" onClick={handlePrevDay} title="Ver calificaciones del día anterior">
+                    ◀ Anterior
+                  </Button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--color-dark)' }}>
+                      📅 Fecha:
+                    </label>
+                    <input
+                      type="date"
+                      className={styles.dateInput}
+                      style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--color-gray-300)', fontWeight: 'bold' }}
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                    />
+                  </div>
+                  <Button variant="secondary" size="sm" onClick={handleNextDay} title="Ver calificaciones del día siguiente">
+                    Siguiente ▶
+                  </Button>
+                  {selectedDate !== todayStr && (
+                    <Button variant="primary" size="sm" onClick={handleToday}>
+                      📍 Ir a Hoy
+                    </Button>
+                  )}
+                </div>
+
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <div className={styles.evalSelectWrapper} style={{ minWidth: '200px' }}>
+                  <div className={styles.evalSelectWrapper} style={{ minWidth: '180px' }}>
                     <Select
-                      label="Selecciona Área de Fábrica"
+                      label="Selecciona Área"
                       value={evalAreaId}
                       onChange={(e) => setEvalAreaId(e.target.value)}
                       options={AREAS.map((a) => ({ value: a.id, label: a.name }))}
                     />
                   </div>
-                  <div className={styles.evalSelectWrapper} style={{ minWidth: '200px' }}>
+                  <div className={styles.evalSelectWrapper} style={{ minWidth: '170px' }}>
                     <Select
-                      label="⏱️ Frecuencia de Bloques"
+                      label="⏱️ Bloques"
                       value={String(blockDuration)}
                       onChange={(e) => updateBlockDuration(e.target.value)}
                       options={[
@@ -1628,6 +1704,23 @@ const CalidadPage = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Indicador de Modo y Resumen de Evaluaciones */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--color-gray-200)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Badge variant={selectedDate === todayStr ? 'success' : 'warning'} size="sm">
+                    {selectedDate === todayStr ? '🟢 En Vivo (Jornada Hoy)' : '📜 Consulta Histórica de Fecha'}
+                  </Badge>
+                  <span style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>
+                    Total evaluaciones registradas el {selectedDate}: <strong>{dailyEvaluaciones.length}</strong>
+                  </span>
+                </div>
+                {selectedDate !== todayStr && (
+                  <span style={{ fontSize: '11px', color: '#b45309', fontWeight: '500' }}>
+                    ⚠️ Puede modificar bloques de fechas previas; cada cambio generará alerta y registro en bitácora.
+                  </span>
+                )}
+              </div>
             </Card>
           </motion.div>
 
@@ -1638,9 +1731,9 @@ const CalidadPage = () => {
                 <table className={styles.evalTable}>
                   <thead>
                     <tr>
-                      <th className={styles.colaboradorColHeader}>Colaborador</th>
+                      <th className={styles.colaboradorColHeader}>Colaborador & Promedios</th>
                       {activeBlocks.map((block) => {
-                        const isActive = block.id === liveBlockId;
+                        const isActive = selectedDate === todayStr && block.id === liveBlockId;
                         return (
                           <th 
                             key={block.id} 
@@ -1667,17 +1760,40 @@ const CalidadPage = () => {
                       const opStartHour = isTodaySchedule ? (op.schedule?.startHour || 8) : 8;
                       const opEndHour = isTodaySchedule ? (op.schedule?.endHour || defaultEnd) : defaultEnd;
 
+                      // Promedios diarios e históricos del colaborador
+                      const opDailyEvals = dailyEvaluaciones.filter((ev) => ev.operarioId === op.id);
+                      const opDailyAvg = opDailyEvals.length > 0 ? (opDailyEvals.reduce((a, c) => a + Number(c.score), 0) / opDailyEvals.length).toFixed(1) : null;
+
+                      const opOverallEvals = evaluaciones.filter((ev) => ev.operarioId === op.id);
+                      const opOverallAvg = opOverallEvals.length > 0 ? (opOverallEvals.reduce((a, c) => a + Number(c.score), 0) / opOverallEvals.length).toFixed(1) : null;
+
+                      // Determinar el primer bloque válido asignado al horario de este colaborador
+                      const firstValidBlockIndex = activeBlocks.findIndex(
+                        (b) => b.startHour >= opStartHour && b.endHour <= opEndHour
+                      );
+
                       return (
                         <tr key={op.id}>
                           <td className={styles.colaboradorCell}>
                             <div className={styles.userInfoBlock} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span className={styles.avatarMini}>{op.name[0].toUpperCase()}</span>
+                                <span className={styles.avatarMini}>{(op.name || 'O')[0].toUpperCase()}</span>
                                 <div className={styles.userDetails}>
-                                  <strong className={styles.userName}>{op.name}</strong>
-                                  <span className={styles.userRole}>ID: {op.id}</span>
+                                  <strong className={styles.userName}>{op.name || 'Sin Nombre'}</strong>
+                                  <span className={styles.userRole}>ID: {op.id || 'N/A'}</span>
                                 </div>
                               </div>
+
+                              {/* Medidores de Promedios */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '2px' }}>
+                                <span style={{ fontSize: '11px', fontWeight: 'bold', color: opDailyAvg ? (opDailyAvg >= 8 ? '#15803d' : '#b45309') : 'var(--color-gray-500)', backgroundColor: opDailyAvg ? 'rgba(34, 197, 94, 0.12)' : 'var(--color-gray-100)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(0,0,0,0.05)' }}>
+                                  Promedio Día ({selectedDate}): {opDailyAvg ? `⭐ ${opDailyAvg} / 10` : 'Sin eval hoy'}
+                                </span>
+                                <span style={{ fontSize: '10px', color: 'var(--color-gray-600)', backgroundColor: 'var(--color-gray-100)', padding: '2px 6px', borderRadius: '4px' }}>
+                                  Promedio General: {opOverallAvg ? `📊 ${opOverallAvg} / 10 (${opOverallEvals.length} eval)` : 'Sin historial'}
+                                </span>
+                              </div>
+
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center', marginTop: '2px' }}>
                                 <span style={{ fontSize: '10px', color: 'var(--color-gray-600)', backgroundColor: 'var(--color-gray-100)', padding: '2px 6px', borderRadius: '4px' }}>
                                   ⏰ {String(opStartHour).padStart(2, '0')}:00 - {String(opEndHour).padStart(2, '0')}:00
@@ -1709,18 +1825,18 @@ const CalidadPage = () => {
                               )}
                             </div>
                           </td>
-                          {activeBlocks.map((block) => {
-                            // ¿Cae este bloque dentro del horario particular de este colaborador?
+                          {activeBlocks.map((block, blockIndex) => {
                             const opHasBlock = block.startHour >= opStartHour && block.endHour <= opEndHour;
                             
-                            // ¿Es un bloque fuera del horario normal del taller? (Tiempo Extra)
                             const isSaturday = new Date().getDay() === 6;
                             const baseEnd = isSaturday ? 13 : 18;
                             const isOvertimeBlock = block.startHour < 8 || block.startHour >= baseEnd;
 
-                            const isLive = block.id === liveBlockId;
+                            const isLive = selectedDate === todayStr && block.id === liveBlockId;
+                            const isPastBlock = selectedDate < todayStr || (selectedDate === todayStr && !isLive);
+                            const isOpAbsent = Boolean(op.estado?.tipo && op.estado.tipo !== 'activo');
 
-                            const existingEval = evaluaciones.find(
+                            const existingEval = dailyEvaluaciones.find(
                               (ev) => ev.operarioId === op.id && ev.blockId === block.id
                             );
 
@@ -1744,68 +1860,90 @@ const CalidadPage = () => {
                                 className={`${styles.evalCell} ${isLive ? styles.activeBlockCell : ''} ${isOvertimeBlock ? styles.overtimeBlockCell : ''}`}
                               >
                                 {existingEval ? (
-                                  isLive && op.estado?.tipo === 'activo' ? (
+                                  !isOpAbsent ? (
                                     <button
                                       type="button"
                                       className={styles.scoreContainer}
-                                      onClick={() => handleOpenEvalModal(op, block, existingEval)}
-                                      title="Clic para editar observaciones"
+                                      onClick={() => handleOpenEvalModal(op, block, existingEval, isPastBlock)}
+                                      title={isPastBlock ? "Clic para editar calificación/observaciones de bloque previo (Registra alerta y bitácora con hora y autor)" : "Clic para editar observaciones"}
                                     >
                                       <Badge variant={getScoreVariant(existingEval.score)}>
                                         ⭐ {existingEval.score} / 10
                                       </Badge>
-                                      {isOvertimeBlock && (
-                                        <Badge variant="warning" size="sm" className={styles.overtimeMarker}>
-                                          Extra
-                                        </Badge>
+                                      {isPastBlock && (
+                                        <span style={{ fontSize: '11px', display: 'inline-block', marginTop: '2px' }} title="Bloque previo - Clic para editar">
+                                          ✏️
+                                        </span>
                                       )}
-                                      <span className={styles.evalNote} title={existingEval.notes}>
-                                        {existingEval.notes}
-                                      </span>
+                                      {existingEval.notes && (
+                                        <span className={styles.evalNote} title={existingEval.notes}>
+                                          {existingEval.notes}
+                                        </span>
+                                      )}
                                     </button>
                                   ) : (
                                     <div
                                       className={styles.scoreContainerDisabled}
-                                      title={op.estado?.tipo !== 'activo' ? `Inactivo (${op.estado?.tipo})` : "Evaluación finalizada (solo lectura)"}
+                                      title={`No editable: El colaborador está ${op.estado?.tipo}`}
                                     >
                                       <Badge variant={getScoreVariant(existingEval.score)}>
                                         ⭐ {existingEval.score} / 10
                                       </Badge>
-                                      {isOvertimeBlock && (
-                                        <Badge variant="warning" size="sm" className={styles.overtimeMarker}>
-                                          Extra
-                                        </Badge>
-                                      )}
                                       <span className={styles.evalNote} title={existingEval.notes}>
                                         {existingEval.notes}
                                       </span>
                                     </div>
                                   )
-                                ) : (
-                                  isLive ? (
-                                    op.estado?.tipo !== 'activo' ? (
-                                      <span className={styles.closedBlockLabel} title={`Operario inactivo: ${op.estado?.tipo}`}>
-                                        🚫 {op.estado?.tipo}
-                                      </span>
-                                    ) : (
-                                      <div className={styles.calificarBtnContainer}>
-                                        <button
-                                          type="button"
-                                          className={`${styles.calificarBtn} ${styles.pulseCalificarBtn} ${isOvertimeBlock ? styles.overtimeCalificarBtn : ''}`}
-                                          onClick={() => handleOpenEvalModal(op, block, null)}
-                                        >
-                                          ＋ Calificar
-                                        </button>
-                                        {isOvertimeBlock && (
-                                          <span className={styles.overtimeIndicatorText}>Extra</span>
-                                        )}
-                                      </div>
-                                    )
+                                ) : isOpAbsent ? (
+                                  blockIndex === firstValidBlockIndex ? (
+                                    <span
+                                      className={styles.closedBlockLabel}
+                                      style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#dc2626', borderColor: '#fca5a5', whiteSpace: 'nowrap' }}
+                                      title={`No evaluable: El colaborador no está En Planta (${ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || op.estado?.tipo})`}
+                                    >
+                                      🚫 {ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || 'Ausente'}
+                                    </span>
                                   ) : (
-                                    <span className={styles.closedBlockLabel} title="Fuera del bloque activo de tiempo">
-                                      🔒 Cerrado
+                                    <span
+                                      style={{ color: 'var(--color-gray-400)', fontSize: '13px', fontWeight: 'bold' }}
+                                      title={`Inactivo (${ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || op.estado?.tipo})`}
+                                    >
+                                      —
                                     </span>
                                   )
+                                ) : isLive ? (
+                                  <div className={styles.calificarBtnContainer}>
+                                    <button
+                                      type="button"
+                                      className={`${styles.calificarBtn} ${styles.pulseCalificarBtn} ${isOvertimeBlock ? styles.overtimeCalificarBtn : ''}`}
+                                      onClick={() => handleOpenEvalModal(op, block, null, false)}
+                                    >
+                                      ＋ Calificar
+                                    </button>
+                                    {isOvertimeBlock && <span className={styles.overtimeIndicatorText}>Extra</span>}
+                                  </div>
+                                ) : (
+                                  <div className={styles.calificarBtnContainer}>
+                                    <button
+                                      type="button"
+                                      className={`${styles.calificarBtn}`}
+                                      style={{
+                                        backgroundColor: '#fffbe6',
+                                        color: '#d48806',
+                                        borderColor: '#ffe58f',
+                                        fontSize: '13px',
+                                        padding: '4px 10px',
+                                        borderRadius: '6px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                      }}
+                                      onClick={() => handleOpenEvalModal(op, block, null, true)}
+                                      title="Evaluar / Registrar observaciones en este bloque previo (Genera auditoría)"
+                                    >
+                                      ✍️
+                                    </button>
+                                  </div>
                                 )}
                               </td>
                             );
@@ -1833,9 +1971,20 @@ const CalidadPage = () => {
         <Modal
           isOpen={evalModal.isOpen}
           onClose={handleCloseEvalModal}
-          title={`Evaluación de Desempeño: ${evalModal.collaborator?.name}`}
+          title={`${evalModal.isPastBlockEdit ? '⚠️ Modificación de Bloque Previo' : 'Evaluación de Desempeño'}: ${evalModal.collaborator?.name}`}
         >
           <form onSubmit={handleSaveEval} className={styles.modalForm}>
+            {evalModal.isPastBlockEdit && (
+              <div style={{ backgroundColor: '#fffbe6', border: '1px solid #ffe58f', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px' }}>
+                <p style={{ margin: 0, fontSize: '12px', color: '#873800', fontWeight: 'bold' }}>
+                  ⚠️ AVISO DE AUDITORÍA: Estás modificando un bloque de tiempo previo ({evalModal.block?.name} — Fecha {selectedDate}).
+                </p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#612500' }}>
+                  El sistema emitirá una alerta y registrará en bitácora la hora exacta ({new Date().toLocaleTimeString('es-MX')}) y el responsable ({user?.name || 'Usuario'}).
+                </p>
+              </div>
+            )}
+
             <div className={styles.modalMetaInfo}>
               <div>
                 <strong>Área:</strong> {AREAS.find((a) => a.id === evalAreaId)?.name}

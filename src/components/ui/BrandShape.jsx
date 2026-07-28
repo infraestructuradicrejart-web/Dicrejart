@@ -15,7 +15,7 @@ import PropTypes from 'prop-types';
  * del set de gráficos auxiliares del manual de identidad
  * @constant
  */
-const SHAPES = {
+export const BRAND_SHAPES = {
   mancha: {
     viewBox: '0 0 51.039536 49.300125',
     transform: 'translate(-115.09375,-156.89791)',
@@ -63,7 +63,7 @@ const SHAPES = {
  * <BrandShape shape="anillo" color="var(--color-primary)" style={{ width: 220 }} />
  */
 const BrandShape = ({ shape, color = 'currentColor', className, style }) => {
-  const config = SHAPES[shape];
+  const config = BRAND_SHAPES[shape];
   if (!config) return null;
 
   return (

@@ -23,9 +23,12 @@ import useIsMobile from '../../hooks/useIsMobile';
 import { ROLE_TYPES } from '../../data/usersData';
 import useAreas from '../../hooks/useAreas';
 import { REQUISITION_STATUS_LABELS, PRIORITY_LABELS } from '../../data/comprasData';
+import { ROLE_TYPE_LABELS } from '../../data/usersData';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import ItemAutocomplete from '../../components/ui/ItemAutocomplete';
+import { BRAND_SHAPES } from '../../components/ui/BrandShape';
+import logoUrl from '../../assets/login/dicrejart-logo-hd.png';
 
 /**
  * Determina si un adjunto es un PDF — funciona tanto con un archivo crudo (File, aún no
@@ -42,6 +45,38 @@ const isPdfAttachment = (att) => {
  * real; si es un archivo crudo aún no subido, se genera un blob: URL local temporal.
  */
 const getAttachmentUrl = (att) => (att instanceof File ? URL.createObjectURL(att) : att?.url);
+
+/**
+ * Carga cualquier imagen (PNG del logo o una figura SVG del manual de identidad
+ * convertida a data URL) y la rasteriza en un <canvas> oculto para obtener un PNG en
+ * base64 que jsPDF sí pueda insertar con `doc.addImage` (jsPDF no soporta SVG directo).
+ * Devuelve también el tamaño natural para poder escalarla sin deformarla en el PDF.
+ */
+const rasterizeImage = (src) =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      resolve({ dataUrl: canvas.toDataURL('image/png'), width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => reject(new Error(`No se pudo cargar la imagen: ${src}`));
+    img.src = src;
+  });
+
+/**
+ * Construye el markup SVG de una figura del manual de identidad (`BrandShape.jsx`) con
+ * un color sólido, como data URL — mismo set de "Gráficos Auxiliares" que ya se usa en
+ * el resto de la app (ej. el PageHeader de esta misma página usa "arco-doble").
+ */
+const brandShapeToDataUrl = (shapeKey, colorHex, opacity = 1) => {
+  const { viewBox, transform, d } = BRAND_SHAPES[shapeKey];
+  const [, , w, h] = viewBox.split(' ');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${w}" height="${h}"><g transform="${transform}"><path d="${d}" fill="${colorHex}" fill-opacity="${opacity}"/></g></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+};
 
 const STATUS_BADGE_VARIANT = {
   pendiente: 'warning',
@@ -228,6 +263,333 @@ const ComprasPage = () => {
   const [isDeletingReq, setIsDeletingReq] = useState(false);
 
   const handleCloseDeleteConfirm = () => setDeleteConfirm({ isOpen: false, req: null });
+
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  /**
+   * Genera y descarga una copia en PDF de la requisición con formato de nota/formulario
+   * (encabezado con folio, cuadrícula de datos, tabla de materiales con bordes, cajas de
+   * justificación/seguimiento y líneas de firma) en vez de solo texto corrido. Los
+   * adjuntos (cotización, comprobante) no se incrustan en el PDF —solo se listan sus
+   * nombres como referencia—, ya se pueden ver/descargar aparte desde la propia tarjeta.
+   */
+  const handleExportRequisicionPdf = async (req) => {
+    setIsExportingPdf(true);
+    try {
+      const areaName = dynamicAreas.find((a) => a.id === req.areaId)?.name || req.areaId;
+      const { default: jsPDF } = await import('jspdf');
+
+      const MARGIN = 14;
+      const WIDTH = 182; // ancho útil: 210mm de hoja carta A4 - 14mm de margen a cada lado
+      const SECONDARY = [51, 0, 102]; // --color-secondary
+      const PRIMARY = [255, 51, 0]; // --color-primary
+      const PRINCETON_ORANGE = '#FF9933'; // --color-princeton-orange
+      const BORDER = [209, 213, 219]; // --color-gray-300
+      const STRIPE = [243, 244, 246]; // --color-gray-100
+      const DARK = [27, 27, 27]; // --color-dark
+      const GRAY = [107, 114, 128]; // --color-gray-500
+
+      // Logo real + figura del "Manual de Identidad" para viñetas de sección
+      const [logoImg, ringImg] = await Promise.all([
+        rasterizeImage(logoUrl),
+        rasterizeImage(brandShapeToDataUrl('anillo', PRINCETON_ORANGE, 1)),
+      ]);
+
+      const doc = new jsPDF();
+
+      // ---------- ENCABEZADO ----------
+      const logoH = 15;
+      const logoW = logoH * (logoImg.width / logoImg.height);
+      doc.addImage(logoImg.dataUrl, 'PNG', MARGIN, 8, logoW, logoH);
+
+      // Caja de folio/fecha, arriba a la derecha
+      const boxX = MARGIN + WIDTH - 60;
+      doc.setDrawColor(...BORDER);
+      doc.rect(boxX, 9, 60, 20);
+      doc.setFont(undefined, 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(...SECONDARY);
+      doc.text('REQUISICIÓN DE COMPRA', boxX + 30, 15, { align: 'center' });
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(...DARK);
+      doc.text(`Folio: ${req.id}`, boxX + 30, 21, { align: 'center' });
+      doc.text(
+        `Fecha: ${req.createdAt ? new Date(req.createdAt).toLocaleDateString('es-MX') : '—'}`,
+        boxX + 30,
+        26,
+        { align: 'center' }
+      );
+
+      doc.setDrawColor(...PRIMARY);
+      doc.setLineWidth(1);
+      doc.line(MARGIN, 33, MARGIN + WIDTH, 33);
+      doc.setLineWidth(0.2);
+
+      /** Dibuja un título de sección con una pequeña viñeta del manual de identidad a la izquierda */
+      const sectionTitle = (text, titleY) => {
+        doc.addImage(ringImg.dataUrl, 'PNG', MARGIN, titleY - 4, 4.5, 4.5 * (ringImg.height / ringImg.width));
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(...SECONDARY);
+        doc.text(text, MARGIN + 7, titleY);
+      };
+      let y = 40;
+      const gridRowH = 8;
+
+      // Determinación de etapa actual del proceso
+      let etapaLabel = 'Paso 1 de 4: Solicitada (Pendiente de Autorizacion)';
+      if (req.status === 'regresada') {
+        etapaLabel = 'Proceso Detenido: Regresada por Direccion';
+      } else if (req.status === 'autorizada') {
+        etapaLabel = 'Paso 2 de 4: Autorizada (Pendiente de Pago / Compra)';
+      } else if (req.status === 'comprada') {
+        etapaLabel = 'Paso 3 de 4: Comprada / Pago Registrado (Pendiente de Recepcion)';
+      } else if (req.status === 'recibida') {
+        etapaLabel = 'Paso 4 de 4: Finalizada y Recibida en Almacen';
+      }
+
+      const gridRows = [
+        [`Area Solicitante: ${areaName}`, `Prioridad: ${PRIORITY_LABELS[req.priority] || req.priority}`],
+        [
+          `Solicito: ${req.requestedBy || '—'}${req.requestedByRole && ROLE_TYPE_LABELS[req.requestedByRole] ? ` (${ROLE_TYPE_LABELS[req.requestedByRole]})` : ''}`,
+          `Estado Actual: ${REQUISITION_STATUS_LABELS[req.status] || req.status}`,
+        ],
+        [`Etapa del Proceso: ${etapaLabel}`, `Modo de Tramite: ${req.reviewedBy ? 'Digital (App)' : 'Fisico / Firma Manual'}`],
+      ];
+      doc.setFontSize(8.5);
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(...DARK);
+      gridRows.forEach((row, i) => {
+        const rowY = y + i * gridRowH;
+        doc.setDrawColor(...BORDER);
+        doc.rect(MARGIN, rowY, WIDTH, gridRowH);
+        doc.line(MARGIN + WIDTH / 2, rowY, MARGIN + WIDTH / 2, rowY + gridRowH);
+        doc.text(row[0], MARGIN + 3, rowY + gridRowH - 2.8, { maxWidth: WIDTH / 2 - 6 });
+        doc.text(row[1], MARGIN + WIDTH / 2 + 3, rowY + gridRowH - 2.8, { maxWidth: WIDTH / 2 - 6 });
+      });
+      y += gridRows.length * gridRowH + 6;
+
+      // Nota aclaratoria si la requisición aún no está autorizada digitalmente en el sistema
+      if (!req.reviewedBy && req.status === 'pendiente') {
+        doc.setFillColor(254, 243, 199); // ambar claro
+        doc.setDrawColor(245, 158, 11);
+        doc.rect(MARGIN, y, WIDTH, 10, 'FD');
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(180, 83, 9);
+        doc.text(
+          'NOTA IMPORTANTE: Requisicion pendiente de autorizacion en la App. Documento apto para firma fisica de Vo.Bo.',
+          MARGIN + 4,
+          y + 6.5,
+          { maxWidth: WIDTH - 8 }
+        );
+        y += 14;
+      }
+
+      // ---------- TABLA DE MATERIALES (con bordes reales, estilo formulario) ----------
+      sectionTitle('Materiales Solicitados', y);
+      y += 5;
+
+      const colWidths = [110, 36, 36];
+      const tableHeaders = ['Material', 'Cantidad', 'Unidad'];
+      const rowH = 7;
+
+      const drawTableHeader = () => {
+        doc.setFillColor(...SECONDARY);
+        doc.rect(MARGIN, y, WIDTH, rowH, 'F');
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(255, 255, 255);
+        let cx = MARGIN;
+        tableHeaders.forEach((h, i) => {
+          doc.text(h, cx + 3, y + rowH - 2.3);
+          cx += colWidths[i];
+        });
+        y += rowH;
+      };
+
+      drawTableHeader();
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(9);
+      req.items.forEach((it, idx) => {
+        if (y > 265) {
+          doc.addPage();
+          y = 20;
+          drawTableHeader();
+          doc.setFont(undefined, 'normal');
+          doc.setFontSize(9);
+        }
+        if (idx % 2 === 1) {
+          doc.setFillColor(...STRIPE);
+          doc.rect(MARGIN, y, WIDTH, rowH, 'F');
+        }
+        doc.setDrawColor(...BORDER);
+        doc.rect(MARGIN, y, WIDTH, rowH);
+        doc.line(MARGIN + colWidths[0], y, MARGIN + colWidths[0], y + rowH);
+        doc.line(MARGIN + colWidths[0] + colWidths[1], y, MARGIN + colWidths[0] + colWidths[1], y + rowH);
+        doc.setTextColor(...DARK);
+        doc.text(String(it.name), MARGIN + 3, y + rowH - 2.3, { maxWidth: colWidths[0] - 6 });
+        doc.text(String(it.quantity), MARGIN + colWidths[0] + 3, y + rowH - 2.3);
+        doc.text(String(it.unit), MARGIN + colWidths[0] + colWidths[1] + 3, y + rowH - 2.3);
+        y += rowH;
+      });
+      y += 8;
+
+      // ---------- JUSTIFICACIÓN (en caja) ----------
+      if (y > 250) {
+        doc.addPage();
+        y = 20;
+      }
+      sectionTitle('Justificacion', y);
+      y += 5;
+      const justificationLines = doc.splitTextToSize(req.justification || '—', WIDTH - 8);
+      const justBoxH = Math.max(justificationLines.length * 4.5 + 6, 12);
+      doc.setDrawColor(...BORDER);
+      doc.rect(MARGIN, y, WIDTH, justBoxH);
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...DARK);
+      doc.text(justificationLines, MARGIN + 4, y + 5.5);
+      y += justBoxH + 8;
+
+      // ---------- SEGUIMIENTO Y REGISTRO DE ETAPAS DE PROCESO ----------
+      const seguimientoLines = [];
+      // Paso 1: Solicitud
+      seguimientoLines.push(
+        `- Paso 1 (Solicitud): Registrada por ${req.requestedBy || '—'} el ${req.createdAt ? new Date(req.createdAt).toLocaleString('es-MX') : '—'} [REGISTRADO]`
+      );
+
+      // Paso 2: Autorización
+      if (req.status === 'regresada' && req.reviewedBy) {
+        seguimientoLines.push(`- Paso 2 (Autorizacion): REGRESADA por ${req.reviewedBy} el ${new Date(req.reviewedAt).toLocaleString('es-MX')}`);
+        if (req.reviewNotes) seguimientoLines.push(`  Motivo de devolucion: ${req.reviewNotes}`);
+      } else if (req.reviewedBy) {
+        seguimientoLines.push(`- Paso 2 (Autorizacion): AUTORIZADA digitalmente por ${req.reviewedBy} el ${new Date(req.reviewedAt).toLocaleString('es-MX')}`);
+        if (req.reviewNotes) seguimientoLines.push(`  Observaciones: ${req.reviewNotes}`);
+      } else {
+        seguimientoLines.push(`- Paso 2 (Autorizacion): [PENDIENTE DE AUTORIZACION DIGITAL - Firma fisica requerida abajo]`);
+      }
+
+      // Paso 3: Pago y Compra
+      if (req.paymentDetails) {
+        seguimientoLines.push(`- Paso 3 (Datos de Pago): ${req.paymentDetails}`);
+      }
+      if (req.purchasedBy) {
+        seguimientoLines.push(
+          `- Paso 3 (Compra / Pago): COMPRADO por ${req.purchasedBy} el ${new Date(req.purchasedAt).toLocaleString('es-MX')} - Proveedor: ${req.supplier || '—'} - Costo: $${req.cost ?? '—'}`
+        );
+      } else if (!req.paymentDetails) {
+        seguimientoLines.push(`- Paso 3 (Pago / Compra): [PENDIENTE DE REGISTRO DE PAGO O COMPRA]`);
+      }
+
+      // Paso 4: Recepción
+      if (req.receivedBy) {
+        seguimientoLines.push(`- Paso 4 (Recepcion): RECIBIDO en Almacen por ${req.receivedBy} el ${new Date(req.receivedAt).toLocaleString('es-MX')}`);
+      } else {
+        seguimientoLines.push(`- Paso 4 (Recepcion): [PENDIENTE DE RECEPCION EN ALMACEN]`);
+      }
+
+      if (y > 235) {
+        doc.addPage();
+        y = 20;
+      }
+      sectionTitle('Bitacora y Estado del Proceso', y);
+      y += 5;
+      const seguimientoWrapped = seguimientoLines.flatMap((line) => doc.splitTextToSize(line, WIDTH - 8));
+      const segBoxH = Math.max(seguimientoWrapped.length * 4.5 + 6, 16);
+      doc.setDrawColor(...BORDER);
+      doc.rect(MARGIN, y, WIDTH, segBoxH);
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(...DARK);
+      doc.text(seguimientoWrapped, MARGIN + 4, y + 5);
+      y += segBoxH + 8;
+
+      // ---------- ADJUNTOS (lista de referencia, sin caja) ----------
+      const allAttachments = [
+        ...(req.attachments || []).map((a) => a.name),
+        ...(req.paymentDetailsFile || []).map((a) => a.name),
+        ...(req.purchaseProof || []).map((a) => a.name),
+      ];
+      if (allAttachments.length > 0) {
+        if (y > 260) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(9.5);
+        doc.setTextColor(...SECONDARY);
+        doc.text('Archivos Adjuntos (disponibles en la plataforma)', MARGIN, y);
+        y += 5;
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(...GRAY);
+        doc.text(allAttachments.map((name) => `- ${name}`), MARGIN, y);
+        y += allAttachments.length * 4.5 + 4;
+      }
+
+      // ---------- LÍNEAS DE FIRMA DE CONTROL ----------
+      if (y > 245) {
+        doc.addPage();
+        y = 20;
+      }
+      const firmaY = Math.max(y + 12, 255);
+      const firmaColW = WIDTH / 3;
+      const firmas = [
+        {
+          label: 'Solicito (Area)',
+          name: req.requestedBy || '—',
+          statusText: req.createdAt ? `Firmado: ${new Date(req.createdAt).toLocaleDateString('es-MX')}` : 'Firma Solicitante',
+        },
+        {
+          label: 'Autorizo (Vo.Bo. Direccion)',
+          name: req.reviewedBy || '(Firma Fisica Requerida)',
+          statusText: req.reviewedBy
+            ? `Firmado: ${new Date(req.reviewedAt).toLocaleDateString('es-MX')}`
+            : 'Firma Fisica de Autorizacion',
+        },
+        {
+          label: 'Recibio (Almacen)',
+          name: req.receivedBy || '(Firma Fisica Requerida)',
+          statusText: req.receivedBy
+            ? `Firmado: ${new Date(req.receivedAt).toLocaleDateString('es-MX')}`
+            : 'Firma Fisica de Recepcion',
+        },
+      ];
+      firmas.forEach((f, i) => {
+        const cx = MARGIN + i * firmaColW;
+        doc.setDrawColor(...DARK);
+        doc.line(cx + 5, firmaY, cx + firmaColW - 5, firmaY);
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(...DARK);
+        doc.text(f.label, cx + firmaColW / 2, firmaY + 4.5, { align: 'center' });
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(...GRAY);
+        doc.text(f.name, cx + firmaColW / 2, firmaY + 8.5, { align: 'center', maxWidth: firmaColW - 8 });
+        doc.setFontSize(7);
+        doc.text(f.statusText, cx + firmaColW / 2, firmaY + 12, { align: 'center', maxWidth: firmaColW - 8 });
+      });
+
+      // ---------- PIE ----------
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Generado el ${new Date().toLocaleString('es-MX')} por ${user?.name || 'Usuario'} — Sistema Dicrejart`,
+        MARGIN,
+        290
+      );
+
+      doc.save(`Requisicion_${req.id}_${areaName.replace(/\s+/g, '-')}.pdf`);
+    } catch (error) {
+      console.error('Error al generar el PDF de la requisición:', error);
+      toast.danger('No se pudo generar el PDF. Intenta de nuevo.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
 
   const handleConfirmDeleteRequisicion = async () => {
     setIsDeletingReq(true);
@@ -622,9 +984,17 @@ const ComprasPage = () => {
               Solicitó: {req.requestedBy} • {new Date(req.createdAt).toLocaleDateString()}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
             <Badge variant={req.priority === 'urgente' ? 'danger' : 'neutral'}>{PRIORITY_LABELS[req.priority]}</Badge>
             <Badge variant={STATUS_BADGE_VARIANT[req.status]}>{REQUISITION_STATUS_LABELS[req.status]}</Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleExportRequisicionPdf(req)}
+              isLoading={isExportingPdf}
+            >
+              📄 PDF
+            </Button>
           </div>
         </div>
 
@@ -1168,7 +1538,7 @@ const ComprasPage = () => {
         {deleteConfirm.req && (
           <div style={{ padding: 'var(--space-2) 0' }}>
             <p style={{ marginBottom: 'var(--space-4)' }}>
-              ¿Eliminar la requisición <strong>{deleteConfirm.req.id}</strong> ({AREAS_CATALOG.find((a) => a.id === deleteConfirm.req.areaId)?.name || deleteConfirm.req.areaId})?
+              ¿Eliminar la requisición <strong>{deleteConfirm.req.id}</strong> ({dynamicAreas.find((a) => a.id === deleteConfirm.req.areaId)?.name || deleteConfirm.req.areaId})?
             </p>
             <p style={{ fontSize: '12.5px', color: 'var(--color-gray-500)', marginBottom: 'var(--space-5)' }}>
               Esta acción es permanente: se borra el registro y todos sus archivos adjuntos (cotización, datos de pago, comprobante de compra). No se puede deshacer.

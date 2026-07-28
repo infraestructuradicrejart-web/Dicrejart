@@ -314,8 +314,8 @@ export const AuthProvider = ({ children }) => {
 
   /**
    * Verifica el correo y contraseña de OTRO usuario (no el que tiene la sesión abierta)
-   * y confirma que tenga autoridad sobre el área indicada (Admin, Encargado de esa área,
-   * o Supervisor que la cubre). Se usa para autorizar préstamos/cambios de área de
+   * y confirma que tenga autoridad sobre el área indicada (Admin, Calidad, Encargado de
+   * esa área, o Supervisor que la cubre). Se usa para autorizar préstamos/cambios de área de
    * colaboradores con la contraseña real del supervisor/encargado que presta o recibe.
    * Usa una instancia secundaria de Firebase Auth para no cerrar la sesión actual.
    * @param {string} email
@@ -348,6 +348,9 @@ export const AuthProvider = ({ children }) => {
 
       const canAuthorize =
         profile.roleType === 'admin' ||
+        // Calidad no está atado a una sola área (igual que en canActOnArea de
+        // OperariosPage.jsx) — puede autorizar movimientos de cualquier área
+        profile.roleType === 'calidad' ||
         (profile.roleType === 'encargado-area' && profile.areaId === areaId) ||
         (profile.roleType === 'supervisor-area' && (profile.areaIds || []).includes(areaId));
 
@@ -454,6 +457,9 @@ export const AuthProvider = ({ children }) => {
         roleType: data.roleType,
         areaId: data.areaId || null,
         areaIds: data.areaIds || [],
+        // Solo Diseñador/Arquitecto: id del registro del padrón de Operarios (Diseño)
+        // al que se vincula esta cuenta, para filtrar sus tareas asignadas
+        operarioId: data.operarioId || null,
         status: data.status || 'activo',
         createdAt: new Date().toISOString(),
       };
@@ -497,6 +503,7 @@ export const AuthProvider = ({ children }) => {
         roleType: data.roleType,
         areaId: data.areaId || null,
         areaIds: data.areaIds || [],
+        operarioId: data.operarioId || null,
         status: data.status,
       };
 

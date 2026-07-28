@@ -30,53 +30,8 @@ import useToast from '../../hooks/useToast';
 import useProduccion from '../../hooks/useProduccion';
 import useCalidad from '../../hooks/useCalidad';
 import PageHeader from '../../components/ui/PageHeader';
+import { addPdfTable } from '../../utils/pdfTable';
 import styles from './ReportesPage.module.css';
-
-/**
- * Dibuja una tabla simple (encabezado + filas) en un documento jsPDF, partiendo en una
- * nueva página y repitiendo el encabezado cuando se acaba el espacio vertical — jsPDF no
- * trae soporte de tablas integrado (no está instalado `jspdf-autotable`), así que el
- * layout de columnas se calcula a mano.
- */
-const addPdfTable = (doc, { title, headers, rows, startY }) => {
-  const marginLeft = 14;
-  const pageWidth = 182;
-  const colWidth = pageWidth / headers.length;
-  const lineHeight = 6;
-  let y = startY;
-
-  doc.setFontSize(12);
-  doc.setFont(undefined, 'bold');
-  doc.text(title, marginLeft, y);
-  y += 7;
-
-  const printRow = (cells, bold) => {
-    doc.setFontSize(9);
-    doc.setFont(undefined, bold ? 'bold' : 'normal');
-    cells.forEach((cell, i) => {
-      doc.text(String(cell ?? ''), marginLeft + i * colWidth, y, { maxWidth: colWidth - 2 });
-    });
-    y += lineHeight;
-  };
-
-  const printHeader = () => {
-    printRow(headers, true);
-    doc.setDrawColor(200);
-    doc.line(marginLeft, y - 4, marginLeft + pageWidth, y - 4);
-  };
-
-  printHeader();
-  rows.forEach((row) => {
-    if (y > 280) {
-      doc.addPage();
-      y = 20;
-      printHeader();
-    }
-    printRow(row, false);
-  });
-
-  return y + 10;
-};
 
 /**
  * Áreas para filtrado
@@ -258,7 +213,7 @@ const ReportesPage = () => {
       const doc = new jsPDF();
       doc.setFontSize(16);
       doc.setFont(undefined, 'bold');
-      doc.text('Reporte de Analítica — Dicrejart', 14, 15);
+      doc.text('Reporte de Analítica', 14, 15);
       doc.setFontSize(10);
       doc.setFont(undefined, 'normal');
       doc.text(`Generado: ${new Date().toLocaleString('es-MX')}  ·  Área: ${areaLabel}`, 14, 22);

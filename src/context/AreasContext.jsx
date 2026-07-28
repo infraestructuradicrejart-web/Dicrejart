@@ -11,7 +11,8 @@
 import React, { createContext, useState, useEffect, useCallback, useMemo, useContext } from 'react';
 import PropTypes from 'prop-types';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '../config/firebase';
 import { AuthContext } from './AuthContext';
 import { logAudit } from '../utils/auditLog';
 import { DEFAULT_AREAS, resolveAreaId as baseResolveAreaId } from '../data/areasConfig';
@@ -25,42 +26,64 @@ export const AreasProvider = ({ children }) => {
   const { user } = useContext(AuthContext) || {};
   const toast = useToast();
 
+  // Igual que el resto de los contextos de la app (ProduccionContext, ComprasContext,
+  // etc.): este Provider envuelve toda la app, incluida /login, así que suscribirse a
+  // Firestore de inmediato fallaría por falta de permisos antes del login — y sin
+  // reintentarlo después, ya que un onSnapshot que truena por permiso queda "muerto"
+  // (no se reactiva solo cuando el usuario inicia sesión más tarde). Se espera a
+  // onAuthStateChanged y se (re)suscribe con cada cambio de sesión.
   useEffect(() => {
-    if (!db) {
+    if (!db || !auth) {
       setIsLoading(false);
       return;
     }
 
-    const unsub = onSnapshot(collection(db, 'areas'), async (snap) => {
-      if (snap.empty) {
-        // Inicializar áreas por defecto usando writeBatch
-        try {
-          const batch = writeBatch(db);
-          DEFAULT_AREAS.forEach((area) => {
-            const areaRef = doc(db, 'areas', area.id);
-            batch.set(areaRef, area);
-          });
-          await batch.commit();
-          // onSnapshot se disparará nuevamente después del commit
-        } catch (error) {
-          console.error("Error al inicializar áreas por defecto:", error);
-          setAreas(DEFAULT_AREAS); // Fallback local en caso de error
+    let unsubSnapshot = null;
+
+    const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      if (unsubSnapshot) unsubSnapshot();
+
+      if (!firebaseUser) {
+        setAreas([]);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      unsubSnapshot = onSnapshot(collection(db, 'areas'), async (snap) => {
+        if (snap.empty) {
+          // Inicializar áreas por defecto usando writeBatch
+          try {
+            const batch = writeBatch(db);
+            DEFAULT_AREAS.forEach((area) => {
+              const areaRef = doc(db, 'areas', area.id);
+              batch.set(areaRef, area);
+            });
+            await batch.commit();
+            // onSnapshot se disparará nuevamente después del commit
+          } catch (error) {
+            console.error("Error al inicializar áreas por defecto:", error);
+            setAreas(DEFAULT_AREAS); // Fallback local en caso de error
+            setIsLoading(false);
+          }
+        } else {
+          const loadedAreas = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          // Opcional: ordenar las áreas alfabéticamente
+          loadedAreas.sort((a, b) => a.name.localeCompare(b.name));
+          setAreas(loadedAreas);
           setIsLoading(false);
         }
-      } else {
-        const loadedAreas = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        // Opcional: ordenar las áreas alfabéticamente
-        loadedAreas.sort((a, b) => a.name.localeCompare(b.name));
-        setAreas(loadedAreas);
+      }, (error) => {
+        console.error("Error al escuchar áreas:", error);
+        setAreas(DEFAULT_AREAS); // Fallback
         setIsLoading(false);
-      }
-    }, (error) => {
-      console.error("Error al escuchar áreas:", error);
-      setAreas(DEFAULT_AREAS); // Fallback
-      setIsLoading(false);
+      });
     });
 
-    return () => unsub();
+    return () => {
+      unsubAuth();
+      if (unsubSnapshot) unsubSnapshot();
+    };
   }, []);
 
   /**

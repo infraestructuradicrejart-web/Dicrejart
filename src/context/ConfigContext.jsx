@@ -44,6 +44,10 @@ export const DEFAULT_GENERAL_CONFIG = {
   maintenanceMode: false,
   autoQualityAlerts: true,
   qualityTolerance: 90,
+  emailRH: '',
+  horaNotificacionRH: '10:00',
+  notificarFaltasRH: true,
+  lastRHNotificationDate: '',
 };
 
 export const ConfigProvider = ({ children }) => {

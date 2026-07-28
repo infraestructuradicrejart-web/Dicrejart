@@ -9,7 +9,7 @@
  * @requires xlsx
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -20,21 +20,29 @@ import useOperarios from '../../hooks/useOperarios';
 import useToast from '../../hooks/useToast';
 import useAuth from '../../hooks/useAuth';
 import useAreas from '../../hooks/useAreas';
+import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
+import { ROLE_TYPE_LABELS } from '../../data/usersData';
+import { PUESTO_LABELS, PUESTO_ICONS, PUESTO_BADGE_VARIANT, PUESTO_OPTIONS, DESIGN_PUESTOS } from '../../data/puestoConfig';
+import useConfig from '../../hooks/useConfig';
+import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { triggerDailyRHNotification } from '../../services/rhNotificationService';
 import PageHeader from '../../components/ui/PageHeader';
 import styles from './OperariosPage.module.css';
 
 // Etiquetas e iconos del estado de disponibilidad del colaborador
 const ESTADO_LABELS = {
-  activo: 'Activo',
-  falta: 'Falta',
-  incapacidad: 'Incapacidad',
+  activo: 'En Planta',
+  falta: 'Falta (Inasistencia)',
+  salida_campo: 'Salida Fuera / Actividad Externa',
+  incapacidad: 'Incapacidad Médica',
   viaje: 'Viaje / Ensamble Foráneo',
-  actividad_externa: 'Actividad Externa',
-  vacaciones: 'Vacaciones',
+  actividad_externa: 'Comisión Externa',
+  vacaciones: 'Vacaciones / Permiso',
 };
 const ESTADO_ICONS = {
   activo: '🟢',
   falta: '🔴',
+  salida_campo: '🚗',
   incapacidad: '🤒',
   viaje: '✈️',
   actividad_externa: '🏗️',
@@ -43,7 +51,8 @@ const ESTADO_ICONS = {
 const ESTADO_BADGE_VARIANT = {
   activo: 'success',
   falta: 'danger',
-  incapacidad: 'warning',
+  salida_campo: 'warning',
+  incapacidad: 'danger',
   viaje: 'info',
   actividad_externa: 'primary',
   vacaciones: 'neutral',
@@ -52,6 +61,19 @@ const TIPO_MOV_LABELS = {
   prestamo: 'Préstamo Temporal',
   cambio_definitivo: 'Cambio Definitivo de Área',
 };
+
+// Opciones del filtro de orden del padrón — "Antigüedad" usa el número de folio
+// (OP-01, OP-02...), que se asigna en orden de alta, así que ordena de más antiguo a
+// más nuevo sin necesitar una fecha de ingreso guardada aparte.
+const SORT_OPTIONS = [
+  { value: 'nombre-asc', label: 'Nombre (A-Z)' },
+  { value: 'nombre-desc', label: 'Nombre (Z-A)' },
+  { value: 'area', label: 'Área' },
+  { value: 'estado', label: 'Disponibilidad' },
+  { value: 'puesto', label: 'Puesto' },
+  { value: 'antiguedad', label: 'Antigüedad (más antiguo primero)' },
+];
+
 
 /**
  * Componente OperariosPage - Padrón, asignación y préstamo de operarios
@@ -67,6 +89,8 @@ const OperariosPage = () => {
     returnToHomeArea,
     updateOperarioSchedule,
     importFromExcel,
+    addOperario,
+    updateOperario,
     deleteOperario,
     clearAllOperarios,
     movimientos,
@@ -79,10 +103,49 @@ const OperariosPage = () => {
 
   const { user } = useAuth();
   const { areas: dynamicAreas } = useAreas();
+  const { generalConfig, updateGeneralConfig } = useConfig();
   const toast = useToast();
 
   const fileInputRef = useRef(null);
   const [areaFilter, setAreaFilter] = useState('todas');
+  const [sortOrder, setSortOrder] = useState('nombre-asc');
+
+  // Barra de scroll horizontal duplicada arriba de la tabla: el navegador solo dibuja
+  // la barra nativa hasta abajo de un contenedor con overflow-x, así que en una tabla
+  // larga hay que bajar hasta el final para poder moverla. Se sincroniza a mano el
+  // scrollLeft de un segundo contenedor (arriba, solo con un div "fantasma" del mismo
+  // ancho que la tabla real) con el de la tabla — cualquiera de las dos mueve a la otra.
+  const topScrollRef = useRef(null);
+  const tableWrapRef = useRef(null);
+  const isSyncingScrollRef = useRef(false);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+
+  useEffect(() => {
+    const el = tableWrapRef.current;
+    if (!el) return undefined;
+    const updateScrollWidth = () => setTableScrollWidth(el.scrollWidth);
+    updateScrollWidth();
+    // ResizeObserver (no un listener de "resize" de ventana) para que también se
+    // recalcule cuando la tabla cambia de ancho por su propio contenido — ej. al
+    // filtrar por área y quedar menos filas, o al aparecer/ocultarse una columna.
+    const observer = new ResizeObserver(updateScrollWidth);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const handleTopScroll = () => {
+    if (isSyncingScrollRef.current) { isSyncingScrollRef.current = false; return; }
+    if (!topScrollRef.current || !tableWrapRef.current) return;
+    isSyncingScrollRef.current = true;
+    tableWrapRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+  };
+
+  const handleTableScroll = () => {
+    if (isSyncingScrollRef.current) { isSyncingScrollRef.current = false; return; }
+    if (!topScrollRef.current || !tableWrapRef.current) return;
+    isSyncingScrollRef.current = true;
+    topScrollRef.current.scrollLeft = tableWrapRef.current.scrollLeft;
+  };
 
   // Estado para el modal de edición de jornada / horas extras
   const [scheduleModal, setScheduleModal] = useState({
@@ -131,6 +194,14 @@ const OperariosPage = () => {
   const [deleteConfirmation, setDeleteConfirmation] = useState({ isOpen: false, operario: null });
   const [clearAllConfirmation, setClearAllConfirmation] = useState({ isOpen: false });
 
+  // Estado para el modal de alta individual de un nuevo operario
+  const [addModal, setAddModal] = useState({ isOpen: false, name: '', areaId: '', puesto: 'operario' });
+  const [isAddingOperario, setIsAddingOperario] = useState(false);
+
+  // Estado para el modal de edición de datos (nombre) de un colaborador ya existente
+  const [editModal, setEditModal] = useState({ isOpen: false, operario: null, name: '' });
+  const [isEditingOperario, setIsEditingOperario] = useState(false);
+
   // Solo los administradores pueden autorizar y modificar jornadas
   const canManageSchedule = user?.roleType === 'admin';
 
@@ -138,7 +209,20 @@ const OperariosPage = () => {
   // HELPERS
   // ============================================
   const getAreaName = (areaId) =>
-    dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+    dynamicAreas.find((a) => a.id === areaId)?.name ||
+    NON_PRODUCTION_AREAS.find((a) => a.id === areaId)?.name ||
+    areaId;
+
+  /** Fecha/hora legible para cada paso del ciclo de vida de un movimiento (creación,
+   * autorización de origen/destino, rechazo) — todos esos pasos guardan su propio ISO
+   * timestamp en Firestore; los registros creados antes de este campo simplemente no
+   * muestran nada en vez de una fecha inventada. */
+  const formatDateTime = (iso) => (iso ? new Date(iso).toLocaleString('es-MX') : null);
+
+  /** Etiqueta "Nombre (Rol)" para quien solicitó/autorizó/rechazó un movimiento — el rol
+   * puede faltar en movimientos creados antes de que se empezara a guardar. */
+  const actorLabel = (name, roleType) =>
+    name ? `${name}${roleType && ROLE_TYPE_LABELS[roleType] ? ` (${ROLE_TYPE_LABELS[roleType]})` : ''}` : 'Desconocido';
 
   // Arma el tooltip del badge de disponibilidad, dejando explícito cuando no hay
   // fecha de regreso definida (incapacidad/viaje/actividad externa sin "hasta")
@@ -168,6 +252,61 @@ const OperariosPage = () => {
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleOpenAddModal = () => {
+    setAddModal({ isOpen: true, name: '', areaId: dynamicAreas[0]?.id || '', puesto: 'operario' });
+  };
+
+  const handleCloseAddModal = () => {
+    setAddModal({ isOpen: false, name: '', areaId: '', puesto: 'operario' });
+  };
+
+  /**
+   * Al cambiar el Puesto, el área se ajusta automáticamente: Diseño/Arquitectura solo
+   * pueden pertenecer al área "Diseño" (única área no productiva hoy), mientras que
+   * Operario de Piso vuelve a ofrecer las áreas de manufactura.
+   */
+  const handleAddModalPuestoChange = (puesto) => {
+    setAddModal((prev) => ({
+      ...prev,
+      puesto,
+      areaId: DESIGN_PUESTOS.includes(puesto) ? 'diseno' : (dynamicAreas[0]?.id || ''),
+    }));
+  };
+
+  const handleSubmitAddOperario = async (e) => {
+    e.preventDefault();
+    setIsAddingOperario(true);
+    const res = await addOperario(addModal.name, addModal.areaId, addModal.puesto);
+    setIsAddingOperario(false);
+    if (res.ok) {
+      toast.success(`✅ ${PUESTO_LABELS[addModal.puesto]} "${addModal.name.trim()}" agregado al padrón.`);
+      handleCloseAddModal();
+    } else {
+      toast.danger(res.error || 'No se pudo agregar el operario.');
+    }
+  };
+
+  const handleOpenEditModal = (op) => {
+    setEditModal({ isOpen: true, operario: op, name: op.name });
+  };
+
+  const handleCloseEditModal = () => {
+    setEditModal({ isOpen: false, operario: null, name: '' });
+  };
+
+  const handleSubmitEditOperario = async (e) => {
+    e.preventDefault();
+    setIsEditingOperario(true);
+    const res = await updateOperario(editModal.operario.id, { name: editModal.name });
+    setIsEditingOperario(false);
+    if (res.ok) {
+      toast.success('✅ Datos del operario actualizados.');
+      handleCloseEditModal();
+    } else {
+      toast.danger(res.error || 'No se pudo editar el operario.');
+    }
   };
 
   const handleFileChange = async (e) => {
@@ -260,7 +399,7 @@ const OperariosPage = () => {
 
   // Cambio de estado / disponibilidad del colaborador
   const handleOpenEstadoModal = (op) => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayLocalDateStr();
     setEstadoModal({
       isOpen: true,
       operario: op,
@@ -364,7 +503,7 @@ const OperariosPage = () => {
 
   // Modales de Jornada
   const handleOpenScheduleModal = (op) => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayLocalDateStr();
     setScheduleModal({
       isOpen: true,
       collaborator: op,
@@ -463,12 +602,38 @@ const OperariosPage = () => {
   // ============================================
   // FILTRADO
   // ============================================
-  const filteredOperarios =
-    areaFilter === 'todas' ? operarios : operarios.filter((op) => op.currentArea === areaFilter);
+  const sortOperarios = (list) => {
+    const sorted = [...list];
+    switch (sortOrder) {
+      case 'nombre-desc':
+        return sorted.sort((a, b) => String(b?.name || '').localeCompare(String(a?.name || '')));
+      case 'area':
+        return sorted.sort((a, b) => String(getAreaName(a?.currentArea) || '').localeCompare(String(getAreaName(b?.currentArea) || '')));
+      case 'estado':
+        return sorted.sort((a, b) =>
+          String(ESTADO_LABELS[a?.estado?.tipo || 'activo'] || '').localeCompare(String(ESTADO_LABELS[b?.estado?.tipo || 'activo'] || ''))
+        );
+      case 'puesto':
+        return sorted.sort((a, b) => String(PUESTO_LABELS[a?.puesto] || '').localeCompare(String(PUESTO_LABELS[b?.puesto] || '')));
+      case 'antiguedad':
+        return sorted.sort((a, b) => {
+          const idA = Number(String(a?.id || '').replace(/\D/g, '')) || 0;
+          const idB = Number(String(b?.id || '').replace(/\D/g, '')) || 0;
+          return idA - idB;
+        });
+      case 'nombre-asc':
+      default:
+        return sorted.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
+    }
+  };
+
+  const filteredOperarios = sortOperarios(
+    areaFilter === 'todas' ? operarios : operarios.filter((op) => op.currentArea === areaFilter)
+  );
 
   const prestadosCount = operarios.filter((op) => op.currentArea !== op.homeArea).length;
   
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayLocalDateStr();
   const overtimeCount = operarios.filter(
     (op) => op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStr
   ).length;
@@ -507,8 +672,32 @@ const OperariosPage = () => {
         shape="cacahuate"
         accentColor="var(--color-purple-x11)"
       >
-        <Button variant="primary" size="md" onClick={handleUploadClick}>
+        <Button variant="primary" size="md" onClick={handleOpenAddModal}>
+          ➕ Nuevo Operario
+        </Button>
+        <Button variant="secondary" size="md" onClick={handleUploadClick}>
           📥 Cargar Excel
+        </Button>
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={async () => {
+            const res = await triggerDailyRHNotification({
+              operarios,
+              generalConfig,
+              updateGeneralConfig,
+              force: true,
+              user
+            });
+            if (res && res.ok) {
+              toast.success(`📧 Reporte a RH (10:00 AM) preparado para ${res.emailTarget}. Ausencias registradas hoy: ${res.absentCount}.`);
+            } else {
+              toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+            }
+          }}
+          title="Preparar / Enviar reporte de ausencias de personal para Recursos Humanos (10:00 AM)"
+        >
+          📧 Notificar RH (10:00 AM)
         </Button>
         {canManageSchedule && operarios.length > 0 && (
           <Button 
@@ -560,35 +749,53 @@ const OperariosPage = () => {
         <Card variant="default">
           <div className={styles.filterBar}>
             <h3 className={styles.sectionTitle}>Padrón de Operarios</h3>
-            <div className={styles.filterWrapper}>
-              <Select
-                label="Filtrar por Área Actual"
-                value={areaFilter}
-                onChange={(e) => setAreaFilter(e.target.value)}
-                options={[
-                  { value: 'todas', label: 'Todas las Áreas' },
-                  ...dynamicAreas.map((a) => ({ value: a.id, label: a.name })),
-                ]}
-              />
+            <div className={styles.filtersGroup}>
+              <div className={styles.filterWrapper}>
+                <Select
+                  label="Filtrar por Área Actual"
+                  value={areaFilter}
+                  onChange={(e) => setAreaFilter(e.target.value)}
+                  options={[
+                    { value: 'todas', label: 'Todas las Áreas' },
+                    ...dynamicAreas.map((a) => ({ value: a.id, label: a.name })),
+                  ]}
+                />
+              </div>
+              <div className={styles.filterWrapper}>
+                <Select
+                  label="Ordenar por"
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value)}
+                  options={SORT_OPTIONS}
+                />
+              </div>
             </div>
           </div>
 
-          <div className={styles.tableResponsive}>
+          <div className={styles.topScrollbar} ref={topScrollRef} onScroll={handleTopScroll}>
+            <div style={{ width: tableScrollWidth, height: 1 }} />
+          </div>
+
+          <div className={styles.tableResponsive} ref={tableWrapRef} onScroll={handleTableScroll}>
             <table className={styles.table}>
               <thead>
                 <tr>
                   <th>Operario</th>
-                  <th>Área de Origen</th>
-                  <th>Área Actual</th>
+                  <th>Puesto</th>
+                  <th className={styles.areaSelectCell}>Área</th>
                   <th>Jornada / Horario</th>
                   <th>Estado</th>
                   <th>Disponibilidad</th>
-                  <th>Acciones</th>
+                  <th className={styles.stickyActionsHeader}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredOperarios.map((op) => {
                   const isPrestado = op.currentArea !== op.homeArea;
+                  // El personal de Diseño tiene una jerarquía distinta a la del piso de
+                  // manufactura: no aplican préstamos/cambios de área entre áreas de
+                  // producción ni jornada/horas extra — solo Estado, Editar y Eliminar.
+                  const isDesignStaff = DESIGN_PUESTOS.includes(op.puesto);
                   const isSat = new Date().getDay() === 6;
                   const defaultEnd = isSat ? 13 : 18;
 
@@ -602,15 +809,19 @@ const OperariosPage = () => {
                     <tr key={op.id}>
                       <td data-label="Operario">
                         <div className={styles.userInfoBlock}>
-                          <span className={styles.avatarMini}>{op.name[0].toUpperCase()}</span>
+                          <span className={styles.avatarMini}>{(op.name || 'O')[0].toUpperCase()}</span>
                           <div>
-                            <strong>{op.name}</strong>
-                            <div style={{ fontSize: '10px', color: 'var(--color-gray-400)' }}>ID: {op.id}</div>
+                            <strong>{op.name || 'Sin Nombre'}</strong>
+                            <div style={{ fontSize: '10px', color: 'var(--color-gray-400)' }}>ID: {op.id || 'N/A'}</div>
                           </div>
                         </div>
                       </td>
-                      <td data-label="Área de Origen">{getAreaName(op.homeArea)}</td>
-                      <td data-label="Área Actual" className={styles.areaSelectCell}>{getAreaName(op.currentArea)}</td>
+                      <td data-label="Puesto">
+                        <Badge variant={PUESTO_BADGE_VARIANT[op.puesto]}>
+                          {PUESTO_ICONS[op.puesto]} {PUESTO_LABELS[op.puesto]}
+                        </Badge>
+                      </td>
+                      <td data-label="Área" className={styles.areaSelectCell}>{getAreaName(op.currentArea)}</td>
                       <td data-label="Jornada / Horario">
                         <div className={styles.scheduleInfoBlock}>
                           <span>{startStr}:00 - {endStr}:00</span>
@@ -653,18 +864,20 @@ const OperariosPage = () => {
                           </div>
                         )}
                       </td>
-                      <td data-label="Acciones">
+                      <td data-label="Acciones" className={styles.stickyActionsCell}>
                         <div className={styles.actionsCell}>
-                          {isPrestado && (
+                          {isPrestado && !isDesignStaff && (
                             <Button variant="ghost" size="sm" onClick={() => handleReturn(op)}>
                               ↩ Regresar
                             </Button>
                           )}
                           {canActOnArea(op.currentArea) && (
                             <>
-                              <Button variant="ghost" size="sm" onClick={() => handleOpenMovRequestModal(op)}>
-                                🔁 Mover
-                              </Button>
+                              {!isDesignStaff && (
+                                <Button variant="ghost" size="sm" onClick={() => handleOpenMovRequestModal(op)}>
+                                  🔁 Mover
+                                </Button>
+                              )}
                               <Button variant="ghost" size="sm" onClick={() => handleOpenEstadoModal(op)}>
                                 🩺 Estado
                               </Button>
@@ -672,9 +885,14 @@ const OperariosPage = () => {
                           )}
                           {canManageSchedule && (
                             <>
-                              <Button variant="ghost" size="sm" onClick={() => handleOpenScheduleModal(op)}>
-                                🕒 Jornada
+                              <Button variant="ghost" size="sm" onClick={() => handleOpenEditModal(op)}>
+                                ✏️ Editar
                               </Button>
+                              {!isDesignStaff && (
+                                <Button variant="ghost" size="sm" onClick={() => handleOpenScheduleModal(op)}>
+                                  🕒 Jornada
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -725,18 +943,26 @@ const OperariosPage = () => {
                   }}
                 >
                   <div>
-                    <strong>{mov.operarioName}</strong> — {TIPO_MOV_LABELS[mov.tipo]}
+                    <strong>{mov.operarioName}</strong>{' '}
+                    <Badge variant={PUESTO_BADGE_VARIANT[mov.operarioPuesto || 'operario']} size="sm">
+                      {PUESTO_ICONS[mov.operarioPuesto || 'operario']} {PUESTO_LABELS[mov.operarioPuesto || 'operario']}
+                    </Badge>
+                    {' '}— {TIPO_MOV_LABELS[mov.tipo]}
                     <div style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
                       {getAreaName(mov.fromAreaId)} → {getAreaName(mov.toAreaId)}
                       {mov.motivo && <> · {mov.motivo}</>}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--color-gray-400)' }}>
-                      Solicitado por {mov.solicitadoPor} ·{' '}
+                      Solicitado por {actorLabel(mov.solicitadoPor, mov.solicitadoPorRole)}
+                      {formatDateTime(mov.createdAt) && <> el {formatDateTime(mov.createdAt)}</>} ·{' '}
                       {mov.status === 'pendiente_origen'
                         ? `Falta autorización de ${getAreaName(mov.fromAreaId)}`
                         : `Falta autorización de ${getAreaName(mov.toAreaId)}`}
                       {mov.status === 'pendiente_destino' && mov.origenAutorizadoPor && (
-                        <> (origen autorizado por {mov.origenAutorizadoPor})</>
+                        <>
+                          {' '}(origen autorizado por {actorLabel(mov.origenAutorizadoPor, mov.origenAutorizadoPorRole)}
+                          {formatDateTime(mov.origenAutorizadoAt) && <> el {formatDateTime(mov.origenAutorizadoAt)}</>})
+                        </>
                       )}
                     </div>
                   </div>
@@ -781,19 +1007,31 @@ const OperariosPage = () => {
                   }}
                 >
                   <div>
-                    <strong>{mov.operarioName}</strong> — {TIPO_MOV_LABELS[mov.tipo]}: {getAreaName(mov.fromAreaId)} →{' '}
+                    <strong>{mov.operarioName}</strong>{' '}
+                    <Badge variant={PUESTO_BADGE_VARIANT[mov.operarioPuesto || 'operario']} size="sm">
+                      {PUESTO_ICONS[mov.operarioPuesto || 'operario']} {PUESTO_LABELS[mov.operarioPuesto || 'operario']}
+                    </Badge>
+                    {' '}— {TIPO_MOV_LABELS[mov.tipo]}: {getAreaName(mov.fromAreaId)} →{' '}
                     {getAreaName(mov.toAreaId)}
+                    <div style={{ fontSize: '11px', color: 'var(--color-gray-400)' }}>
+                      Solicitado por {actorLabel(mov.solicitadoPor, mov.solicitadoPorRole)}
+                      {formatDateTime(mov.createdAt) && <> el {formatDateTime(mov.createdAt)}</>}
+                    </div>
                   </div>
                   {mov.status === 'autorizado' ? (
-                    <Badge variant="success">
+                    <Badge variant="success" title={formatDateTime(mov.destinoAutorizadoAt || mov.origenAutorizadoAt) || ''}>
                       ✅ Autorizado{' '}
                       {mov.destinoAutorizadoPor
-                        ? `(${mov.origenAutorizadoPor} + ${mov.destinoAutorizadoPor})`
-                        : `por ${mov.origenAutorizadoPor}`}
+                        ? `(${actorLabel(mov.origenAutorizadoPor, mov.origenAutorizadoPorRole)} + ${actorLabel(mov.destinoAutorizadoPor, mov.destinoAutorizadoPorRole)})`
+                        : `por ${actorLabel(mov.origenAutorizadoPor, mov.origenAutorizadoPorRole)}`}
+                      {formatDateTime(mov.destinoAutorizadoAt || mov.origenAutorizadoAt) && (
+                        <> el {formatDateTime(mov.destinoAutorizadoAt || mov.origenAutorizadoAt)}</>
+                      )}
                     </Badge>
                   ) : (
                     <Badge variant="danger" title={mov.notasRechazo || ''}>
-                      ❌ Rechazado por {mov.rechazadoPor}
+                      ❌ Rechazado por {actorLabel(mov.rechazadoPor, mov.rechazadoPorRole)}
+                      {formatDateTime(mov.rechazadoAt) && <> el {formatDateTime(mov.rechazadoAt)}</>}
                     </Badge>
                   )}
                 </div>
@@ -907,7 +1145,7 @@ const OperariosPage = () => {
             </div>
 
             <div className={styles.formGroup}>
-              <label className={styles.label}>Desde</label>
+              <label className={styles.label}>Desde (Fecha de Inicio)</label>
               <input
                 type="date"
                 required
@@ -917,15 +1155,27 @@ const OperariosPage = () => {
               />
             </div>
 
-            {estadoModal.tipo !== 'activo' && (
+            {estadoModal.tipo === 'falta' && (
               <div className={styles.formGroup}>
-                <label className={styles.label}>Hasta (opcional)</label>
+                <p style={{ fontSize: '12px', color: 'var(--color-primary)', background: 'var(--color-gray-100)', padding: '8px 12px', borderRadius: '6px' }}>
+                  ℹ <strong>Inasistencia Diaria:</strong> Las faltas aplican para la jornada de hoy. Al día siguiente, el sistema restablecerá automáticamente el estado del colaborador a <strong>"En Planta"</strong>.
+                </p>
+              </div>
+            )}
+
+            {estadoModal.tipo !== 'activo' && estadoModal.tipo !== 'falta' && (
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Hasta (Fecha de Término)</label>
                 <input
                   type="date"
                   className={styles.textInput}
                   value={estadoModal.hasta}
                   onChange={(e) => setEstadoModal((prev) => ({ ...prev, hasta: e.target.value }))}
                 />
+                <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '4px' }}>
+                  • <strong>Tiempo Definido:</strong> Selecciona la fecha final. Al vencer, el estado se restablecerá a "En Planta".<br />
+                  • <strong>Tiempo Indefinido:</strong> Deja este campo vacío. Permanecerá ausente hasta que se cambie manualmente.
+                </p>
               </div>
             )}
 
@@ -1133,6 +1383,97 @@ const OperariosPage = () => {
           </form>
         </Modal>
       )}
+
+      {/* MODAL: ALTA INDIVIDUAL DE UN NUEVO OPERARIO */}
+      <Modal isOpen={addModal.isOpen} onClose={handleCloseAddModal} title="➕ Nuevo Operario">
+        <form onSubmit={handleSubmitAddOperario}>
+          <div className={styles.formGroup}>
+            <label className={styles.label}>Nombre Completo</label>
+            <input
+              type="text"
+              className={styles.textInput}
+              value={addModal.name}
+              onChange={(e) => setAddModal((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="Ej. Juan Pérez López"
+              required
+              autoFocus
+            />
+          </div>
+
+          <div className={styles.formGroup}>
+            <Select
+              label="Puesto"
+              value={addModal.puesto}
+              onChange={(e) => handleAddModalPuestoChange(e.target.value)}
+              required
+              options={PUESTO_OPTIONS}
+            />
+          </div>
+
+          {DESIGN_PUESTOS.includes(addModal.puesto) ? (
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Área</label>
+              <input type="text" className={styles.textInputDisabled} value="Diseño" disabled />
+              <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: 'var(--space-1)' }}>
+                El departamento de Diseño no forma parte de las áreas de manufactura.
+              </p>
+            </div>
+          ) : (
+            <div className={styles.formGroup}>
+              <Select
+                label="Área de Origen"
+                value={addModal.areaId}
+                onChange={(e) => setAddModal((prev) => ({ ...prev, areaId: e.target.value }))}
+                required
+                options={[
+                  { value: '', label: 'Selecciona...' },
+                  ...dynamicAreas.map((a) => ({ value: a.id, label: a.name })),
+                ]}
+              />
+            </div>
+          )}
+
+          <div className={styles.modalActions} style={{ marginTop: 'var(--space-4)' }}>
+            <Button type="button" variant="secondary" onClick={handleCloseAddModal}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="primary" isLoading={isAddingOperario}>
+              Agregar Operario
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* MODAL: EDITAR DATOS DE UN OPERARIO */}
+      <Modal isOpen={editModal.isOpen} onClose={handleCloseEditModal} title="✏️ Editar Operario">
+        <form onSubmit={handleSubmitEditOperario}>
+          <div className={styles.formGroup}>
+            <label className={styles.label}>Nombre Completo</label>
+            <input
+              type="text"
+              className={styles.textInput}
+              value={editModal.name}
+              onChange={(e) => setEditModal((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="Ej. Juan Pérez López"
+              required
+              autoFocus
+            />
+          </div>
+
+          <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 'var(--space-2)' }}>
+            El área, horario y disponibilidad se editan desde sus propios botones ("🔁 Mover", "🕒 Jornada", "🩺 Estado").
+          </p>
+
+          <div className={styles.modalActions} style={{ marginTop: 'var(--space-4)' }}>
+            <Button type="button" variant="secondary" onClick={handleCloseEditModal}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="primary" isLoading={isEditingOperario}>
+              Guardar Cambios
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* MODAL: CONFIRMACIÓN DE ELIMINACIÓN DE OPERARIO */}
       {deleteConfirmation.isOpen && (

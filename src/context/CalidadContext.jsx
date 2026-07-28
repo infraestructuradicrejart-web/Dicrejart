@@ -30,6 +30,7 @@ import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { AuthContext } from './AuthContext';
 import { uploadEvidencePhotos, deleteEvidencePhotos, withTimeout } from '../utils/evidenceStorage';
 import { logAudit } from '../utils/auditLog';
+import { getTodayLocalDateStr } from '../utils/dateUtils';
 
 export const CalidadContext = createContext(null);
 
@@ -297,41 +298,166 @@ export const CalidadProvider = ({ children }) => {
   }, [updateGameQualityDefectFromHistory, user]);
 
   /**
-   * Crea o actualiza la evaluación de desempeño de un colaborador
-   * @returns {boolean} true si ya existía una evaluación previa (fue actualizada)
+   * Crea o actualiza la evaluación de desempeño de un colaborador para un bloque y fecha específica.
+   * Si se modifica un bloque previo o fecha pasada, registra el evento con timestamp y autor en la bitácora.
+   * @param {string} operarioId
+   * @param {string} blockId
+   * @param {number} score
+   * @param {string} notes
+   * @param {string} targetDate - Fecha YYYY-MM-DD de la evaluación
+   * @param {boolean} isPastBlockEdit - Indica si fue una edición sobre un bloque/fecha pasada
+   * @returns {Promise<{ok: boolean, wasUpdate: boolean, isPastBlockEdit: boolean}>}
    */
   const saveEvaluacion = useCallback(
-    (operarioId, blockId, score, notes) => {
-      if (!db) return false;
-      const existing = evaluaciones.find(
-        (ev) => ev.operarioId === operarioId && ev.blockId === blockId
-      );
+    async (operarioId, blockId, score, notes, targetDate = null, isPastBlockEdit = false) => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
 
-      const runSave = async () => {
-        try {
-          if (existing) {
-            await updateDoc(doc(db, 'evaluaciones', existing.id), { score, notes });
+      const evalDate = targetDate || getTodayLocalDateStr();
+      const existing = evaluaciones.find((ev) => {
+        if (ev.operarioId !== operarioId || ev.blockId !== blockId) return false;
+        const evDate = ev.date || (ev.createdAt ? ev.createdAt.split('T')[0] : null);
+        return evDate ? evDate === evalDate : true;
+      });
+
+      const timestamp = new Date().toISOString();
+      const editorName = user?.name || 'Usuario';
+      const editorRole = user?.roleType || 'operador';
+
+      try {
+        if (existing) {
+          const modRecord = {
+            modifiedBy: editorName,
+            modifiedByRole: editorRole,
+            modifiedAt: timestamp,
+            previousScore: existing.score,
+            newScore: score,
+            previousNotes: existing.notes || '',
+            newNotes: notes || '',
+            isPastBlockEdit,
+          };
+          const updatedHistory = [...(existing.history || []), modRecord];
+
+          await updateDoc(doc(db, 'evaluaciones', existing.id), {
+            score,
+            notes,
+            date: evalDate,
+            updatedAt: timestamp,
+            updatedBy: editorName,
+            history: updatedHistory,
+          });
+
+          if (isPastBlockEdit) {
+            logAudit({
+              user,
+              module: 'calidad',
+              action: '⚠️ Modificó bloque de tiempo previo en Evaluación de Desempeño',
+              details: `Operario: ${operarioId}, Bloque: ${blockId}, Fecha: ${evalDate}, Score: ${existing.score} -> ${score}, Autor: ${editorName} (${editorRole})`,
+            });
           } else {
-            const id = `EV-${Date.now()}`;
-            await setDoc(doc(db, 'evaluaciones', id), {
-              id,
-              operarioId,
-              blockId,
-              score,
-              notes,
+            logAudit({
+              user,
+              module: 'calidad',
+              action: 'Actualizó evaluación de desempeño',
+              details: `Operario: ${operarioId}, Bloque: ${blockId}, Score: ${score}`,
             });
           }
-          logAudit({ user, module: 'calidad', action: 'Guardó evaluación de desempeño', details: `Operario ${operarioId}, bloque ${blockId}, score ${score}` });
-        } catch (error) {
-          console.error('Error al guardar evaluación en Firestore:', error);
-        }
-      };
+          return { ok: true, wasUpdate: true, isPastBlockEdit };
+        } else {
+          const id = `EV-${Date.now()}`;
+          const newDoc = {
+            id,
+            operarioId,
+            blockId,
+            score,
+            notes,
+            date: evalDate,
+            createdAt: timestamp,
+            createdBy: editorName,
+            createdByRole: editorRole,
+            history: isPastBlockEdit
+              ? [
+                  {
+                    modifiedBy: editorName,
+                    modifiedByRole: editorRole,
+                    modifiedAt: timestamp,
+                    previousScore: null,
+                    newScore: score,
+                    previousNotes: '',
+                    newNotes: notes,
+                    isPastBlockEdit: true,
+                  },
+                ]
+              : [],
+          };
+          await setDoc(doc(db, 'evaluaciones', id), newDoc);
 
-      runSave();
-      return Boolean(existing);
+          if (isPastBlockEdit) {
+            logAudit({
+              user,
+              module: 'calidad',
+              action: '⚠️ Registró evaluación retroactiva en bloque de tiempo previo',
+              details: `Operario: ${operarioId}, Bloque: ${blockId}, Fecha: ${evalDate}, Score: ${score}, Autor: ${editorName} (${editorRole})`,
+            });
+          } else {
+            logAudit({
+              user,
+              module: 'calidad',
+              action: 'Registró evaluación de desempeño',
+              details: `Operario: ${operarioId}, Bloque: ${blockId}, Score: ${score}`,
+            });
+          }
+          return { ok: true, wasUpdate: false, isPastBlockEdit };
+        }
+      } catch (error) {
+        console.error('Error al guardar evaluación en Firestore:', error);
+        return { ok: false, error: error.message };
+      }
     },
     [evaluaciones, user]
   );
+
+  /**
+   * Busca evaluaciones de desempeño ("calificaciones") cuyo operarioId ya no exista en
+   * el padrón actual de operarios — huérfanas de un colaborador eliminado antes de que
+   * `deleteOperario`/`clearAllOperarios` limpiaran también la colección "evaluaciones".
+   * No borra nada por sí sola: solo reporta lo que encontró para revisar antes de limpiar.
+   * Recorre TODA la colección (sin el límite en memoria de `evaluacionesLimit`), ya que
+   * es una auditoría puntual, no la suscripción en vivo de la app.
+   */
+  const findOrphanedEvaluaciones = useCallback(async (validOperarioIds) => {
+    if (!db) return { ok: false, error: 'Firebase no inicializado' };
+    try {
+      const snap = await getDocs(collection(db, 'evaluaciones'));
+      const validSet = new Set(validOperarioIds);
+      const orphaned = [];
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (!validSet.has(data.operarioId)) {
+          orphaned.push({ id: docSnap.id, operarioId: data.operarioId, blockId: data.blockId, score: data.score });
+        }
+      });
+      return { ok: true, orphaned };
+    } catch (error) {
+      console.error('Error al buscar evaluaciones huérfanas:', error);
+      return { ok: false, error: error.message };
+    }
+  }, []);
+
+  /**
+   * Elimina definitivamente las evaluaciones huérfanas ya identificadas por
+   * findOrphanedEvaluaciones (recibe los ids de esos documentos).
+   */
+  const deleteOrphanedEvaluaciones = useCallback(async (evaluacionIds) => {
+    if (!db) return { ok: false, error: 'Firebase no inicializado' };
+    try {
+      await Promise.all(evaluacionIds.map((id) => deleteDoc(doc(db, 'evaluaciones', id))));
+      logAudit({ user, module: 'calidad', action: 'Limpió evaluaciones huérfanas', details: `${evaluacionIds.length} eliminada(s)` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al eliminar evaluaciones huérfanas:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [user]);
 
   const value = useMemo(
     () => ({
@@ -343,8 +469,21 @@ export const CalidadProvider = ({ children }) => {
       saveEvaluacion,
       addEvidenceToInspeccion,
       removeEvidenceFromInspeccion,
+      findOrphanedEvaluaciones,
+      deleteOrphanedEvaluaciones,
     }),
-    [inspecciones, evaluaciones, addInspeccion, editInspeccion, deleteInspeccion, saveEvaluacion, addEvidenceToInspeccion, removeEvidenceFromInspeccion]
+    [
+      inspecciones,
+      evaluaciones,
+      addInspeccion,
+      editInspeccion,
+      deleteInspeccion,
+      saveEvaluacion,
+      addEvidenceToInspeccion,
+      removeEvidenceFromInspeccion,
+      findOrphanedEvaluaciones,
+      deleteOrphanedEvaluaciones,
+    ]
   );
 
   return <CalidadContext.Provider value={value}>{children}</CalidadContext.Provider>;

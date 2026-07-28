@@ -25,6 +25,7 @@ import { auth, db } from '../config/firebase';
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { AuthContext } from './AuthContext';
 import { logAudit } from '../utils/auditLog';
+import { uploadAttachments, deleteEvidencePhotos } from '../utils/evidenceStorage';
 
 export const ActividadesContext = createContext(null);
 
@@ -75,15 +76,44 @@ export const ActividadesProvider = ({ children }) => {
   }, [actividadesLimit]);
 
   /**
-   * Registra una nueva actividad operativa en Firestore
+   * Registra una nueva actividad operativa en Firestore.
+   * - `data.attachments` (si viene): archivos crudos (File) de referencia general (ej.
+   *   planos de Arquitectura) — se suben a Storage y solo se guarda su referencia
+   *   ({url, path, name}).
+   * - `data.links`: arreglo simple de URLs de referencia (sin subir nada).
+   * - `data.modelFile` (opcional, un solo File): el archivo del modelo 3D/renderizable
+   *   de Diseño (ej. SolidWorks) — se sube aparte de `attachments` porque es el que
+   *   abre el botón "🎬 Abrir Modelo" del bloque, no un adjunto de referencia más.
+   * - `data.modelLink` (opcional, string): alternativa a subir el archivo — un link
+   *   (ej. Drive) al mismo modelo, para cuando se comparte por fuera del sistema.
    */
   const addActividad = useCallback(async (data) => {
-    if (!db) return;
+    if (!db) return null;
     const id = `ACT-${Date.now()}`;
+    const { attachments = [], links = [], modelFile = null, modelLink = null, ...restData } = data;
+
+    let uploadedAttachments = [];
+    let uploadedModelFile = null;
+    try {
+      uploadedAttachments = await uploadAttachments('actividades', id, attachments);
+      if (modelFile) {
+        const [uploaded] = await uploadAttachments('actividades', id, [modelFile]);
+        uploadedModelFile = uploaded || null;
+      }
+    } catch (error) {
+      console.error('Error al subir los adjuntos de la actividad:', error);
+      deleteEvidencePhotos(uploadedAttachments).catch(() => {});
+      return null;
+    }
+
     const created = {
       id,
       status: 'pendiente',
-      ...data,
+      attachments: uploadedAttachments,
+      links: links.filter(Boolean),
+      modelFile: uploadedModelFile,
+      modelLink: modelLink?.trim() || null,
+      ...restData,
     };
     try {
       await setDoc(doc(db, 'actividades', id), created);
@@ -91,7 +121,25 @@ export const ActividadesProvider = ({ children }) => {
       return id;
     } catch (error) {
       console.error('Error al registrar actividad en Firestore:', error);
+      deleteEvidencePhotos([...uploadedAttachments, uploadedModelFile].filter(Boolean)).catch(() => {});
       return null;
+    }
+  }, [user]);
+
+  /**
+   * Edita campos arbitrarios de una actividad ya existente (ej. reasignar responsable
+   * en lote desde un Bloque del Editor Visual). No maneja adjuntos — esos se suben con
+   * `addActividad` al crearla.
+   */
+  const updateActividad = useCallback(async (activityId, updates) => {
+    if (!db) return { ok: false, error: 'Firebase no inicializado' };
+    try {
+      await updateDoc(doc(db, 'actividades', activityId), updates);
+      logAudit({ user, module: 'actividades', action: 'Editó una actividad', details: activityId });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al editar actividad en Firestore:', error);
+      return { ok: false, error: error.message };
     }
   }, [user]);
 
@@ -113,7 +161,7 @@ export const ActividadesProvider = ({ children }) => {
   }, [actividades, user]);
 
   /**
-   * Elimina una actividad si su estatus es 'pendiente'
+   * Elimina una actividad si su estatus es 'pendiente', junto con sus adjuntos en Storage
    */
   const deleteActividad = useCallback(async (activityId) => {
     if (!db) return { ok: false, error: 'Firebase no inicializado' };
@@ -127,16 +175,21 @@ export const ActividadesProvider = ({ children }) => {
     try {
       await deleteDoc(doc(db, 'actividades', activityId));
       logAudit({ user, module: 'actividades', action: 'Eliminó una actividad', details: act.title || activityId });
-      return { ok: true };
     } catch (error) {
       console.error('Error al eliminar actividad de Firestore:', error);
       return { ok: false, error: error.message };
     }
+
+    const filesToClean = [...(act.attachments || []), act.modelFile].filter(Boolean);
+    if (filesToClean.length) {
+      deleteEvidencePhotos(filesToClean).catch(() => {});
+    }
+    return { ok: true };
   }, [actividades, user]);
 
   const value = useMemo(
-    () => ({ actividades, addActividad, advanceStatus, deleteActividad }),
-    [actividades, addActividad, advanceStatus, deleteActividad]
+    () => ({ actividades, addActividad, updateActividad, advanceStatus, deleteActividad }),
+    [actividades, addActividad, updateActividad, advanceStatus, deleteActividad]
   );
 
   return <ActividadesContext.Provider value={value}>{children}</ActividadesContext.Provider>;

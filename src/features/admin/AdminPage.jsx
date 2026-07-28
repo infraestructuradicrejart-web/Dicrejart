@@ -17,11 +17,13 @@ import Badge from '../../components/ui/Badge';
 import Modal from '../../components/ui/Modal';
 import useToast from '../../hooks/useToast';
 import useOperarios from '../../hooks/useOperarios';
+import useCalidad from '../../hooks/useCalidad';
 import useAuth from '../../hooks/useAuth';
 import useConfig from '../../hooks/useConfig';
-import { ROLE_TYPES } from '../../data/usersData';
+import { ROLE_TYPES, ROLE_TYPE_LABELS } from '../../data/usersData';
 import useAreas from '../../hooks/useAreas';
 import PageHeader from '../../components/ui/PageHeader';
+import { triggerDailyRHNotification } from '../../services/rhNotificationService';
 import styles from './AdminPage.module.css';
 
 /**
@@ -35,21 +37,14 @@ const EMPTY_USER_FORM = {
   roleType: ROLE_TYPES.ENCARGADO_AREA,
   areaId: '',
   areaIds: [],
+  // Solo relevante para Diseñador/Arquitecto: id del registro del padrón de Operarios
+  // (área "Diseño") al que se vincula esta cuenta, para poder filtrar sus tareas.
+  operarioId: '',
   status: 'activo',
 };
 
-/**
- * Etiquetas legibles para cada tipo de rol
- * @constant
- */
-const ROLE_TYPE_LABELS = {
-  [ROLE_TYPES.ADMIN]: 'Administrador',
-  [ROLE_TYPES.CALIDAD]: 'Inspector de Calidad',
-  [ROLE_TYPES.ENCARGADO_AREA]: 'Encargado de Área',
-  [ROLE_TYPES.SUPERVISOR_AREA]: 'Supervisor de Área',
-  [ROLE_TYPES.DIRECCION]: 'Dirección',
-  [ROLE_TYPES.COMPRAS]: 'Compras',
-};
+/** roleTypes que requieren vincularse a un registro del padrón de Operarios */
+const DESIGN_ROLE_TYPES = [ROLE_TYPES.DISENADOR, ROLE_TYPES.ARQUITECTO];
 
 /**
  * Calcula el nombre de rol legible en función del roleType y su(s) área(s)
@@ -75,6 +70,8 @@ const computeRoleLabel = (roleType, areaId, areaIds, dynamicAreas) => {
 
   if (roleType === ROLE_TYPES.DIRECCION) return 'Dirección';
   if (roleType === ROLE_TYPES.COMPRAS) return 'Compras';
+  if (roleType === ROLE_TYPES.DISENADOR) return 'Diseñador';
+  if (roleType === ROLE_TYPES.ARQUITECTO) return 'Arquitecto';
 
   return 'Usuario';
 };
@@ -104,11 +101,17 @@ const AdminPage = () => {
   // ============================================
   // ESTADO
   // ============================================
-  const { blockDuration, updateBlockDuration } = useOperarios();
+  const { operarios, blockDuration, updateBlockDuration } = useOperarios();
+  const { findOrphanedEvaluaciones, deleteOrphanedEvaluaciones } = useCalidad();
   const { users, addUser, updateUser, deleteUser, resetUserPassword } = useAuth();
   const { limits, updateLimit, generalConfig, updateGeneralConfig, auditLog } = useConfig();
   const { areas: dynamicAreas, addArea, updateArea, deleteArea } = useAreas();
   const toast = useToast();
+
+  // Auditoría manual de evaluaciones huérfanas (colaboradores eliminados cuyas
+  // calificaciones de desempeño quedaron en Firestore antes de que deleteOperario
+  // empezara a limpiarlas). status: 'idle' | 'loading' | 'done'
+  const [orphanCheck, setOrphanCheck] = useState({ status: 'idle', orphaned: [] });
 
   /** Etiquetas legibles para cada límite dinámico de historial (colecciones tipo bitácora) */
   const LIMIT_FIELDS = [
@@ -161,6 +164,9 @@ const AdminPage = () => {
   const [areaForm, setAreaForm] = useState({ id: '', name: '' });
   const [deleteAreaConfirm, setDeleteAreaConfirm] = useState({ isOpen: false, area: null });
 
+  // Modal de vista previa de Notificaciones a RH
+  const [rhPreviewModal, setRhPreviewModal] = useState({ isOpen: false, notifRecord: null });
+
   // ============================================
   // HANDLERS - CONFIGURACIÓN
   // ============================================
@@ -174,6 +180,39 @@ const AdminPage = () => {
 
   const handleToleranceChange = (e) => {
     updateGeneralConfig('qualityTolerance', Number(e.target.value));
+  };
+
+  // ============================================
+  // HANDLERS - AUDITORÍA DE DATOS HUÉRFANOS
+  // ============================================
+  const handleCheckOrphanedEvaluaciones = async () => {
+    setOrphanCheck({ status: 'loading', orphaned: [] });
+    const validIds = operarios.map((op) => op.id);
+    const result = await findOrphanedEvaluaciones(validIds);
+
+    if (!result.ok) {
+      toast.danger(result.error || 'No se pudo revisar las evaluaciones.');
+      setOrphanCheck({ status: 'idle', orphaned: [] });
+      return;
+    }
+
+    setOrphanCheck({ status: 'done', orphaned: result.orphaned });
+    if (result.orphaned.length === 0) {
+      toast.success('✅ No se encontró ninguna calificación de un colaborador eliminado. Todo el historial corresponde a operarios activos en el padrón.');
+    } else {
+      toast.warning(`⚠️ Se encontraron ${result.orphaned.length} calificación(es) de colaboradores que ya no existen en el padrón.`);
+    }
+  };
+
+  const handleCleanOrphanedEvaluaciones = async () => {
+    const ids = orphanCheck.orphaned.map((o) => o.id);
+    const result = await deleteOrphanedEvaluaciones(ids);
+    if (result.ok) {
+      toast.success(`🧹 ${ids.length} calificación(es) huérfana(s) eliminada(s).`);
+      setOrphanCheck({ status: 'done', orphaned: [] });
+    } else {
+      toast.danger(result.error || 'No se pudo completar la limpieza.');
+    }
   };
 
   // ============================================
@@ -288,6 +327,7 @@ const AdminPage = () => {
       roleType: usr.roleType,
       areaId: usr.areaId || '',
       areaIds: usr.areaIds || [],
+      operarioId: usr.operarioId || '',
       status: usr.status,
     });
     setUserModal({ isOpen: true, mode: 'edit', editingId: usr.id });
@@ -302,10 +342,11 @@ const AdminPage = () => {
     const { name, value } = e.target;
     setUserForm((prev) => {
       const updated = { ...prev, [name]: value };
-      // Al cambiar de rol, limpiar los campos de área que ya no aplican
+      // Al cambiar de rol, limpiar los campos de área/vínculo que ya no aplican
       if (name === 'roleType') {
         updated.areaId = '';
         updated.areaIds = [];
+        updated.operarioId = '';
       }
       return updated;
     });
@@ -336,6 +377,10 @@ const AdminPage = () => {
       toast.danger('Selecciona al menos un área para el Supervisor.');
       return;
     }
+    if (DESIGN_ROLE_TYPES.includes(userForm.roleType) && !userForm.operarioId) {
+      toast.danger('Vincula esta cuenta a un registro del padrón de Operarios (Diseño).');
+      return;
+    }
 
     const payload = {
       name: userForm.name,
@@ -345,6 +390,7 @@ const AdminPage = () => {
       role: computeRoleLabel(userForm.roleType, userForm.areaId, userForm.areaIds, dynamicAreas),
       areaId: userForm.roleType === ROLE_TYPES.ENCARGADO_AREA ? userForm.areaId : null,
       areaIds: userForm.roleType === ROLE_TYPES.SUPERVISOR_AREA ? userForm.areaIds : undefined,
+      operarioId: DESIGN_ROLE_TYPES.includes(userForm.roleType) ? userForm.operarioId : null,
       status: userForm.status,
     };
 
@@ -476,6 +522,100 @@ const AdminPage = () => {
                     { value: 3, label: 'Cada 3 Horas (Rápido)' },
                   ]}
                 />
+              </div>
+
+              {/* Opción RH: Configuración Notificaciones a RH (10:00 AM) */}
+              <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-3)', backgroundColor: 'var(--color-gray-50)', borderRadius: '8px', border: '1px solid var(--color-gray-200)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div>
+                    <strong style={{ fontSize: '14px', color: 'var(--color-dark)' }}>📧 Notificación Diaria a Recursos Humanos (RH)</strong>
+                    <p style={{ fontSize: '12px', color: 'var(--color-gray-600)', margin: '2px 0 0 0' }}>
+                      Envía un reporte diario automático a las 10:00 AM con el personal ausente/faltante.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${generalConfig.notificarFaltasRH !== false ? styles.toggleActive : ''}`}
+                    onClick={() => {
+                      const nextVal = generalConfig.notificarFaltasRH === false;
+                      updateGeneralConfig('notificarFaltasRH', nextVal);
+                      toast.info(nextVal ? 'Notificaciones diarias a RH activadas.' : 'Notificaciones a RH desactivadas.');
+                    }}
+                  >
+                    <span className={styles.toggleKnob} />
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: '10px', marginTop: '10px' }}>
+                  <div>
+                    <label htmlFor="email-rh-input" style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--color-dark)' }}>
+                      Correo electrónico de Recursos Humanos:
+                    </label>
+                    <input
+                      id="email-rh-input"
+                      type="email"
+                      placeholder="ej. recursoshumanos@dicrejart.com (Por definir)"
+                      value={generalConfig.emailRH || ''}
+                      onChange={(e) => updateGeneralConfig('emailRH', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '6px 10px',
+                        fontSize: '13px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-gray-300)',
+                        marginTop: '4px'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="hora-rh-input" style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--color-dark)' }}>
+                      Hora Envío:
+                    </label>
+                    <input
+                      id="hora-rh-input"
+                      type="time"
+                      value={generalConfig.horaNotificacionRH || '10:00'}
+                      onChange={(e) => updateGeneralConfig('horaNotificacionRH', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '6px 8px',
+                        fontSize: '13px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-gray-300)',
+                        marginTop: '4px',
+                        textAlign: 'center'
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', paddingTop: '8px', borderTop: '1px dashed var(--color-gray-300)' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>
+                    Último envío: {generalConfig.lastRHNotificationDate ? `Enviado hoy (${generalConfig.lastRHNotificationDate})` : 'Pendiente hoy'}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={async () => {
+                      const res = await triggerDailyRHNotification({
+                        operarios,
+                        generalConfig,
+                        updateGeneralConfig,
+                        force: true,
+                        user
+                      });
+                      if (res && res.ok) {
+                        toast.success(`📧 Reporte de RH preparado correctamente (${res.absentCount} personal ausente). Destinatario: ${res.emailTarget}.`);
+                        setRhPreviewModal({ isOpen: true, notifRecord: res.record });
+                      } else {
+                        toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+                      }
+                    }}
+                  >
+                    📧 Probar / Enviar Ahora
+                  </Button>
+                </div>
               </div>
 
               {/* Opción 5: Límites dinámicos de historial en memoria */}
@@ -638,6 +778,46 @@ const AdminPage = () => {
               </table>
             </div>
           </Card>
+
+          {/* AUDITORÍA DE DATOS HUÉRFANOS */}
+          <Card variant="default" style={{ marginTop: 'var(--space-5)' }}>
+            <h3 className={styles.sectionTitle}>🧹 Auditoría de Datos Huérfanos</h3>
+            <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', margin: 'var(--space-2) 0 var(--space-3)' }}>
+              Revisa que no queden calificaciones de desempeño ("evaluaciones") de colaboradores que ya fueron
+              eliminados del padrón de Operarios.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleCheckOrphanedEvaluaciones}
+              isLoading={orphanCheck.status === 'loading'}
+            >
+              🔍 Buscar Calificaciones Huérfanas
+            </Button>
+
+            {orphanCheck.status === 'done' && orphanCheck.orphaned.length === 0 && (
+              <p style={{ marginTop: 'var(--space-3)', fontSize: '13px', color: 'var(--color-success)' }}>
+                ✅ No se encontró ninguna calificación de un colaborador eliminado.
+              </p>
+            )}
+
+            {orphanCheck.status === 'done' && orphanCheck.orphaned.length > 0 && (
+              <div style={{ marginTop: 'var(--space-3)' }}>
+                <p style={{ fontSize: '13px', color: 'var(--color-alert)', marginBottom: 'var(--space-2)' }}>
+                  ⚠️ {orphanCheck.orphaned.length} calificación(es) pertenecen a un colaborador que ya no existe:
+                </p>
+                <ul style={{ fontSize: '12px', color: 'var(--color-gray-600)', marginBottom: 'var(--space-3)', paddingLeft: 'var(--space-4)' }}>
+                  {orphanCheck.orphaned.slice(0, 10).map((o) => (
+                    <li key={o.id}>Operario {o.operarioId} — bloque {o.blockId} — calificación {o.score}/10</li>
+                  ))}
+                  {orphanCheck.orphaned.length > 10 && <li>… y {orphanCheck.orphaned.length - 10} más.</li>}
+                </ul>
+                <Button variant="danger" size="sm" onClick={handleCleanOrphanedEvaluaciones}>
+                  🗑️ Eliminar {orphanCheck.orphaned.length} Calificación(es) Huérfana(s)
+                </Button>
+              </div>
+            )}
+          </Card>
         </motion.div>
       </div>
 
@@ -750,9 +930,42 @@ const AdminPage = () => {
                 { value: ROLE_TYPES.SUPERVISOR_AREA, label: 'Supervisor de Área' },
                 { value: ROLE_TYPES.DIRECCION, label: 'Dirección' },
                 { value: ROLE_TYPES.COMPRAS, label: 'Compras' },
+                { value: ROLE_TYPES.DISENADOR, label: 'Diseñador' },
+                { value: ROLE_TYPES.ARQUITECTO, label: 'Arquitecto' },
               ]}
             />
           </div>
+
+          {/* Vínculo a un registro del padrón de Operarios (Diseño), solo para
+              Diseñador/Arquitecto — necesario para filtrar sus tareas asignadas */}
+          {DESIGN_ROLE_TYPES.includes(userForm.roleType) && (() => {
+            const puesto = userForm.roleType === ROLE_TYPES.DISENADOR ? 'disenador' : 'arquitecto';
+            const linkedElsewhere = new Set(
+              users.filter((u) => u.operarioId && u.id !== userModal.editingId).map((u) => u.operarioId)
+            );
+            const eligibleOperarios = operarios.filter(
+              (op) => op.puesto === puesto && !linkedElsewhere.has(op.id)
+            );
+            return (
+              <div className={styles.formGroup}>
+                <Select
+                  label="Vincular a Registro de Operarios (Diseño)"
+                  name="operarioId"
+                  value={userForm.operarioId}
+                  onChange={handleUserFormChange}
+                  required
+                  placeholder="-- Selecciona el registro --"
+                  options={eligibleOperarios.map((op) => ({ value: op.id, label: `${op.name} (${op.id})` }))}
+                />
+                {eligibleOperarios.length === 0 && (
+                  <p style={{ fontSize: '11px', color: 'var(--color-alert)', marginTop: 'var(--space-1)' }}>
+                    No hay registros de Operarios con puesto &ldquo;{ROLE_TYPE_LABELS[userForm.roleType]}&rdquo; disponibles
+                    para vincular. Da de alta primero a esta persona desde Operarios → Nuevo Operario.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Área única, solo para Encargado de Área */}
           {userForm.roleType === ROLE_TYPES.ENCARGADO_AREA && (
@@ -967,7 +1180,36 @@ const AdminPage = () => {
         </Modal>
       )}
 
-      {/* MODAL: CONFIRMACIÓN DE RESTABLECIMIENTO DE SISTEMA */}
+      {/* MODAL: VISTA PREVIA DE NOTIFICACIÓN A RH (10:00 AM) */}
+      {rhPreviewModal.isOpen && rhPreviewModal.notifRecord && (
+        <Modal
+          isOpen={rhPreviewModal.isOpen}
+          onClose={() => setRhPreviewModal({ isOpen: false, notifRecord: null })}
+          title="📧 Reporte Diario para Recursos Humanos (RH)"
+          size="lg"
+        >
+          <div style={{ padding: '4px 0' }}>
+            <div style={{ padding: '12px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '16px', fontSize: '13px' }}>
+              <p style={{ margin: '0 0 4px 0' }}><strong>Destinatario RH:</strong> <span style={{ color: '#2563eb', fontWeight: 'bold' }}>{rhPreviewModal.notifRecord.emailRH}</span></p>
+              <p style={{ margin: '0 0 4px 0' }}><strong>Horario del corte:</strong> 10:00 AM ({rhPreviewModal.notifRecord.date})</p>
+              <p style={{ margin: 0 }}><strong>Total Personal Ausente:</strong> <Badge variant={rhPreviewModal.notifRecord.absentCount > 0 ? 'danger' : 'success'}>{rhPreviewModal.notifRecord.absentCount} colaborador(es)</Badge></p>
+            </div>
+
+            <div style={{ border: '1px solid #cbd5e1', borderRadius: '8px', overflow: 'hidden', maxHeight: '420px', overflowY: 'auto' }}>
+              <div dangerouslySetInnerHTML={{ __html: rhPreviewModal.notifRecord.bodyHtml }} />
+            </div>
+
+            <div className={styles.formActions} style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
+                ✅ Registro guardado en la bitácora de notificaciones Firestore.
+              </span>
+              <Button type="button" variant="primary" size="md" onClick={() => setRhPreviewModal({ isOpen: false, notifRecord: null })}>
+                Entendido / Cerrar
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </motion.div>
   );
 };

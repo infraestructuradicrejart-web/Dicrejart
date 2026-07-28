@@ -33,6 +33,12 @@ import styles from './EditorVisualPage.module.css';
 const NODE_WIDTH = 214;
 const NODE_HEIGHT = 80;
 
+/** Límites de zoom del lienzo (40%–200%), en pasos de 10 puntos porcentuales */
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 2;
+const ZOOM_STEP = 0.1;
+const clampZoom = (z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z * 100) / 100));
+
 /** Tipos de nodo disponibles, con su color de marca y si permiten crear un registro nuevo */
 const NODE_TYPES = {
   proyecto: { icon: '🗂️', label: 'Proyecto', colorVar: 'var(--color-secondary)', allowCreate: true },
@@ -81,7 +87,7 @@ const bezierPath = (p1, p2) => {
  */
 const EditorVisualPage = ({ standalone = false }) => {
   const { proyectos, juegos, addProject, addGame } = useProduccion();
-  const { actividades, addActividad, deleteActividad } = useActividades();
+  const { actividades, addActividad, updateActividad, deleteActividad } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
   const allBlockAreas = useMemo(() => [...dynamicAreas, ...NON_PRODUCTION_AREAS], [dynamicAreas]);
@@ -137,11 +143,27 @@ const EditorVisualPage = ({ standalone = false }) => {
   const [deleteBlockConfirm, setDeleteBlockConfirm] = useState({ isOpen: false, nodeId: null });
 
   const canvasWrapRef = useRef(null);
+  const worldRef = useRef(null);
   const dragStateRef = useRef(null);
   const connectStateRef = useRef(null);
   const panStateRef = useRef(null);
   const [isPanning, setIsPanning] = useState(false);
   const [previewWire, setPreviewWire] = useState(null);
+
+  // ============================================
+  // ZOOM DEL LIENZO
+  // ============================================
+  const [zoom, setZoom] = useState(1);
+  // Espejo en refs de "zoom"/"worldOffset": el listener nativo de rueda del mouse (ver
+  // más abajo) se registra una sola vez al montar, así que no puede depender de un
+  // closure de React que quede desactualizado — lee siempre el valor más reciente
+  // desde aquí en vez de necesitar volver a suscribirse en cada cambio.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const worldOffsetRef = useRef(worldOffset);
+  worldOffsetRef.current = worldOffset;
+  const [isExporting, setIsExporting] = useState(false);
+  const [nodeSearch, setNodeSearch] = useState('');
 
   // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE
@@ -230,7 +252,15 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (node.type === 'bloque') {
         const areaName = allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId;
         const count = node.activityIds?.length || 0;
-        return `${areaName} · ${count} actividad${count === 1 ? '' : 'es'}`;
+        const colabEdge = edges.find(
+          (e) =>
+            (e.from === node.id && findNode(e.to)?.type === 'colaborador') ||
+            (e.to === node.id && findNode(e.from)?.type === 'colaborador')
+        );
+        const colabName = colabEdge
+          ? nodeTitle(findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to))
+          : null;
+        return `${areaName} · ${count} actividad${count === 1 ? '' : 'es'}${colabName ? ` · 👷 ${colabName}` : ' · sin colaborador conectado'}`;
       }
       if (node.draft) return '🆕 Aún no guardado en el sistema';
       const entity = getLinkedEntity(node);
@@ -255,7 +285,7 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (node.type === 'area') return 'Área de manufactura';
       return '';
     },
-    [getLinkedEntity, getBlockedAreas, operarios, dynamicAreas, allBlockAreas]
+    [getLinkedEntity, getBlockedAreas, operarios, dynamicAreas, allBlockAreas, edges, findNode, nodeTitle]
   );
 
   // ============================================
@@ -369,7 +399,10 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const localPoint = (e) => {
     const rect = canvasWrapRef.current.getBoundingClientRect();
-    return { x: e.clientX - rect.left - worldOffset.x, y: e.clientY - rect.top - worldOffset.y };
+    return {
+      x: (e.clientX - rect.left - worldOffset.x) / zoom,
+      y: (e.clientY - rect.top - worldOffset.y) / zoom,
+    };
   };
 
   const handleCanvasMouseDown = (e) => {
@@ -381,8 +414,11 @@ const EditorVisualPage = ({ standalone = false }) => {
   const handleWindowMouseMove = (e) => {
     if (dragStateRef.current) {
       const { id, startMouseX, startMouseY, startNodeX, startNodeY } = dragStateRef.current;
-      const dx = e.clientX - startMouseX;
-      const dy = e.clientY - startMouseY;
+      // El arrastre se mide en píxeles de pantalla, pero la posición del nodo vive en
+      // coordenadas del "mundo" del lienzo — hay que deshacer el zoom para que el nodo
+      // se mueva a la misma velocidad que el cursor sin importar qué tan acercado esté.
+      const dx = (e.clientX - startMouseX) / zoomRef.current;
+      const dy = (e.clientY - startMouseY) / zoomRef.current;
       setNodes((prev) =>
         prev.map((n) => (n.id === id ? { ...n, x: Math.max(0, startNodeX + dx), y: Math.max(0, startNodeY + dy) } : n))
       );
@@ -448,6 +484,143 @@ const EditorVisualPage = ({ standalone = false }) => {
         saveToFirestore(nodes, edges, latestOffset);
         return latestOffset;
       });
+    }
+  };
+
+  /**
+   * Cambia el zoom manteniendo fijo el punto del lienzo que está bajo (cursorX, cursorY)
+   * en coordenadas de pantalla — igual que Figma/Miro: acercarse con la rueda del mouse
+   * no "salta" la vista, siempre acerca hacia donde apunta el cursor.
+   * El zoom (y el desplazamiento que provoca al anclarse al cursor) es puramente una
+   * preferencia de vista local — igual que "expandedBlocks" más arriba, NO se guarda en
+   * Firestore ni se sincroniza entre colaboradores/ventanas; cada quien ve su propio
+   * acercamiento sin pisar la vista de los demás.
+   */
+  const zoomAtPoint = (deltaZoom, cursorX, cursorY) => {
+    const prevZoom = zoomRef.current;
+    const nextZoom = clampZoom(prevZoom + deltaZoom);
+    if (nextZoom === prevZoom) return;
+    const prevOffset = worldOffsetRef.current;
+    const nextOffset = {
+      x: cursorX - ((cursorX - prevOffset.x) / prevZoom) * nextZoom,
+      y: cursorY - ((cursorY - prevOffset.y) / prevZoom) * nextZoom,
+    };
+    setZoom(nextZoom);
+    setWorldOffset(nextOffset);
+  };
+
+  const handleZoomButton = (delta) => {
+    const rect = canvasWrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    zoomAtPoint(delta, rect.width / 2, rect.height / 2);
+  };
+
+  const handleResetView = () => {
+    setZoom(1);
+    setWorldOffset({ x: 40, y: 30 });
+  };
+
+  // Zoom con Ctrl/Cmd + rueda del mouse. Se registra con addEventListener nativo (no
+  // el onWheel de React) porque React 17+ adjunta los listeners de "wheel" como
+  // pasivos por defecto — preventDefault() ahí no funciona y solo genera un warning en
+  // consola; sin bloquear el evento, el navegador haría zoom de página en vez del lienzo.
+  useEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el) return undefined;
+    const onWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+      zoomAtPoint(delta, e.clientX - rect.left, e.clientY - rect.top);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Reacomoda todos los nodos en la misma cuadrícula ordenada que usa spawnNode al
+   * crearlos, conservando su orden de creación — una forma simple y predecible de
+   * "auto-organizar" sin reinterpretar las relaciones del diagrama.
+   */
+  const handleAutoArrange = () => {
+    if (!canEditDiagram) return;
+    const nextNodes = nodes.map((n, index) => {
+      const column = index % 4;
+      const row = Math.floor(index / 4);
+      return { ...n, x: 40 + column * (NODE_WIDTH + 70), y: 40 + row * (NODE_HEIGHT + 90) };
+    });
+    setNodes(nextNodes);
+    saveToFirestore(nextNodes, edges);
+    toast.success('🧹 Nodos reorganizados en cuadrícula.');
+  };
+
+  // ============================================
+  // BUSCAR Y CENTRAR UN NODO
+  // ============================================
+  const nodeSearchMatches = useMemo(() => {
+    const q = nodeSearch.trim().toLowerCase();
+    if (!q) return [];
+    return nodes.filter((n) => nodeTitle(n).toLowerCase().includes(q)).slice(0, 8);
+  }, [nodeSearch, nodes, nodeTitle]);
+
+  const handleFocusNode = (node) => {
+    const rect = canvasWrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const nodeCenterX = node.x + NODE_WIDTH / 2;
+    const nodeCenterY = node.y + NODE_HEIGHT / 2;
+    setWorldOffset({
+      x: rect.width / 2 - nodeCenterX * zoom,
+      y: rect.height / 2 - nodeCenterY * zoom,
+    });
+    setSelectedNodeId(node.id);
+  };
+
+  // ============================================
+  // EXPORTAR EL DIAGRAMA COMO IMAGEN
+  // ============================================
+  const handleExportDiagram = async () => {
+    if (!worldRef.current || nodes.length === 0) {
+      toast.warning('No hay nodos en el lienzo para exportar.');
+      return;
+    }
+    setIsExporting(true);
+    const prevOffset = worldOffset;
+    const prevZoom = zoom;
+    try {
+      // Se resetea el pan/zoom a (0,0)/100% para capturar el lienzo completo sin
+      // recortes ni desplazamientos, y se restaura la vista original al terminar. Se
+      // esperan dos frames para asegurar que el navegador ya pintó con la transformación
+      // reseteada antes de tomar la captura.
+      setWorldOffset({ x: 0, y: 0 });
+      setZoom(1);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      // Import dinámico: igual que jsPDF/xlsx en otras páginas, html2canvas solo se
+      // descarga cuando realmente se exporta un diagrama.
+      const { default: html2canvas } = await import('html2canvas');
+      const bgColor = getComputedStyle(document.documentElement).getPropertyValue('--color-gray-50').trim() || '#f5f5f7';
+      const canvas = await html2canvas(worldRef.current, {
+        backgroundColor: bgColor || null,
+        width: worldBounds.width,
+        height: worldBounds.height,
+      });
+
+      const projectName = proyectos.find((p) => p.id === proyectoActivoId)?.name || 'diagrama';
+      const fileSafeName = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const link = document.createElement('a');
+      link.download = `dicrejart-editor-visual-${fileSafeName || 'diagrama'}-${new Date().toISOString().split('T')[0]}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+      toast.success('📥 Diagrama exportado como imagen PNG.');
+    } catch (error) {
+      console.error('Error al exportar el diagrama:', error);
+      toast.danger('No se pudo exportar el diagrama.');
+    } finally {
+      setWorldOffset(prevOffset);
+      setZoom(prevZoom);
+      setIsExporting(false);
     }
   };
 
@@ -547,15 +720,47 @@ const EditorVisualPage = ({ standalone = false }) => {
     setNodes((prev) => prev.map((n) => (n.id === nodeId ? { ...n, blockName: value } : n)));
   };
 
-  /** true si el área del bloque es una de las de manufactura (con Operarios reales asignables) */
-  const isProductionArea = (areaId) => dynamicAreas.some((a) => a.id === areaId);
-
   // ---- Crear una actividad NUEVA (real, en Firestore) directamente dentro de un Bloque ----
-  const EMPTY_BLOCK_ACTIVITY = { isOpen: false, blockNodeId: null, title: '', description: '', priority: 'media', dueDate: '', operarioId: '' };
+  // El responsable YA NO se elige a mano por actividad: se toma del Colaborador conectado
+  // al bloque por cable (ver getConnectedColaboradorNode) — así "se asigna la tarea" al
+  // ligar el bloque con su colaborador, no en cada actividad por separado.
+  const EMPTY_BLOCK_ACTIVITY = {
+    isOpen: false,
+    blockNodeId: null,
+    title: '',
+    description: '',
+    priority: 'media',
+    dueDate: '',
+    attachments: [],
+    linksText: '',
+    // "Modelo" es distinto de los adjuntos de referencia de arriba: es el archivo/link
+    // puntual que abre el botón "🎬 Abrir Modelo" del bloque (ver handleCreateBlockActivity)
+    modelFile: null,
+    modelLink: '',
+  };
   const [blockActivityForm, setBlockActivityForm] = useState(EMPTY_BLOCK_ACTIVITY);
+  const [isSavingBlockActivity, setIsSavingBlockActivity] = useState(false);
 
   const openBlockActivityForm = (blockNodeId) => setBlockActivityForm({ ...EMPTY_BLOCK_ACTIVITY, isOpen: true, blockNodeId });
   const closeBlockActivityForm = () => setBlockActivityForm(EMPTY_BLOCK_ACTIVITY);
+
+  const handleBlockActivityFileChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setBlockActivityForm((prev) => ({ ...prev, attachments: [...prev.attachments, ...files] }));
+    e.target.value = '';
+  };
+
+  const handleRemoveBlockActivityFile = (idx) => {
+    setBlockActivityForm((prev) => ({ ...prev, attachments: prev.attachments.filter((_, i) => i !== idx) }));
+  };
+
+  const handleBlockActivityModelFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBlockActivityForm((prev) => ({ ...prev, modelFile: file }));
+    e.target.value = '';
+  };
 
   const handleCreateBlockActivity = async () => {
     const blockNode = findNode(blockActivityForm.blockNodeId);
@@ -563,14 +768,26 @@ const EditorVisualPage = ({ standalone = false }) => {
       toast.danger('Ingresa un título para la actividad.');
       return;
     }
+    const colaboradorNode = getConnectedColaboradorNode(blockNode.id);
+    const links = blockActivityForm.linksText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    setIsSavingBlockActivity(true);
     const newId = await addActividad({
       title: blockActivityForm.title.trim(),
       description: blockActivityForm.description || 'Sin descripción.',
       areaId: blockNode.areaId,
-      operarioId: blockActivityForm.operarioId || null,
+      operarioId: colaboradorNode?.refId || null,
       dueDate: blockActivityForm.dueDate || null,
       priority: blockActivityForm.priority,
+      attachments: blockActivityForm.attachments,
+      links,
+      modelFile: blockActivityForm.modelFile,
+      modelLink: blockActivityForm.modelLink,
     });
+    setIsSavingBlockActivity(false);
     if (!newId) {
       toast.danger('❌ No se pudo crear la actividad. Intenta de nuevo.');
       return;
@@ -613,6 +830,46 @@ const EditorVisualPage = ({ standalone = false }) => {
     );
     setNodes(nextNodes);
     saveToFirestore(nextNodes, edges);
+  };
+
+  /**
+   * Un Bloque se puede conectar (con cable, igual que cualquier otro nodo) a un
+   * Colaborador — esa conexión es lo que determina quién queda como responsable de las
+   * actividades del bloque: no se asigna a mano por actividad, se asigna al ligar el
+   * bloque con el colaborador. Acepta el cable en cualquier dirección (Bloque→Colaborador
+   * o Colaborador→Bloque), según de qué lado lo haya arrastrado quien conecta.
+   */
+  const getConnectedColaboradorNode = (blockNodeId) => {
+    const edge = edges.find(
+      (e) =>
+        (e.from === blockNodeId && findNode(e.to)?.type === 'colaborador') ||
+        (e.to === blockNodeId && findNode(e.from)?.type === 'colaborador')
+    );
+    if (!edge) return null;
+    const colabNodeId = findNode(edge.from)?.type === 'colaborador' ? edge.from : edge.to;
+    return findNode(colabNodeId);
+  };
+
+  /**
+   * Reasigna TODAS las actividades ya existentes del bloque al colaborador actualmente
+   * conectado — para cuando el cable se conecta (o se cambia) después de que el bloque
+   * ya tenía actividades creadas con otro responsable (o sin ninguno).
+   */
+  const handleReassignBlockActivities = async (blockNode) => {
+    const colaboradorNode = getConnectedColaboradorNode(blockNode.id);
+    if (!colaboradorNode) return;
+    const activityIds = blockNode.activityIds || [];
+    if (activityIds.length === 0) return;
+
+    const results = await Promise.all(
+      activityIds.map((activityId) => updateActividad(activityId, { operarioId: colaboradorNode.refId }))
+    );
+    const failed = results.filter((r) => !r.ok).length;
+    if (failed > 0) {
+      toast.danger(`No se pudieron reasignar ${failed} de ${activityIds.length} actividad(es).`);
+    } else {
+      toast.success(`🔗 ${activityIds.length} actividad(es) reasignada(s) a ${nodeTitle(colaboradorNode)}.`);
+    }
   };
 
   // ============================================
@@ -794,6 +1051,16 @@ const EditorVisualPage = ({ standalone = false }) => {
             🗔 Abrir en Ventana Aparte
           </Button>
         )}
+        {proyectoActivoId && canEditDiagram && nodes.length > 0 && (
+          <Button variant="secondary" size="md" onClick={handleAutoArrange}>
+            🧹 Reorganizar
+          </Button>
+        )}
+        {proyectoActivoId && nodes.length > 0 && (
+          <Button variant="secondary" size="md" onClick={handleExportDiagram} isLoading={isExporting}>
+            📥 Exportar PNG
+          </Button>
+        )}
         <Button variant="secondary" size="md" onClick={() => setHowtoOpen(true)}>
           ¿Cómo funciona?
         </Button>
@@ -827,6 +1094,34 @@ const EditorVisualPage = ({ standalone = false }) => {
             )}
 
             <div>
+              <h2 className={styles.railTitle}>Buscar Nodo</h2>
+              <input
+                type="text"
+                className={styles.searchInput}
+                placeholder="Buscar por nombre..."
+                value={nodeSearch}
+                onChange={(e) => setNodeSearch(e.target.value)}
+              />
+              {nodeSearch.trim() && (
+                <div className={styles.searchResults}>
+                  {nodeSearchMatches.map((n) => (
+                    <button
+                      key={n.id}
+                      type="button"
+                      className={styles.searchResultItem}
+                      onClick={() => handleFocusNode(n)}
+                    >
+                      {NODE_TYPES[n.type].icon} <span>{nodeTitle(n)}</span>
+                    </button>
+                  ))}
+                  {nodeSearchMatches.length === 0 && (
+                    <div className={styles.searchResultEmpty}>Sin coincidencias.</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
               <h2 className={styles.railTitle}>Qué Significa Cada Línea</h2>
               <ul className={styles.legend}>
                 <li><span className={styles.dot} style={{ background: 'var(--color-secondary)' }} /><span>Proyecto → Juego: <em>pertenece a</em></span></li>
@@ -856,8 +1151,14 @@ const EditorVisualPage = ({ standalone = false }) => {
             onMouseLeave={handleWindowMouseUp}
           >
             <div
+              ref={worldRef}
               className={styles.world}
-              style={{ transform: `translate(${worldOffset.x}px, ${worldOffset.y}px)`, width: worldBounds.width, height: worldBounds.height }}
+              style={{
+                transform: `translate(${worldOffset.x}px, ${worldOffset.y}px) scale(${zoom})`,
+                transformOrigin: '0 0',
+                width: worldBounds.width,
+                height: worldBounds.height,
+              }}
             >
               <svg className={styles.wires} width={worldBounds.width} height={worldBounds.height}>
                 {edges.map((edge) => {
@@ -948,6 +1249,33 @@ const EditorVisualPage = ({ standalone = false }) => {
                         className={styles.blockDropdown}
                         onMouseDown={(e) => e.stopPropagation()}
                       >
+                        {(() => {
+                          const colaboradorNode = getConnectedColaboradorNode(node.id);
+                          if (!colaboradorNode) {
+                            return (
+                              <p className={styles.blockDropdownEmpty}>
+                                ℹ️ Sin colaborador conectado — conecta un nodo Colaborador a este bloque (arrastra desde
+                                sus puertos) para asignarle las actividades.
+                              </p>
+                            );
+                          }
+                          return (
+                            <div className={styles.blockDropdownResponsable}>
+                              <span>👷 Responsable del bloque: <strong>{nodeTitle(colaboradorNode)}</strong></span>
+                              {canEditDiagram && (node.activityIds || []).length > 0 && (
+                                <button
+                                  type="button"
+                                  className={styles.blockDropdownAction}
+                                  onClick={() => handleReassignBlockActivities(node)}
+                                  title="Reasignar todas las actividades del bloque a este colaborador"
+                                >
+                                  🔗 Reasignar todas
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+
                         {(node.activityIds || []).length === 0 && (
                           <p className={styles.blockDropdownEmpty}>Aún no hay actividades en este bloque.</p>
                         )}
@@ -955,6 +1283,10 @@ const EditorVisualPage = ({ standalone = false }) => {
                           const act = actividades.find((a) => a.id === activityId);
                           if (!act) return null;
                           const responsable = operarios.find((o) => o.id === act.operarioId)?.name;
+                          const attachmentCount = act.attachments?.length || 0;
+                          const linkCount = act.links?.length || 0;
+                          // Preferir el archivo subido (Storage) sobre el link externo si hay ambos
+                          const modelUrl = act.modelFile?.url || act.modelLink || null;
                           return (
                             <div key={activityId} className={styles.blockDropdownItem}>
                               <div>
@@ -963,7 +1295,26 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   <span>{act.status}</span>
                                   <span>· {act.priority}</span>
                                   {responsable && <span>· 👷 {responsable}</span>}
+                                  {attachmentCount > 0 && <span>· 📎 {attachmentCount}</span>}
+                                  {linkCount > 0 && <span>· 🔗 {linkCount}</span>}
                                 </div>
+                                {linkCount > 0 && (
+                                  <div className={styles.blockDropdownLinks}>
+                                    {act.links.map((url) => (
+                                      <a key={url} href={url} target="_blank" rel="noreferrer">{url}</a>
+                                    ))}
+                                  </div>
+                                )}
+                                {modelUrl && (
+                                  <button
+                                    type="button"
+                                    className={styles.blockDropdownModelBtn}
+                                    onClick={() => window.open(modelUrl, '_blank', 'noreferrer')}
+                                    title={act.modelFile ? `Abrir ${act.modelFile.name}` : 'Abrir link del modelo'}
+                                  >
+                                    🎬 Abrir Modelo
+                                  </button>
+                                )}
                               </div>
                               {canEditDiagram && (
                                 <button
@@ -1022,6 +1373,20 @@ const EditorVisualPage = ({ standalone = false }) => {
                   />
                 </div>
               )}
+            </div>
+
+            {/* ---------- Controles de Zoom (flotantes, esquina inferior derecha) ---------- */}
+            <div className={styles.zoomControls} onMouseDown={(e) => e.stopPropagation()}>
+              <button type="button" className={styles.zoomBtn} title="Alejar" onClick={() => handleZoomButton(-ZOOM_STEP)}>
+                −
+              </button>
+              <span className={styles.zoomLabel}>{Math.round(zoom * 100)}%</span>
+              <button type="button" className={styles.zoomBtn} title="Acercar" onClick={() => handleZoomButton(ZOOM_STEP)}>
+                +
+              </button>
+              <button type="button" className={styles.zoomResetBtn} title="Restablecer vista" onClick={handleResetView}>
+                ⤢ 100%
+              </button>
             </div>
           </div>
 
@@ -1177,31 +1542,100 @@ const EditorVisualPage = ({ standalone = false }) => {
         {(() => {
           const blockNode = findNode(blockActivityForm.blockNodeId);
           if (!blockNode) return null;
-          if (!isProductionArea(blockNode.areaId)) {
-            return (
-              <div className={styles.calloutBox} style={{ background: 'rgba(153, 51, 255, 0.08)', border: '1px solid rgba(153, 51, 255, 0.25)' }}>
-                ℹ️ El área &ldquo;{allBlockAreas.find((a) => a.id === blockNode.areaId)?.name}&rdquo; todavía no tiene
-                colaboradores dados de alta en el sistema — la actividad se creará sin responsable asignado.
-              </div>
-            );
-          }
-          const areaOperarios = operarios.filter((o) => o.currentArea === blockNode.areaId);
+          const colaboradorNode = getConnectedColaboradorNode(blockNode.id);
           return (
-            <div className={styles.field}>
-              <label>Responsable (opcional)</label>
-              <select
-                value={blockActivityForm.operarioId}
-                onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, operarioId: e.target.value }))}
-              >
-                <option value="">Sin asignar</option>
-                {areaOperarios.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
-                ))}
-              </select>
+            <div
+              className={styles.calloutBox}
+              style={
+                colaboradorNode
+                  ? { background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)' }
+                  : { background: 'rgba(153, 51, 255, 0.08)', border: '1px solid rgba(153, 51, 255, 0.25)' }
+              }
+            >
+              {colaboradorNode ? (
+                <>👷 Se asignará automáticamente a <strong>{nodeTitle(colaboradorNode)}</strong> (colaborador conectado a este bloque).</>
+              ) : (
+                <>ℹ️ Este bloque no tiene un Colaborador conectado — la actividad se creará sin responsable. Conecta un
+                  nodo Colaborador al bloque (arrastra desde sus puertos) para asignarla automáticamente.</>
+              )}
             </div>
           );
         })()}
-        <Button variant="primary" size="md" onClick={handleCreateBlockActivity} style={{ marginTop: '10px' }}>
+        <div className={styles.field}>
+          <label>Adjuntar Archivos de Referencia (opcional)</label>
+          <input
+            type="file"
+            accept="image/*,application/pdf,.dwg,.dxf,.step,.stp,.iges,.igs"
+            multiple
+            onChange={handleBlockActivityFileChange}
+          />
+          {blockActivityForm.attachments.length > 0 && (
+            <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {blockActivityForm.attachments.map((file, idx) => (
+                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                  <span>📎 {file.name}</span>
+                  <button type="button" onClick={() => handleRemoveBlockActivityFile(idx)} style={{ border: 'none', background: 'none', color: 'var(--color-alert)', cursor: 'pointer' }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className={styles.field}>
+          <label>Links de Referencia (opcional, uno por línea)</label>
+          <textarea
+            rows="2"
+            placeholder="https://..."
+            value={blockActivityForm.linksText}
+            onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, linksText: e.target.value }))}
+          />
+        </div>
+
+        {/* "Modelo": distinto de los adjuntos de referencia de arriba — es lo que abre el
+            botón "🎬 Abrir Modelo" del bloque (planos de Arquitectura o modelos 3D de
+            SolidWorks de Diseño, pendientes de integrarse con el visualizador/renderizador
+            — por ahora el botón simplemente abre el archivo o el link tal cual). */}
+        {(() => {
+          const blockNode = findNode(blockActivityForm.blockNodeId);
+          const colaboradorNode = blockNode ? getConnectedColaboradorNode(blockNode.id) : null;
+          const puesto = colaboradorNode ? operarios.find((o) => o.id === colaboradorNode.refId)?.puesto : null;
+          const hint =
+            puesto === 'arquitecto'
+              ? '📐 Sugerido para Arquitectura: el plano del proyecto (PDF, imagen o DWG/DXF), o el link de Drive donde está guardado.'
+              : puesto === 'disenador'
+              ? '✏️ Sugerido para Diseño: el archivo del modelo 3D (SolidWorks) o el link de Drive/visualizador donde está guardado.'
+              : 'Sube el archivo del modelo/plano o pega el link donde está guardado (ej. Drive).';
+          return (
+            <>
+              <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '14px', marginBottom: '2px' }}>{hint}</p>
+              <div className={styles.field}>
+                <label>🎬 Archivo del Modelo/Plano (opcional)</label>
+                <input type="file" onChange={handleBlockActivityModelFileChange} />
+                {blockActivityForm.modelFile && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginTop: '4px' }}>
+                    <span>🎬 {blockActivityForm.modelFile.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setBlockActivityForm((prev) => ({ ...prev, modelFile: null }))}
+                      style={{ border: 'none', background: 'none', color: 'var(--color-alert)', cursor: 'pointer' }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className={styles.field}>
+                <label>O Link del Modelo/Plano (ej. Drive)</label>
+                <input
+                  type="text"
+                  placeholder="https://drive.google.com/..."
+                  value={blockActivityForm.modelLink}
+                  onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, modelLink: e.target.value }))}
+                />
+              </div>
+            </>
+          );
+        })()}
+        <Button variant="primary" size="md" onClick={handleCreateBlockActivity} isLoading={isSavingBlockActivity} style={{ marginTop: '10px' }}>
           💾 Crear y agregar al bloque
         </Button>
       </Modal>
@@ -1278,11 +1712,42 @@ const EditorVisualPage = ({ standalone = false }) => {
             Como ahora está conectado a Firebase, **cualquier cambio que realices en cualquiera de las dos ventanas se reflejará instantáneamente en la otra en tiempo real**.
           </p>
           <p>
-            <strong>📦 Bloque de Actividades</strong> es distinto a los demás nodos: no se conecta con cables. Al crearlo eliges
-            un nombre y un área (de manufactura, o &ldquo;Diseño&rdquo;) — esa área se asigna automáticamente a cada actividad
-            que agregues dentro. Haz clic en el bloque para abrir su panel derecho, donde puedes crear actividades nuevas
-            (se registran de una vez en el sistema, igual que desde la página de Actividades) o enlazar unas que ya existían.
-            Quitar una actividad del bloque no la borra del sistema, solo la desvincula de este lienzo.
+            <strong>Navegación:</strong> arrastra el fondo para desplazarte, usa los botones de zoom (esquina inferior
+            derecha del lienzo) o mantén presionado Ctrl/Cmd mientras giras la rueda del mouse para acercar/alejar hacia
+            donde apunta el cursor. El zoom es solo tuyo — no se comparte con otras personas viendo el mismo lienzo.
+            &ldquo;🔎 Buscar Nodo&rdquo; en el panel izquierdo centra la vista en cualquier nodo por nombre, y
+            &ldquo;🧹 Reorganizar&rdquo; (solo Admin) reacomoda todos los nodos en una cuadrícula ordenada si el diagrama
+            se volvió difícil de leer. &ldquo;📥 Exportar PNG&rdquo; descarga una imagen del lienzo completo tal como está,
+            para compartirlo o imprimirlo fuera del sistema.
+          </p>
+          <p>
+            <strong>📦 Bloque de Actividades</strong> es distinto a los demás nodos: al crearlo eliges un nombre y un área
+            (de manufactura, o &ldquo;Diseño&rdquo;) — esa área se asigna automáticamente a cada actividad que agregues
+            dentro. Haz clic en el cuerpo del bloque para desplegar su lista de actividades, donde puedes crear
+            actividades nuevas (se registran de una vez en el sistema, igual que desde la página de Actividades) o
+            enlazar unas que ya existían. Quitar una actividad del bloque no la borra del sistema, solo la desvincula
+            de este lienzo.
+          </p>
+          <p>
+            <strong>Asignar responsable a un Bloque:</strong> a diferencia de los demás campos de una actividad, el
+            responsable NO se elige a mano al crearla — se asigna conectando con un cable un nodo{' '}
+            <strong>Colaborador</strong> al Bloque (arrastra desde cualquiera de los dos puertos, en cualquier
+            dirección). Toda actividad nueva que agregues después de conectar el cable se asigna automáticamente a
+            ese colaborador; el botón &ldquo;🔗 Reasignar todas&rdquo; dentro del bloque aplica ese mismo colaborador a
+            las actividades que ya existían antes de conectarlo. Quitar el cable (clic sobre la línea) deja al bloque
+            sin responsable para las actividades que crees después.
+          </p>
+          <p>
+            <strong>Adjuntos y links:</strong> al crear una actividad nueva dentro de un bloque puedes adjuntar
+            archivos de referencia (imagen, PDF, DWG/DXF/STEP) o links de referencia — quedan guardados en la
+            actividad real del sistema, visibles en la lista desplegable del bloque.
+          </p>
+          <p>
+            <strong>🎬 Modelo del proyecto (Arquitectura/Diseño):</strong> además de los adjuntos de referencia, cada
+            actividad tiene un campo separado para el plano (Arquitectura) o el modelo 3D — SolidWorks u otro (Diseño):
+            sube el archivo o pega un link (ej. Drive). Si la actividad tiene un modelo cargado, aparece el botón
+            &ldquo;🎬 Abrir Modelo&rdquo; en la lista del bloque. Por ahora ese botón solo abre el archivo/link tal
+            cual — es la base para integrarlo más adelante con la aplicación de renderizado.
           </p>
         </div>
       </Modal>

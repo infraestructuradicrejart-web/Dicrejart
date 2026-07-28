@@ -43,6 +43,7 @@ export const getHomeRoute = (user) => {
   if (user.roleType === ROLE_TYPES.SUPERVISOR_AREA) return '/dashboard';
   if (user.roleType === ROLE_TYPES.DIRECCION) return '/dashboard';
   if (user.roleType === ROLE_TYPES.COMPRAS) return '/compras';
+  if (user.roleType === ROLE_TYPES.DISENADOR || user.roleType === ROLE_TYPES.ARQUITECTO) return '/diseno';
   return '/dashboard';
 };
 
@@ -98,6 +99,12 @@ export const canAccessSection = (user, section, areaId) => {
     return section === 'dashboard' || section === 'compras';
   }
 
+  if (user.roleType === ROLE_TYPES.DISENADOR || user.roleType === ROLE_TYPES.ARQUITECTO) {
+    // Jerarquía distinta a la de los Operarios de piso: solo consultan sus propias
+    // tareas asignadas (sección "diseno"), sin acceso a Producción, Operarios ni Compras
+    return section === 'diseno' || section === 'dashboard';
+  }
+
   // Administrador (o cualquier rol sin restricción definida): acceso total
   return true;
 };
@@ -124,6 +131,11 @@ export const isReadOnlySection = (user, section) => {
   if (user.roleType === ROLE_TYPES.DIRECCION) {
     // Rol de consulta, excepto en 'compras' donde autoriza o regresa requisiciones
     return section !== 'compras';
+  }
+
+  if (user.roleType === ROLE_TYPES.DISENADOR || user.roleType === ROLE_TYPES.ARQUITECTO) {
+    // Solo consultan sus tareas asignadas, no las editan
+    return section === 'diseno';
   }
 
   return false;

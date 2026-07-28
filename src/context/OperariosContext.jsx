@@ -18,6 +18,7 @@ import {
   getDocs,
   deleteDoc,
   query,
+  where,
   orderBy,
   limit
 } from 'firebase/firestore';
@@ -27,6 +28,8 @@ import useAreas from '../hooks/useAreas';
 import { AuthContext } from './AuthContext';
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
+import { getTodayLocalDateStr } from '../utils/dateUtils';
+import { triggerDailyRHNotification } from '../services/rhNotificationService';
 
 export const OperariosContext = createContext(null);
 
@@ -56,6 +59,53 @@ const getDefaultEstado = () => ({
   registradoAt: null,
 });
 
+/**
+ * Revisa si el estado de disponibilidad de un colaborador ha expirado y debe restablecerse a 'activo' (En Planta).
+ * - Faltas (falta): Se restablecen automáticamente al día siguiente (cuando fechaFalta < fechaHoy).
+ * - Ausencias por tiempo definido (con campo `hasta`): Se restablecen cuando la fecha actual supera el `hasta` (hasta < fechaHoy).
+ */
+const evaluateAndResetExpiredEstado = async (op) => {
+  if (!db || !op || !op.estado || op.estado.tipo === 'activo') return;
+
+  const todayStr = getTodayLocalDateStr();
+  const { tipo, desde, hasta, registradoAt } = op.estado;
+
+  let shouldReset = false;
+  let resetNotes = '';
+
+  if (tipo === 'falta') {
+    const fechaFalta = desde || (registradoAt ? registradoAt.split('T')[0] : null);
+    if (fechaFalta && fechaFalta < todayStr) {
+      shouldReset = true;
+      resetNotes = 'Restablecido automáticamente a En Planta (Falta diaria concluyó)';
+    }
+  } else if (hasta) {
+    if (hasta < todayStr) {
+      shouldReset = true;
+      resetNotes = `Restablecido automáticamente a En Planta (Venció periodo de ausencia el ${hasta})`;
+    }
+  }
+
+  if (shouldReset) {
+    const defaultEstado = {
+      tipo: 'activo',
+      desde: null,
+      hasta: null,
+      notas: resetNotes,
+      registradoPor: 'Sistema (Restablecimiento Automático)',
+      registradoAt: new Date().toISOString(),
+    };
+    try {
+      await updateDoc(doc(db, 'operarios', op.id), {
+        estado: defaultEstado,
+        estadoHistorial: [...(op.estadoHistorial || []), defaultEstado],
+      });
+    } catch (err) {
+      console.error(`Error al restablecer automáticamente el estado de ${op.id}:`, err);
+    }
+  }
+};
+
 export const OperariosProvider = ({ children }) => {
   const [blockDuration, setBlockDuration] = useState(() => {
     const saved = localStorage.getItem('dicrejart_block_duration');
@@ -68,20 +118,52 @@ export const OperariosProvider = ({ children }) => {
   // verifyAreaAuthorizer valida, con la contraseña real de un tercero, que tenga
   // autoridad (Admin, Encargado o Supervisor) sobre un área específica
   const { verifyAreaAuthorizer, user } = useContext(AuthContext) || {};
-  const { limits } = useContext(ConfigContext) || {};
+  const { limits, generalConfig, updateGeneralConfig } = useContext(ConfigContext) || {};
   const movimientosPersonalLimit = limits?.movimientosPersonalLimit || DEFAULT_LIMITS.movimientosPersonalLimit;
   
   const { resolveAreaId } = useAreas();
 
   // ============================================
+  // PROGRAMACIÓN AUTOMÁTICA DE NOTIFICACIÓN A RH (10:00 AM)
+  // ============================================
+  useEffect(() => {
+    if (!db || !operarios.length || !generalConfig) return;
+
+    const checkAndTriggerRHNotification = async () => {
+      const todayStr = getTodayLocalDateStr();
+      if (generalConfig.notificarFaltasRH === false) return;
+      if (generalConfig.lastRHNotificationDate === todayStr) return;
+
+      const now = new Date();
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+
+      const [targetHours, targetMinutes] = (generalConfig.horaNotificacionRH || '10:00').split(':').map(Number);
+      const isPastTargetTime = currentHours > targetHours || (currentHours === targetHours && currentMinutes >= targetMinutes);
+
+      if (isPastTargetTime) {
+        const result = await triggerDailyRHNotification({
+          operarios,
+          generalConfig,
+          updateGeneralConfig,
+          force: false,
+        });
+
+        if (result && result.ok) {
+          console.log(`📧 [Dicrejart RH Notification System] Reporte de faltas generado a las 10:00 AM para ${result.emailTarget} (${result.absentCount} ausencias).`);
+        }
+      }
+    };
+
+    checkAndTriggerRHNotification();
+    const intervalId = setInterval(checkAndTriggerRHNotification, 60000);
+
+    return () => clearInterval(intervalId);
+  }, [operarios, generalConfig, updateGeneralConfig]);
+
+  // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE
   // ============================================
-  // Se espera a onAuthStateChanged y se resuscribe con cada cambio de sesión: este
-  // Provider envuelve toda la app (incluida /login), así que suscribirse de inmediato
-  // fallaría por falta de permisos antes del login, sin volver a intentarlo después.
-  // También se vuelve a suscribir si cambia el límite dinámico configurado por el Admin.
-  // Nota: "operarios" (el padrón de personal) NO se limita — no es una bitácora que
-  // crece indefinidamente, es un registro acotado por la cantidad real de colaboradores.
   useEffect(() => {
     if (!db || !auth) return;
 
@@ -100,13 +182,17 @@ export const OperariosProvider = ({ children }) => {
 
       unsubOperarios = onSnapshot(collection(db, 'operarios'), (snapshot) => {
         const list = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          list.push({
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const op = {
             ...data,
             schedule: data.schedule || getDefaultSchedule(),
             estado: data.estado || getDefaultEstado(),
-          });
+            puesto: data.puesto || 'operario',
+          };
+          list.push(op);
+          // Evaluar si expiró su ausencia (falta anterior o periodo concluido)
+          evaluateAndResetExpiredEstado(op);
         });
         setOperarios(list);
       });
@@ -237,6 +323,9 @@ export const OperariosProvider = ({ children }) => {
           homeArea: areaId,
           currentArea: areaId,
           schedule: getDefaultSchedule(),
+          // La importación por Excel es exclusiva del personal de piso — el de Diseño
+          // se da de alta individualmente desde "Nuevo Operario" (ver addOperario)
+          puesto: 'operario',
         };
 
         // Guardar documento en Firestore
@@ -254,31 +343,123 @@ export const OperariosProvider = ({ children }) => {
   }, [operarios, user, resolveAreaId]);
 
   /**
-   * Elimina un operario de Firestore
+   * Agrega un solo operario nuevo al padrón (alta individual, sin pasar por Excel). Usa
+   * el mismo esquema de id (`OP-XX`) y validación de duplicados que `importFromExcel`.
+   * `puesto` distingue al personal de piso ('operario', valor por defecto) del
+   * departamento de Diseño ('disenador' / 'arquitecto') — estos últimos tienen una
+   * jerarquía distinta (no aplican préstamos/jornada de manufactura) y, para iniciar
+   * sesión y consultar sus tareas, se vinculan aparte a una cuenta de Usuario desde
+   * Admin → Usuarios del Sistema (campo `operarioId` en el perfil de ese Usuario).
+   */
+  const addOperario = useCallback(async (name, areaId, puesto = 'operario') => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const trimmedName = (name || '').trim();
+    if (!trimmedName || !areaId) {
+      return { ok: false, error: 'El nombre y el área son obligatorios.' };
+    }
+
+    const isDuplicate = operarios.some(
+      (op) => op.name.toLowerCase() === trimmedName.toLowerCase() && op.homeArea === areaId
+    );
+    if (isDuplicate) {
+      return { ok: false, error: 'Ya existe un operario con ese nombre en esa área.' };
+    }
+
+    const nextIdNumber = operarios.reduce((max, op) => {
+      const num = Number(op.id.replace('OP-', ''));
+      return Number.isFinite(num) && num > max ? num : max;
+    }, 0) + 1;
+    const id = `OP-${String(nextIdNumber).padStart(2, '0')}`;
+
+    const opData = {
+      id,
+      name: trimmedName,
+      homeArea: areaId,
+      currentArea: areaId,
+      schedule: getDefaultSchedule(),
+      puesto,
+    };
+
+    try {
+      await setDoc(doc(db, 'operarios', id), opData);
+      logAudit({ user, module: 'operarios', action: 'Agregó un operario', details: `${trimmedName} (${id}, ${puesto})` });
+      return { ok: true, id };
+    } catch (error) {
+      console.error('Error al agregar operario:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [operarios, user]);
+
+  /**
+   * Edita el nombre de un colaborador ya existente (corregir un error de captura, por
+   * ejemplo). El área de origen/actual, horario y estado tienen sus propios flujos
+   * dedicados (préstamo/cambio de área, jornada, disponibilidad) — esto solo toca el
+   * nombre, para no saltarse esas validaciones/autorizaciones desde una edición directa.
+   */
+  const updateOperario = useCallback(async (operarioId, { name }) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const trimmedName = (name || '').trim();
+    if (!trimmedName) return { ok: false, error: 'El nombre es obligatorio.' };
+
+    try {
+      await updateDoc(doc(db, 'operarios', operarioId), { name: trimmedName });
+      logAudit({ user, module: 'operarios', action: 'Editó los datos de un operario', details: `${operarioId} → ${trimmedName}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al editar operario:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [user]);
+
+  /**
+   * Elimina un operario de Firestore junto con sus evaluaciones de desempeño
+   * ("calificaciones"), para no dejar registros huérfanos apuntando a un operarioId
+   * que ya no existe en el padrón (colección "evaluaciones", ligada por operarioId).
    */
   const deleteOperario = useCallback(async (operarioId) => {
     if (!db) return;
     try {
+      const evalSnapshot = await getDocs(
+        query(collection(db, 'evaluaciones'), where('operarioId', '==', operarioId))
+      );
+      await Promise.all(evalSnapshot.docs.map((docSnap) => deleteDoc(docSnap.ref)));
+
       await deleteDoc(doc(db, 'operarios', operarioId));
-      logAudit({ user, module: 'operarios', action: 'Eliminó un operario', details: operarioId });
+      logAudit({
+        user,
+        module: 'operarios',
+        action: 'Eliminó un operario',
+        details: `${operarioId} (+ ${evalSnapshot.size} evaluación(es) asociada(s))`,
+      });
     } catch (error) {
       console.error('Error al eliminar operario de Firestore:', error);
     }
   }, [user]);
 
   /**
-   * Vacía todos los registros de operarios en la base de datos de Firestore
+   * Vacía todos los registros de operarios en la base de datos de Firestore, junto con
+   * todas las evaluaciones de desempeño (al desaparecer todo el padrón, cada evaluación
+   * queda huérfana sin importar a quién pertenecía).
    */
   const clearAllOperarios = useCallback(async () => {
     if (!db) return;
     try {
       const querySnapshot = await getDocs(collection(db, 'operarios'));
+      const evalSnapshot = await getDocs(collection(db, 'evaluaciones'));
       const promises = [];
       querySnapshot.forEach((docSnap) => {
         promises.push(deleteDoc(docSnap.ref));
       });
+      evalSnapshot.forEach((docSnap) => {
+        promises.push(deleteDoc(docSnap.ref));
+      });
       await Promise.all(promises);
-      logAudit({ user, module: 'operarios', action: 'Vació todo el padrón de operarios', details: `${querySnapshot.size} registros eliminados` });
+      logAudit({
+        user,
+        module: 'operarios',
+        action: 'Vació todo el padrón de operarios',
+        details: `${querySnapshot.size} operario(s) y ${evalSnapshot.size} evaluación(es) eliminados`,
+      });
     } catch (error) {
       console.error('Error al vaciar operarios de Firestore:', error);
     }
@@ -304,12 +485,18 @@ export const OperariosProvider = ({ children }) => {
       id,
       operarioId,
       operarioName: op.name,
+      // Puesto del colaborador AL MOMENTO del movimiento (piso vs. Diseño) — se guarda
+      // aquí y no se recalcula después, para que el historial no cambie si el puesto del
+      // colaborador se modifica más adelante.
+      operarioPuesto: op.puesto || 'operario',
       fromAreaId: op.currentArea,
       toAreaId,
       tipo,
       fechaFinEstimada: tipo === 'prestamo' ? (fechaFinEstimada || null) : null,
       motivo: motivo || '',
       solicitadoPor,
+      // Rol de quien solicita, tomado de la sesión activa (no de un parámetro aparte)
+      solicitadoPorRole: user?.roleType || null,
       status: 'pendiente_origen',
       origenAutorizadoPor: null,
       origenAutorizadoAt: null,
@@ -351,6 +538,7 @@ export const OperariosProvider = ({ children }) => {
       const isPrestamo = mov.tipo === 'prestamo';
       await updateDoc(doc(db, 'movimientos_personal', movimientoId), {
         origenAutorizadoPor: result.name,
+        origenAutorizadoPorRole: result.roleType,
         origenAutorizadoAt: new Date().toISOString(),
         status: isPrestamo ? 'autorizado' : 'pendiente_destino',
       });
@@ -391,6 +579,7 @@ export const OperariosProvider = ({ children }) => {
     try {
       await updateDoc(doc(db, 'movimientos_personal', movimientoId), {
         destinoAutorizadoPor: result.name,
+        destinoAutorizadoPorRole: result.roleType,
         destinoAutorizadoAt: new Date().toISOString(),
         status: 'autorizado',
       });
@@ -415,7 +604,10 @@ export const OperariosProvider = ({ children }) => {
 
   /**
    * Rechaza una solicitud de movimiento de personal (no requiere contraseña, igual que
-   * regresar una requisición de compra: solo queda registrado quién y por qué).
+   * regresar una requisición de compra: solo queda registrado quién y por qué). Antes no
+   * guardaba la fecha/hora del rechazo (a diferencia de crear/autorizar, que sí la tenían)
+   * — se agrega aquí para que todo el ciclo de vida del movimiento quede con marca de
+   * tiempo, sin excepción.
    */
   const rejectMovimiento = useCallback(async (movimientoId, reviewerName, notes) => {
     if (!db) return { ok: false, error: 'Firestore no inicializado' };
@@ -423,6 +615,8 @@ export const OperariosProvider = ({ children }) => {
       await updateDoc(doc(db, 'movimientos_personal', movimientoId), {
         status: 'rechazado',
         rechazadoPor: reviewerName,
+        rechazadoPorRole: user?.roleType || null,
+        rechazadoAt: new Date().toISOString(),
         notasRechazo: notes || '',
       });
       logAudit({ user, module: 'operarios', action: 'Rechazó movimiento de personal', details: `${movimientoId} por ${reviewerName}` });
@@ -449,7 +643,7 @@ export const OperariosProvider = ({ children }) => {
 
     const nuevoEstado = {
       tipo,
-      desde: desde || new Date().toISOString().split('T')[0],
+      desde: desde || getTodayLocalDateStr(),
       hasta: hasta || null,
       notas: notas || '',
       registradoPor,
@@ -481,6 +675,8 @@ export const OperariosProvider = ({ children }) => {
       updateOperarioSchedule,
       updateBlockDuration,
       importFromExcel,
+      addOperario,
+      updateOperario,
       deleteOperario,
       clearAllOperarios,
       movimientos,
@@ -498,6 +694,8 @@ export const OperariosProvider = ({ children }) => {
       updateOperarioSchedule,
       updateBlockDuration,
       importFromExcel,
+      addOperario,
+      updateOperario,
       deleteOperario,
       clearAllOperarios,
       movimientos,
