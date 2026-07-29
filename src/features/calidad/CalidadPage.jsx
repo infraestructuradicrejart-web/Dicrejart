@@ -211,16 +211,7 @@ const CalidadPage = () => {
     notes: '',
   });
 
-  const [scheduleModal, setScheduleModal] = useState({
-    isOpen: false,
-    collaborator: null,
-    startHour: '8',
-    endHour: '18',
-    overtimeHours: '0',
-    authorizedDate: '',
-  });
-
-  const { operarios, blockDuration, updateOperarioSchedule, updateBlockDuration } = useOperarios();
+  const { operarios, blockDuration, updateBlockDuration, horasExtra, verifyHorasExtra } = useOperarios();
   const {
     juegos,
     addQualityChecklistItem,
@@ -239,8 +230,10 @@ const CalidadPage = () => {
   const [newReviewItemText, setNewReviewItemText] = useState('');
   const [rejectModal, setRejectModal] = useState({ isOpen: false, notes: '' });
 
-  // Solo los administradores pueden autorizar y modificar jornadas (igual que en Operarios)
-  const canManageSchedule = user?.roleType === 'admin';
+  // Verificación de horas extra ("¿de verdad se hicieron las tareas asignadas?") — ya
+  // NO se autoriza tiempo extra desde Calidad (eso quedó en Operarios, a cargo del
+  // supervisor del área o Admin); aquí solo se consulta y se marca el cumplimiento.
+  const [horasExtraRejectModal, setHorasExtraRejectModal] = useState({ isOpen: false, horasExtraId: null, notes: '' });
 
   // Tick para forzar el recálculo del bloque activo cada 30 segundos
   const [tick, setTick] = useState(0);
@@ -785,102 +778,36 @@ const CalidadPage = () => {
     handleCloseEvalModal();
   };
 
-  // Handales para editar jornada y horas extras del operario directamente
-  const handleOpenScheduleModal = (op) => {
-    const todayStr = getTodayLocalDateStr();
-    setScheduleModal({
-      isOpen: true,
-      collaborator: op,
-      startHour: String(op.schedule?.startHour || 8),
-      endHour: String(op.schedule?.endHour || 18),
-      overtimeHours: String(op.schedule?.overtimeHours || 0),
-      authorizedDate: op.schedule?.authorizedDate || todayStr,
-    });
+  // Verificar (o rechazar) el cumplimiento de las tareas de un registro de horas extra
+  const handleVerifyHorasExtraCumplido = async (horasExtraId) => {
+    const res = await verifyHorasExtra(horasExtraId, { verificationStatus: 'cumplido', verificationNotes: '' });
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo registrar la verificación.');
+      return;
+    }
+    toast.success('✅ Tareas de tiempo extra marcadas como cumplidas.');
   };
 
-  const handleCloseScheduleModal = () => {
-    setScheduleModal({
-      isOpen: false,
-      collaborator: null,
-      startHour: '8',
-      endHour: '18',
-      overtimeHours: '0',
-      authorizedDate: '',
-    });
+  const handleOpenHorasExtraRejectModal = (horasExtraId) => {
+    setHorasExtraRejectModal({ isOpen: true, horasExtraId, notes: '' });
   };
 
-  const getIsSaturdayFromDate = (dateStr) => {
-    if (!dateStr) return false;
-    const date = new Date(dateStr + 'T00:00:00');
-    return date.getDay() === 6; // 6 es Sábado
+  const handleCloseHorasExtraRejectModal = () => {
+    setHorasExtraRejectModal({ isOpen: false, horasExtraId: null, notes: '' });
   };
 
-  const handleDateChange = (e) => {
-    const dateStr = e.target.value;
-    const startVal = Number(scheduleModal.startHour);
-    const endVal = Number(scheduleModal.endHour);
-
-    const isSaturday = getIsSaturdayFromDate(dateStr);
-    const baseEnd = isSaturday ? 13 : 18;
-
-    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
-    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
-
-    setScheduleModal((prev) => ({
-      ...prev,
-      authorizedDate: dateStr,
-      overtimeHours: String(earlyOvertime + lateOvertime),
-    }));
-  };
-
-  const handleStartHourChange = (e) => {
-    const startVal = Number(e.target.value);
-    const endVal = Number(scheduleModal.endHour);
-
-    const isSaturday = getIsSaturdayFromDate(scheduleModal.authorizedDate);
-    const baseEnd = isSaturday ? 13 : 18;
-
-    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
-    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
-
-    setScheduleModal((prev) => ({
-      ...prev,
-      startHour: String(startVal),
-      overtimeHours: String(earlyOvertime + lateOvertime),
-    }));
-  };
-
-  const handleEndHourChange = (e) => {
-    const startVal = Number(scheduleModal.startHour);
-    const endVal = Number(e.target.value);
-
-    const isSaturday = getIsSaturdayFromDate(scheduleModal.authorizedDate);
-    const baseEnd = isSaturday ? 13 : 18;
-
-    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
-    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
-
-    setScheduleModal((prev) => ({
-      ...prev,
-      endHour: String(endVal),
-      overtimeHours: String(earlyOvertime + lateOvertime),
-    }));
-  };
-
-  const handleSaveSchedule = (e) => {
+  const handleSubmitHorasExtraReject = async (e) => {
     e.preventDefault();
-    const { collaborator, startHour, endHour, overtimeHours, authorizedDate } = scheduleModal;
-
-    updateOperarioSchedule(collaborator.id, {
-      startHour: Number(startHour),
-      endHour: Number(endHour),
-      overtimeHours: Number(overtimeHours),
-      authorizedBy: 'Supervisor Calidad',
-      authorizedDate,
+    const res = await verifyHorasExtra(horasExtraRejectModal.horasExtraId, {
+      verificationStatus: 'no_cumplido',
+      verificationNotes: horasExtraRejectModal.notes,
     });
-
-    toast.success(`⏱️ Horario de tiempo extra guardado para ${collaborator.name} (${authorizedDate}).`);
-    handleCloseScheduleModal();
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo registrar la verificación.');
+      return;
+    }
+    toast.warning('❌ Tareas de tiempo extra marcadas como no cumplidas.');
+    handleCloseHorasExtraRejectModal();
   };
 
   // ============================================
@@ -1804,25 +1731,61 @@ const CalidadPage = () => {
                                   </Badge>
                                 )}
                               </div>
-                              {canManageSchedule && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenScheduleModal(op)}
-                                  style={{
-                                    alignSelf: 'flex-start',
-                                    fontSize: '11px',
-                                    color: 'var(--color-primary)',
-                                    background: 'none',
-                                    border: 'none',
-                                    padding: '2px 0',
-                                    cursor: 'pointer',
-                                    fontWeight: '600',
-                                    textDecoration: 'underline'
-                                  }}
-                                >
-                                  ⏱️ Ajustar Horario
-                                </button>
-                              )}
+                              {/* Tareas de tiempo extra autorizadas para la FECHA seleccionada arriba
+                                  (no solo "hoy") — autorizar quedó en Operarios (supervisor del área o
+                                  Admin); aquí Calidad solo consulta y verifica si de verdad se cumplieron. */}
+                              {horasExtra
+                                // Los "cancelado" (autorización retirada o reemplazada antes de
+                                // verificarse, ver cancelPendingHorasExtra) no se muestran — ya no
+                                // hay nada real que Calidad deba revisar de esos.
+                                .filter((h) => h.operarioId === op.id && h.authorizedDate === selectedDate && h.verificationStatus !== 'cancelado')
+                                .map((h) => (
+                                  <div
+                                    key={h.id}
+                                    style={{
+                                      marginTop: '2px',
+                                      padding: '6px 8px',
+                                      borderRadius: '6px',
+                                      background: 'rgba(255, 153, 51, 0.08)',
+                                      border: '1px solid rgba(255, 153, 51, 0.25)',
+                                      fontSize: '11px',
+                                    }}
+                                  >
+                                    <div style={{ fontWeight: 600, color: 'var(--color-secondary)', marginBottom: '2px' }}>
+                                      🕒 Tareas del tiempo extra ({h.overtimeHours}h):
+                                    </div>
+                                    <div style={{ color: 'var(--color-gray-700)', marginBottom: '4px' }}>{h.overtimeTasks}</div>
+                                    {h.verificationStatus === 'pendiente' ? (
+                                      <div style={{ display: 'flex', gap: '6px' }}>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                                          style={{ fontSize: '10.5px', fontWeight: 700, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                        >
+                                          ✅ Cumplió
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                                          style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                        >
+                                          ❌ No Cumplió
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <span
+                                        title={h.verificationNotes ? `${h.verificationNotes} — ${h.verifiedBy}` : h.verifiedBy}
+                                        style={{
+                                          fontSize: '10.5px',
+                                          fontWeight: 700,
+                                          color: h.verificationStatus === 'cumplido' ? '#15803d' : 'var(--color-alert)',
+                                        }}
+                                      >
+                                        {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
                             </div>
                           </td>
                           {activeBlocks.map((block, blockIndex) => {
@@ -2039,98 +2002,30 @@ const CalidadPage = () => {
         </Modal>
       )}
 
-      {/* MODAL DE EDICIÓN DE JORNADA / HORAS EXTRAS */}
-      {scheduleModal.isOpen && (
+      {/* MODAL: MARCAR TAREAS DE TIEMPO EXTRA COMO "NO CUMPLIDO" (requiere motivo) */}
+      {horasExtraRejectModal.isOpen && (
         <Modal
-          isOpen={scheduleModal.isOpen}
-          onClose={handleCloseScheduleModal}
-          title={`⏱️ Modificar Horario / Tiempo Extra: ${scheduleModal.collaborator?.name}`}
+          isOpen={horasExtraRejectModal.isOpen}
+          onClose={handleCloseHorasExtraRejectModal}
+          title="❌ Tareas de Tiempo Extra No Cumplidas"
         >
-          <form onSubmit={handleSaveSchedule} className={styles.modalForm}>
-            <div className={styles.modalMetaInfo}>
-              <div>
-                <strong>Colaborador:</strong> {scheduleModal.collaborator?.name}
-              </div>
-              <div>
-                <strong>Área:</strong> {scheduleModal.collaborator && (AREAS.find((a) => a.id === scheduleModal.collaborator.currentArea)?.name || scheduleModal.collaborator.currentArea)}
-              </div>
-            </div>
-
+          <form onSubmit={handleSubmitHorasExtraReject} className={styles.modalForm}>
             <div className={styles.formGroup}>
-              <label className={styles.label}>Fecha de Autorización (Tiempo Extra)</label>
-              <input
-                type="date"
-                className={styles.input}
-                value={scheduleModal.authorizedDate}
-                onChange={handleDateChange}
+              <label className={styles.label}>¿Qué no se cumplió?</label>
+              <textarea
+                rows="3"
                 required
+                placeholder="Ej: Solo terminó la mitad del pedido, no se realizó el lijado final..."
+                value={horasExtraRejectModal.notes}
+                onChange={(e) => setHorasExtraRejectModal((prev) => ({ ...prev, notes: e.target.value }))}
               />
-              <span className={styles.helpText} style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '4px', display: 'block' }}>
-                * Nota: La extensión horaria o tiempo extra es válida únicamente para el día autorizado. Al día siguiente volverá a su jornada habitual.
-              </span>
             </div>
-
-            <div className={styles.row}>
-              <div className={styles.formGroup}>
-                <Select
-                  label="Hora de Entrada (24 hrs)"
-                  value={scheduleModal.startHour}
-                  onChange={handleStartHourChange}
-                  required
-                  options={[
-                    { value: '6', label: '06:00 am (Extra Temprana)' },
-                    { value: '7', label: '07:00 am (Extra Temprana)' },
-                    { value: '8', label: '08:00 am (Horario Normal)' },
-                    { value: '9', label: '09:00 am' },
-                    { value: '10', label: '10:00 am' },
-                  ]}
-                />
-              </div>
-
-              <div className={styles.formGroup}>
-                <Select
-                  label="Hora de Salida (24 hrs)"
-                  value={scheduleModal.endHour}
-                  onChange={handleEndHourChange}
-                  required
-                  options={[
-                    { value: '13', label: '13:00 (Fin Sábado Normal)' },
-                    { value: '14', label: '14:00 (Sábado Extra)' },
-                    { value: '15', label: '15:00 (Sábado Extra)' },
-                    { value: '16', label: '16:00 (Sábado Extra)' },
-                    { value: '17', label: '17:00 (Sábado Extra)' },
-                    { value: '18', label: '18:00 (Fin L-V Normal)' },
-                    { value: '19', label: '19:00 (Extra LV)' },
-                    { value: '20', label: '20:00 (Extra LV)' },
-                    { value: '21', label: '21:00 (Extra LV)' },
-                    { value: '22', label: '22:00 (Extra LV)' },
-                  ]}
-                />
-              </div>
-            </div>
-
-            <div className={styles.formGroup} style={{ backgroundColor: 'var(--color-gray-50)', padding: '12px', borderRadius: '6px', border: '1px solid var(--color-gray-200)', marginTop: '8px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontWeight: '600', fontSize: '13px', color: 'var(--color-secondary)' }}>
-                  Total Horas Extras Calculadas:
-                </span>
-                <Badge variant={Number(scheduleModal.overtimeHours) > 0 ? 'warning' : 'success'}>
-                  {scheduleModal.overtimeHours} Horas
-                </Badge>
-              </div>
-              {Number(scheduleModal.overtimeHours) > 0 && (
-                <p style={{ fontSize: '11px', color: 'var(--color-gray-600)', margin: '6px 0 0 0' }}>
-                  Autorizado por Supervisor de Calidad en tiempo real.
-                </p>
-              )}
-            </div>
-
             <div className={styles.modalActions}>
-              <Button type="button" variant="secondary" onClick={handleCloseScheduleModal}>
+              <Button type="button" variant="secondary" onClick={handleCloseHorasExtraRejectModal}>
                 Cancelar
               </Button>
-              <Button type="submit" variant="primary">
-                Guardar Horario
+              <Button type="submit" variant="danger">
+                Confirmar No Cumplido
               </Button>
             </div>
           </form>

@@ -99,6 +99,8 @@ const OperariosPage = () => {
     authorizeMovimientoDestino,
     rejectMovimiento,
     setOperarioEstado,
+    authorizeOvertimeTasks,
+    cancelPendingHorasExtra,
   } = useOperarios();
 
   const { user } = useAuth();
@@ -155,7 +157,9 @@ const OperariosPage = () => {
     endHour: '18',
     overtimeHours: '0',
     authorizedDate: '',
+    overtimeTasks: '',
   });
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   // Estado para el modal de solicitud de préstamo/cambio de área
   const [movRequestModal, setMovRequestModal] = useState({
@@ -242,6 +246,18 @@ const OperariosPage = () => {
     if (user.roleType === 'admin') return true;
     // Calidad no está atado a una sola área (como Admin) — puede gestionar personal de cualquier área
     if (user.roleType === 'calidad') return true;
+    if (user.roleType === 'supervisor-area') return (user.areaIds || []).includes(areaId);
+    return false;
+  };
+
+  /**
+   * Autorizar horas extra es responsabilidad del supervisor del área correspondiente
+   * (o Admin) — a propósito NO incluye a Calidad aquí: Calidad verifica después que las
+   * tareas se hayan cumplido, pero no autoriza (separación de responsabilidades).
+   */
+  const canAuthorizeOvertime = (areaId) => {
+    if (!user) return false;
+    if (user.roleType === 'admin') return true;
     if (user.roleType === 'supervisor-area') return (user.areaIds || []).includes(areaId);
     return false;
   };
@@ -511,6 +527,9 @@ const OperariosPage = () => {
       endHour: String(op.schedule?.endHour || 18),
       overtimeHours: String(op.schedule?.overtimeHours || 0),
       authorizedDate: op.schedule?.authorizedDate || todayStr,
+      // Las tareas son de la NUEVA autorización que se está por crear, no de la
+      // anterior — siempre arranca vacío, no se prellenan las de la vez pasada.
+      overtimeTasks: '',
     });
   };
 
@@ -522,6 +541,7 @@ const OperariosPage = () => {
       endHour: '18',
       overtimeHours: '0',
       authorizedDate: '',
+      overtimeTasks: '',
     });
   };
 
@@ -583,9 +603,14 @@ const OperariosPage = () => {
     }));
   };
 
-  const handleSaveSchedule = (e) => {
+  const handleSaveSchedule = async (e) => {
     e.preventDefault();
-    const { collaborator, startHour, endHour, overtimeHours, authorizedDate } = scheduleModal;
+    const { collaborator, startHour, endHour, overtimeHours, authorizedDate, overtimeTasks } = scheduleModal;
+
+    if (Number(overtimeHours) > 0 && !overtimeTasks.trim()) {
+      toast.danger('Debes indicar las tareas a realizar durante el tiempo extra.');
+      return;
+    }
 
     updateOperarioSchedule(collaborator.id, {
       startHour: Number(startHour),
@@ -594,6 +619,30 @@ const OperariosPage = () => {
       authorizedBy: user?.name || 'Supervisor',
       authorizedDate,
     });
+
+    // Si ya había una autorización pendiente de verificar para este mismo colaborador y
+    // fecha (de una edición anterior), se cancela antes de continuar — así nunca queda
+    // un registro "fantasma" pidiéndole a Calidad verificar tareas de un turno que se
+    // acaba de cambiar o de quitar por completo.
+    setIsSavingSchedule(true);
+    await cancelPendingHorasExtra(collaborator.id, authorizedDate);
+
+    if (Number(overtimeHours) > 0) {
+      const res = await authorizeOvertimeTasks(collaborator.id, {
+        startHour: Number(startHour),
+        endHour: Number(endHour),
+        overtimeHours: Number(overtimeHours),
+        overtimeTasks,
+        authorizedDate,
+      });
+      setIsSavingSchedule(false);
+      if (!res.ok) {
+        toast.danger(res.error || 'No se pudo registrar la autorización de horas extra.');
+        return;
+      }
+    } else {
+      setIsSavingSchedule(false);
+    }
 
     toast.success(`⏱️ Horario actualizado para ${collaborator.name} para la fecha ${authorizedDate}. Horas extras: ${overtimeHours}h.`);
     handleCloseScheduleModal();
@@ -883,16 +932,16 @@ const OperariosPage = () => {
                               </Button>
                             </>
                           )}
+                          {!isDesignStaff && canAuthorizeOvertime(op.currentArea) && (
+                            <Button variant="ghost" size="sm" onClick={() => handleOpenScheduleModal(op)}>
+                              🕒 Jornada
+                            </Button>
+                          )}
                           {canManageSchedule && (
                             <>
                               <Button variant="ghost" size="sm" onClick={() => handleOpenEditModal(op)}>
                                 ✏️ Editar
                               </Button>
-                              {!isDesignStaff && (
-                                <Button variant="ghost" size="sm" onClick={() => handleOpenScheduleModal(op)}>
-                                  🕒 Jornada
-                                </Button>
-                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1362,6 +1411,23 @@ const OperariosPage = () => {
               />
             </div>
 
+            {Number(scheduleModal.overtimeHours) > 0 && (
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Tareas a Realizar en el Tiempo Extra *</label>
+                <textarea
+                  className={styles.textInput}
+                  rows="3"
+                  required
+                  placeholder="Ej: Terminar ensamble de 20 piezas del pedido X, lijado final de mesas..."
+                  value={scheduleModal.overtimeTasks}
+                  onChange={(e) => setScheduleModal((prev) => ({ ...prev, overtimeTasks: e.target.value }))}
+                />
+                <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: 'var(--space-1)' }}>
+                  Calidad revisará después que estas tareas realmente se hayan cumplido.
+                </p>
+              </div>
+            )}
+
             <div className={styles.formGroup}>
               <label className={styles.label}>Supervisor que Autoriza</label>
               <input
@@ -1376,7 +1442,7 @@ const OperariosPage = () => {
               <Button type="button" variant="secondary" onClick={handleCloseScheduleModal}>
                 Cancelar
               </Button>
-              <Button type="submit" variant="primary">
+              <Button type="submit" variant="primary" isLoading={isSavingSchedule}>
                 Guardar y Autorizar
               </Button>
             </div>

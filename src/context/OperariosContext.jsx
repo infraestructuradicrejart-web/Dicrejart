@@ -114,12 +114,14 @@ export const OperariosProvider = ({ children }) => {
 
   const [operarios, setOperarios] = useState([]);
   const [movimientos, setMovimientos] = useState([]);
+  const [horasExtra, setHorasExtra] = useState([]);
 
   // verifyAreaAuthorizer valida, con la contraseña real de un tercero, que tenga
   // autoridad (Admin, Encargado o Supervisor) sobre un área específica
   const { verifyAreaAuthorizer, user } = useContext(AuthContext) || {};
   const { limits, generalConfig, updateGeneralConfig } = useContext(ConfigContext) || {};
   const movimientosPersonalLimit = limits?.movimientosPersonalLimit || DEFAULT_LIMITS.movimientosPersonalLimit;
+  const horasExtraLimit = limits?.horasExtraLimit || DEFAULT_LIMITS.horasExtraLimit;
   
   const { resolveAreaId } = useAreas();
 
@@ -169,14 +171,17 @@ export const OperariosProvider = ({ children }) => {
 
     let unsubOperarios = null;
     let unsubMovimientos = null;
+    let unsubHorasExtra = null;
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       if (unsubOperarios) unsubOperarios();
       if (unsubMovimientos) unsubMovimientos();
+      if (unsubHorasExtra) unsubHorasExtra();
 
       if (!user) {
         setOperarios([]);
         setMovimientos([]);
+        setHorasExtra([]);
         return;
       }
 
@@ -206,14 +211,25 @@ export const OperariosProvider = ({ children }) => {
           setMovimientos(list);
         }
       );
+
+      unsubHorasExtra = onSnapshot(
+        query(collection(db, 'horas_extra'), orderBy('createdAt', 'desc'), limit(horasExtraLimit)),
+        (snapshot) => {
+          const list = [];
+          snapshot.forEach((doc) => list.push(doc.data()));
+          list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          setHorasExtra(list);
+        }
+      );
     });
 
     return () => {
       unsubAuth();
       if (unsubOperarios) unsubOperarios();
       if (unsubMovimientos) unsubMovimientos();
+      if (unsubHorasExtra) unsubHorasExtra();
     };
-  }, [movimientosPersonalLimit]);
+  }, [movimientosPersonalLimit, horasExtraLimit]);
 
   // ============================================
   // ACCIONES FIRESTORE
@@ -266,6 +282,105 @@ export const OperariosProvider = ({ children }) => {
       console.error('Error al actualizar horario del operario:', error);
     }
   }, [operarios, user]);
+
+  /**
+   * Registra en la colección `horas_extra` (un documento por autorización, nunca se
+   * sobreescribe) las tareas que el colaborador realizará durante el tiempo extra recién
+   * autorizado — a diferencia de `schedule` (que solo guarda el horario "vigente" de
+   * hoy y se sobreescribe en cada autorización), este es el registro auditable que
+   * Calidad revisa después para verificar que el trabajo realmente se hizo.
+   */
+  const authorizeOvertimeTasks = useCallback(async (operarioId, { startHour, endHour, overtimeHours, overtimeTasks, authorizedDate }) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const op = operarios.find((o) => o.id === operarioId);
+    if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
+
+    const id = `HE-${Date.now()}`;
+    const created = {
+      id,
+      operarioId,
+      operarioName: op.name,
+      operarioPuesto: op.puesto || 'operario',
+      areaId: op.currentArea,
+      authorizedDate,
+      startHour: Number(startHour),
+      endHour: Number(endHour),
+      overtimeHours: Number(overtimeHours),
+      overtimeTasks: overtimeTasks.trim(),
+      authorizedBy: user?.name || 'Supervisor',
+      authorizedByRole: user?.roleType || null,
+      createdAt: new Date().toISOString(),
+      verificationStatus: 'pendiente',
+      verifiedBy: null,
+      verifiedByRole: null,
+      verifiedAt: null,
+      verificationNotes: '',
+    };
+
+    try {
+      await setDoc(doc(db, 'horas_extra', id), created);
+      logAudit({ user, module: 'operarios', action: 'Autorizó horas extra con tareas asignadas', details: `${op.name}: ${overtimeHours}h el ${authorizedDate}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al registrar autorización de horas extra:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [operarios, user]);
+
+  /**
+   * Calidad (o Admin) marca si las tareas asignadas durante el tiempo extra realmente se
+   * cumplieron. Exige notas cuando NO se cumplieron, para dejar constancia del motivo.
+   */
+  const verifyHorasExtra = useCallback(async (horasExtraId, { verificationStatus, verificationNotes }) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    if (verificationStatus === 'no_cumplido' && !verificationNotes?.trim()) {
+      return { ok: false, error: 'Indica qué tareas no se cumplieron.' };
+    }
+    try {
+      await updateDoc(doc(db, 'horas_extra', horasExtraId), {
+        verificationStatus,
+        verificationNotes: verificationNotes?.trim() || '',
+        verifiedBy: user?.name || null,
+        verifiedByRole: user?.roleType || null,
+        verifiedAt: new Date().toISOString(),
+      });
+      logAudit({ user, module: 'operarios', action: 'Verificó cumplimiento de horas extra', details: `${horasExtraId}: ${verificationStatus}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al verificar horas extra:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [user]);
+
+  /**
+   * Cancela cualquier autorización de horas extra AÚN PENDIENTE de verificar para este
+   * colaborador en esta fecha — se llama justo antes de guardar una nueva autorización
+   * (o de quitar las horas por completo) para esa misma fecha, así Calidad nunca ve un
+   * registro "fantasma" pidiendo verificar tareas de un turno que ya se canceló o
+   * cambió. Los registros YA verificados (cumplido/no_cumplido) no se tocan — son
+   * historial cerrado, no se reescriben.
+   */
+  const cancelPendingHorasExtra = useCallback(async (operarioId, authorizedDate) => {
+    if (!db) return;
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'horas_extra'),
+        where('operarioId', '==', operarioId),
+        where('authorizedDate', '==', authorizedDate),
+        where('verificationStatus', '==', 'pendiente')
+      ));
+      if (snap.empty) return;
+      await Promise.all(snap.docs.map((docSnap) => updateDoc(docSnap.ref, {
+        verificationStatus: 'cancelado',
+        canceledBy: user?.name || null,
+        canceledByRole: user?.roleType || null,
+        canceledAt: new Date().toISOString(),
+      })));
+      logAudit({ user, module: 'operarios', action: 'Canceló autorización(es) de horas extra previas', details: `${operarioId} (${authorizedDate}): ${snap.size} registro(s)` });
+    } catch (error) {
+      console.error('Error al cancelar autorizaciones de horas extra previas:', error);
+    }
+  }, [user]);
 
   /**
    * Modifica la duración global de los bloques de tiempo de evaluación
@@ -685,6 +800,10 @@ export const OperariosProvider = ({ children }) => {
       authorizeMovimientoDestino,
       rejectMovimiento,
       setOperarioEstado,
+      horasExtra,
+      authorizeOvertimeTasks,
+      verifyHorasExtra,
+      cancelPendingHorasExtra,
     }),
     [
       operarios,
@@ -704,6 +823,10 @@ export const OperariosProvider = ({ children }) => {
       authorizeMovimientoDestino,
       rejectMovimiento,
       setOperarioEstado,
+      horasExtra,
+      authorizeOvertimeTasks,
+      verifyHorasExtra,
+      cancelPendingHorasExtra,
     ]
   );
 
