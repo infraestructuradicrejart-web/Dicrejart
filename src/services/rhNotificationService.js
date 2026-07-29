@@ -1,7 +1,8 @@
 /**
  * @file rhNotificationService.js
  * @description Servicio de generación y preparación de notificaciones por correo electrónico
- * a Recursos Humanos (RH) sobre el reporte diario de faltas y ausencias del personal (10:00 AM).
+ * a Recursos Humanos (RH) sobre el reporte diario de faltas/ausencias y horas extra
+ * autorizadas del personal (10:00 AM).
  * @author Dicrejart Dev Team
  */
 
@@ -22,7 +23,7 @@ export const ESTADO_AUSENCIA_TITULOS = {
 /**
  * Genera el cuerpo en texto y HTML del reporte diario para RH
  */
-export const buildRHReportEmailContent = (absentList, dateStr, emailRH) => {
+export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExtraList = []) => {
   const formattedDate = new Date(`${dateStr}T00:00:00`).toLocaleDateString('es-MX', {
     weekday: 'long',
     year: 'numeric',
@@ -62,6 +63,28 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH) => {
   }
 
   textLines.push(``);
+  textLines.push(`=============================================================`);
+  textLines.push(`HORAS EXTRA AUTORIZADAS HOY`);
+  textLines.push(`=============================================================`);
+  textLines.push(`Total de autorizaciones hoy: ${horasExtraList.length}`);
+  textLines.push(`-------------------------------------------------------------`);
+  textLines.push(``);
+
+  if (horasExtraList.length === 0) {
+    textLines.push(`No se autorizaron horas extra el día de hoy.`);
+  } else {
+    horasExtraList.forEach((he, index) => {
+      textLines.push(`${index + 1}. COLABORADOR: ${he.operarioName} (ID: ${he.operarioId})`);
+      textLines.push(`   • Área: ${he.areaId || 'N/A'}`);
+      textLines.push(`   • Puesto: ${he.operarioPuesto || 'N/A'}`);
+      textLines.push(`   • Horas Extra Autorizadas: ${he.overtimeHours}h (${he.startHour}:00 - ${he.endHour}:00)`);
+      textLines.push(`   • Tareas a Realizar: ${he.overtimeTasks || 'N/A'}`);
+      textLines.push(`   • Autorizó: ${he.authorizedBy || 'N/A'}`);
+      textLines.push(`-------------------------------------------------------------`);
+    });
+  }
+
+  textLines.push(``);
   textLines.push(`Este correo fue generado automáticamente por el Sistema Integral Dicrejart a las 10:00 AM.`);
 
   const bodyText = textLines.join('\n');
@@ -79,17 +102,30 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH) => {
       </tr>
     `).join('');
 
+  const horasExtraRowsHtml = horasExtraList.length === 0
+    ? `<tr><td colspan="5" style="padding: 16px; text-align: center; color: #6b7280; background-color: #f9fafb;">No se autorizaron horas extra el día de hoy.</td></tr>`
+    : horasExtraList.map((he, i) => `
+      <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #1f2937;">${he.operarioName} <br/><span style="font-size:11px; color:#6b7280; font-weight:normal;">ID: ${he.operarioId}</span></td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #374151;">${he.areaId || 'N/A'}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${he.overtimeHours}h (${he.startHour}:00-${he.endHour}:00)</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #4b5563;">${he.overtimeTasks || 'N/A'}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280;">${he.authorizedBy || 'N/A'}</td>
+      </tr>
+    `).join('');
+
   const bodyHtml = `
     <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background-color: #ffffff;">
       <div style="background-color: #1e293b; color: #ffffff; padding: 20px; text-align: center;">
         <h2 style="margin: 0; font-size: 20px; font-weight: bold;">DICREJART - Control de Calidad y Operarios</h2>
-        <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Reporte Diario de Faltas y Ausencias a Recursos Humanos (10:00 AM)</p>
+        <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Reporte Diario de Faltas/Ausencias y Horas Extra Autorizadas (10:00 AM)</p>
       </div>
       <div style="padding: 20px;">
         <p style="font-size: 14px; color: #374151;"><strong>Fecha del Reporte:</strong> ${formattedDate}</p>
         <p style="font-size: 14px; color: #374151;"><strong>Destinatario RH:</strong> <span style="color: #2563eb;">${emailRH || 'Por definir'}</span></p>
+        <h3 style="font-size: 15px; color: #1f2937; border-bottom: 2px solid #1e293b; padding-bottom: 6px;">📋 Faltas y Ausencias</h3>
         <p style="font-size: 14px; color: #374151;"><strong>Total de Personal Ausente:</strong> <span style="background-color: #fee2e2; color: #991b1b; padding: 3px 8px; borderRadius: 4px; font-weight: bold;">${absentList.length} colaborador(es)</span></p>
-        
+
         <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
           <thead>
             <tr style="background-color: #f3f4f6; color: #374151; font-size: 12px; text-transform: uppercase;">
@@ -102,6 +138,24 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH) => {
           </thead>
           <tbody>
             ${rowsHtml}
+          </tbody>
+        </table>
+
+        <h3 style="font-size: 15px; color: #1f2937; border-bottom: 2px solid #1e293b; padding-bottom: 6px; margin-top: 28px;">🕒 Horas Extra Autorizadas</h3>
+        <p style="font-size: 14px; color: #374151;"><strong>Total de Autorizaciones Hoy:</strong> <span style="background-color: #fef3c7; color: #92400e; padding: 3px 8px; border-radius: 4px; font-weight: bold;">${horasExtraList.length} autorización(es)</span></p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+          <thead>
+            <tr style="background-color: #f3f4f6; color: #374151; font-size: 12px; text-transform: uppercase;">
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Colaborador</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Área</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Horas</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Tareas</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Autorizó</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${horasExtraRowsHtml}
           </tbody>
         </table>
       </div>
@@ -119,6 +173,7 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH) => {
  */
 export const triggerDailyRHNotification = async ({
   operarios = [],
+  horasExtra = [],
   generalConfig = {},
   updateGeneralConfig = null,
   force = false,
@@ -139,9 +194,12 @@ export const triggerDailyRHNotification = async ({
 
   // Filtrar colaboradores ausentes (diferentes de 'activo')
   const absentList = operarios.filter((op) => op.estado && op.estado.tipo !== 'activo');
+  // Horas extra autorizadas HOY (se excluyen las canceladas, ver cancelPendingHorasExtra
+  // en OperariosContext.jsx — un registro cancelado ya no representa una autorización vigente)
+  const horasExtraList = horasExtra.filter((he) => he.authorizedDate === todayStr && he.verificationStatus !== 'cancelado');
   const emailTarget = generalConfig.emailRH || 'recursoshumanos@dicrejart.com (Por definir)';
 
-  const { subject, bodyText, bodyHtml } = buildRHReportEmailContent(absentList, todayStr, emailTarget);
+  const { subject, bodyText, bodyHtml } = buildRHReportEmailContent(absentList, todayStr, emailTarget, horasExtraList);
 
   const notifId = `NOTIF-RH-${Date.now()}`;
   const notifRecord = {
@@ -160,6 +218,18 @@ export const triggerDailyRHNotification = async ({
       hasta: op.estado?.hasta || null,
       notas: op.estado?.notas || '',
       registradoPor: op.estado?.registradoPor || 'N/A',
+    })),
+    horasExtraCount: horasExtraList.length,
+    horasExtraList: horasExtraList.map((he) => ({
+      operarioId: he.operarioId,
+      operarioName: he.operarioName,
+      operarioPuesto: he.operarioPuesto || 'N/A',
+      areaId: he.areaId || 'N/A',
+      overtimeHours: he.overtimeHours,
+      startHour: he.startHour,
+      endHour: he.endHour,
+      overtimeTasks: he.overtimeTasks || '',
+      authorizedBy: he.authorizedBy || 'N/A',
     })),
     status: 'enviado',
     subject,
@@ -183,12 +253,13 @@ export const triggerDailyRHNotification = async ({
       user: user || { name: 'Sistema Programado (10:00 AM)', roleType: 'system' },
       module: 'operarios',
       action: 'Generó notificación por correo a RH',
-      details: `Reporte enviado a ${emailTarget} con ${absentList.length} personal ausente`
+      details: `Reporte enviado a ${emailTarget} con ${absentList.length} personal ausente y ${horasExtraList.length} autorización(es) de horas extra`
     });
 
     return {
       ok: true,
       absentCount: absentList.length,
+      horasExtraCount: horasExtraList.length,
       emailTarget,
       record: notifRecord,
     };

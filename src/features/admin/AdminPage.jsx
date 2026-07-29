@@ -101,7 +101,7 @@ const AdminPage = () => {
   // ============================================
   // ESTADO
   // ============================================
-  const { operarios, blockDuration, updateBlockDuration } = useOperarios();
+  const { operarios, horasExtra, blockDuration, updateBlockDuration } = useOperarios();
   const { findOrphanedEvaluaciones, deleteOrphanedEvaluaciones } = useCalidad();
   const { users, addUser, updateUser, deleteUser, resetUserPassword } = useAuth();
   const { limits, updateLimit, generalConfig, updateGeneralConfig, auditLog } = useConfig();
@@ -601,13 +601,14 @@ const AdminPage = () => {
                     onClick={async () => {
                       const res = await triggerDailyRHNotification({
                         operarios,
+                        horasExtra,
                         generalConfig,
                         updateGeneralConfig,
                         force: true,
                         user
                       });
                       if (res && res.ok) {
-                        toast.success(`📧 Reporte de RH preparado correctamente (${res.absentCount} personal ausente). Destinatario: ${res.emailTarget}.`);
+                        toast.success(`📧 Reporte de RH preparado correctamente (${res.absentCount} personal ausente, ${res.horasExtraCount} hora(s) extra autorizadas). Destinatario: ${res.emailTarget}.`);
                         setRhPreviewModal({ isOpen: true, notifRecord: res.record });
                       } else {
                         toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
@@ -1193,7 +1194,8 @@ const AdminPage = () => {
             <div style={{ padding: '12px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '16px', fontSize: '13px' }}>
               <p style={{ margin: '0 0 4px 0' }}><strong>Destinatario RH:</strong> <span style={{ color: '#2563eb', fontWeight: 'bold' }}>{rhPreviewModal.notifRecord.emailRH}</span></p>
               <p style={{ margin: '0 0 4px 0' }}><strong>Horario del corte:</strong> 10:00 AM ({rhPreviewModal.notifRecord.date})</p>
-              <p style={{ margin: 0 }}><strong>Total Personal Ausente:</strong> <Badge variant={rhPreviewModal.notifRecord.absentCount > 0 ? 'danger' : 'success'}>{rhPreviewModal.notifRecord.absentCount} colaborador(es)</Badge></p>
+              <p style={{ margin: '0 0 4px 0' }}><strong>Total Personal Ausente:</strong> <Badge variant={rhPreviewModal.notifRecord.absentCount > 0 ? 'danger' : 'success'}>{rhPreviewModal.notifRecord.absentCount} colaborador(es)</Badge></p>
+              <p style={{ margin: 0 }}><strong>Total Horas Extra Autorizadas:</strong> <Badge variant={rhPreviewModal.notifRecord.horasExtraCount > 0 ? 'warning' : 'neutral'}>{rhPreviewModal.notifRecord.horasExtraCount || 0} autorización(es)</Badge></p>
             </div>
 
             <div style={{ border: '1px solid #cbd5e1', borderRadius: '8px', overflow: 'hidden', maxHeight: '420px', overflowY: 'auto' }}>

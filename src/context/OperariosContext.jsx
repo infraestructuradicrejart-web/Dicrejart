@@ -146,6 +146,7 @@ export const OperariosProvider = ({ children }) => {
       if (isPastTargetTime) {
         const result = await triggerDailyRHNotification({
           operarios,
+          horasExtra,
           generalConfig,
           updateGeneralConfig,
           force: false,
@@ -161,7 +162,7 @@ export const OperariosProvider = ({ children }) => {
     const intervalId = setInterval(checkAndTriggerRHNotification, 60000);
 
     return () => clearInterval(intervalId);
-  }, [operarios, generalConfig, updateGeneralConfig]);
+  }, [operarios, horasExtra, generalConfig, updateGeneralConfig]);
 
   // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE
