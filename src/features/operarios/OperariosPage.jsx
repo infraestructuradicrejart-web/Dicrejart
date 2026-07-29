@@ -102,6 +102,7 @@ const OperariosPage = () => {
     setOperarioEstado,
     authorizeOvertimeTasks,
     cancelPendingHorasExtra,
+    horasExtra,
   } = useOperarios();
 
   const { user } = useAuth();
@@ -627,7 +628,12 @@ const OperariosPage = () => {
       setIsSavingSchedule(false);
     }
 
-    toast.success(`⏱️ Horario actualizado para ${collaborator.name} para la fecha ${authorizedDate}. Horas extras: ${overtimeHours}h.`);
+    const isToday = authorizedDate === getTodayLocalDateStr();
+    toast.success(
+      isToday
+        ? `⏱️ Horario actualizado para ${collaborator.name} para hoy (${authorizedDate}). Horas extras: ${overtimeHours}h.`
+        : `📅 Horas extra programadas para ${collaborator.name} el ${authorizedDate} (${overtimeHours}h). El horario de hoy no se modificó.`
+    );
     handleCloseScheduleModal();
   };
 
@@ -716,6 +722,7 @@ const OperariosPage = () => {
           onClick={async () => {
             const res = await triggerDailyRHNotification({
               operarios,
+              horasExtra,
               generalConfig,
               updateGeneralConfig,
               force: true,
@@ -832,7 +839,13 @@ const OperariosPage = () => {
                   const defaultEnd = isSat ? 13 : 18;
 
                   const hasOvertimeToday = op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStr;
-                  const hasOvertimeFuture = op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate > todayStr;
+                  // Las autorizaciones para fechas FUTURAS no se guardan en op.schedule (ver
+                  // updateOperarioSchedule en OperariosContext.jsx: eso pisaría el horario de
+                  // HOY) — se consultan directo en horas_extra, el registro por fecha.
+                  const nextFutureHE = horasExtra
+                    .filter((h) => h.operarioId === op.id && h.authorizedDate > todayStr && h.verificationStatus !== 'cancelado')
+                    .sort((a, b) => a.authorizedDate.localeCompare(b.authorizedDate))[0];
+                  const hasOvertimeFuture = Boolean(nextFutureHE);
 
                   const startStr = String(hasOvertimeToday ? op.schedule.startHour : 8).padStart(2, '0');
                   const endStr = String(hasOvertimeToday ? op.schedule.endHour : defaultEnd).padStart(2, '0');
@@ -868,8 +881,8 @@ const OperariosPage = () => {
                             </div>
                           )}
                           {hasOvertimeFuture && (
-                            <div className={styles.futureOvertimeHint} title={`Programado por ${op.schedule.authorizedBy}`}>
-                              📅 Extra: +{op.schedule.overtimeHours}h el {op.schedule.authorizedDate}
+                            <div className={styles.futureOvertimeHint} title={`Programado por ${nextFutureHE.authorizedBy}`}>
+                              📅 Extra: +{nextFutureHE.overtimeHours}h el {nextFutureHE.authorizedDate}
                             </div>
                           )}
                         </div>

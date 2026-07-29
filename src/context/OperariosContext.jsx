@@ -265,12 +265,21 @@ export const OperariosProvider = ({ children }) => {
   }, [operarios, user]);
 
   /**
-   * Actualiza el horario de trabajo y horas extras de un colaborador en Firestore
+   * Actualiza el horario de trabajo y horas extras VIGENTE HOY de un colaborador en
+   * Firestore. `operarios.schedule` es un solo campo embebido (no un registro por fecha)
+   * que Operarios y Calidad usan para saber el horario/horas extra de HOY — si se
+   * programa una fecha FUTURA, escribir aquí pisaría el horario de hoy que sigue
+   * vigente y lo haría "desaparecer" de esas vistas. La autorización futura en sí ya
+   * queda registrada aparte, por fecha, en `horas_extra` (ver authorizeOvertimeTasks).
    */
   const updateOperarioSchedule = useCallback(async (operarioId, scheduleData) => {
     if (!db) return;
     const op = operarios.find((o) => o.id === operarioId);
     if (!op) return;
+    if (scheduleData.authorizedDate !== getTodayLocalDateStr()) {
+      logAudit({ user, module: 'operarios', action: 'Programó horario/horas extra para una fecha futura', details: `${op.name}: ${scheduleData.authorizedDate}` });
+      return;
+    }
     try {
       await updateDoc(doc(db, 'operarios', operarioId), {
         schedule: {
