@@ -126,6 +126,11 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
+    // Reglas para el registro/auditoría de las notificaciones diarias de faltas a RH
+    match /notificaciones_rh/{notifId} {
+      allow read, write: if request.auth != null;
+    }
+
     // Reglas para la configuración global de la app: `config/limites` (límites dinámicos
     // de historial) y `config/general` (Modo Mantenimiento, alertas de calidad
     // automáticas, tolerancia de calidad exigida)

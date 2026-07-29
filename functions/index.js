@@ -441,6 +441,34 @@ const notifyDisenoUnassignment = async (before, after) => {
   );
 };
 
+// ============================================================
+// NOTIFICACIÓN POR CORREO DEL REPORTE DIARIO DE FALTAS A RH
+// ============================================================
+/**
+ * El cliente (rhNotificationService.js, disparado automáticamente a las 10:00 AM o
+ * manualmente desde Admin → Configuración) solo GUARDA el reporte ya armado (asunto y
+ * HTML) en `notificaciones_rh` — nunca podría enviar el correo real desde el navegador.
+ * Esta función es la que de verdad lo despacha por SMTP en cuanto se crea el documento.
+ * Si `emailRH` no está configurado todavía, el cliente guarda un texto de aviso en vez de
+ * un correo real (ver rhNotificationService.js) — se valida el formato antes de intentar
+ * enviarlo para no generar un rebote/error de SMTP con esa cadena.
+ */
+const isPlausibleEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value || '');
+
+exports.onNotificacionRHCreated = onDocumentCreated(
+  { document: 'notificaciones_rh/{notifId}', secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    const notif = event.data?.data();
+    if (!notif || !isPlausibleEmail(notif.emailRH)) return;
+
+    await sendMail({
+      to: notif.emailRH,
+      subject: notif.subject,
+      html: notif.bodyHtml,
+    });
+  }
+);
+
 exports.onActividadCreated = onDocumentCreated(
   { document: 'actividades/{id}', secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS] },
   async (event) => {
