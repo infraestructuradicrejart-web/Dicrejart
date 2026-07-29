@@ -23,6 +23,7 @@ import useAuth from '../../hooks/useAuth';
 import PageHeader from '../../components/ui/PageHeader';
 import { isReadOnlySection } from '../../utils/roleAccess';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { getOvertimeBlocks } from '../../utils/overtimeUtils';
 import styles from './CalidadPage.module.css';
 
 /**
@@ -1739,7 +1740,9 @@ const CalidadPage = () => {
                                 // verificarse, ver cancelPendingHorasExtra) no se muestran — ya no
                                 // hay nada real que Calidad deba revisar de esos.
                                 .filter((h) => h.operarioId === op.id && h.authorizedDate === selectedDate && h.verificationStatus !== 'cancelado')
-                                .map((h) => (
+                                .map((h) => {
+                                  const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(h.startHour, h.endHour, h.authorizedDate);
+                                  return (
                                   <div
                                     key={h.id}
                                     style={{
@@ -1753,6 +1756,18 @@ const CalidadPage = () => {
                                   >
                                     <div style={{ fontWeight: 600, color: 'var(--color-secondary)', marginBottom: '2px' }}>
                                       🕒 Tareas del tiempo extra ({h.overtimeHours}h):
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                      {earlyHours > 0 && (
+                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                                          🌅 Matutino: {earlyHours}h ({earlyRange})
+                                        </span>
+                                      )}
+                                      {lateHours > 0 && (
+                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa' }}>
+                                          🌆 Vespertino: {lateHours}h ({lateRange})
+                                        </span>
+                                      )}
                                     </div>
                                     <div style={{ color: 'var(--color-gray-700)', marginBottom: '4px' }}>{h.overtimeTasks}</div>
                                     {h.verificationStatus === 'pendiente' ? (
@@ -1785,7 +1800,8 @@ const CalidadPage = () => {
                                       </span>
                                     )}
                                   </div>
-                                ))}
+                                  );
+                                })}
                             </div>
                           </td>
                           {activeBlocks.map((block, blockIndex) => {

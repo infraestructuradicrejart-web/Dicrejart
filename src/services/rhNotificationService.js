@@ -9,7 +9,17 @@
 import { doc, setDoc, collection, addDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getTodayLocalDateStr } from '../utils/dateUtils';
+import { getOvertimeBlocks } from '../utils/overtimeUtils';
 import { logAudit } from '../utils/auditLog';
+
+/** Describe en texto el/los bloque(s) de tiempo extra de una autorización (matutino y/o vespertino). */
+const describeOvertimeBlocks = (he) => {
+  const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(he.startHour, he.endHour, he.authorizedDate);
+  const parts = [];
+  if (earlyHours > 0) parts.push(`Matutino ${earlyHours}h (${earlyRange})`);
+  if (lateHours > 0) parts.push(`Vespertino ${lateHours}h (${lateRange})`);
+  return parts.length > 0 ? parts.join(' | ') : `${he.overtimeHours}h (${he.startHour}:00-${he.endHour}:00)`;
+};
 
 export const ESTADO_AUSENCIA_TITULOS = {
   falta: 'Falta (Inasistencia Injustificada)',
@@ -77,7 +87,7 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
       textLines.push(`${index + 1}. COLABORADOR: ${he.operarioName} (ID: ${he.operarioId})`);
       textLines.push(`   • Área: ${he.areaId || 'N/A'}`);
       textLines.push(`   • Puesto: ${he.operarioPuesto || 'N/A'}`);
-      textLines.push(`   • Horas Extra Autorizadas: ${he.overtimeHours}h (${he.startHour}:00 - ${he.endHour}:00)`);
+      textLines.push(`   • Horas Extra Autorizadas: ${describeOvertimeBlocks(he)}`);
       textLines.push(`   • Tareas a Realizar: ${he.overtimeTasks || 'N/A'}`);
       textLines.push(`   • Autorizó: ${he.authorizedBy || 'N/A'}`);
       textLines.push(`-------------------------------------------------------------`);
@@ -108,7 +118,7 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
       <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #1f2937;">${he.operarioName} <br/><span style="font-size:11px; color:#6b7280; font-weight:normal;">ID: ${he.operarioId}</span></td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #374151;">${he.areaId || 'N/A'}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${he.overtimeHours}h (${he.startHour}:00-${he.endHour}:00)</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${describeOvertimeBlocks(he)}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #4b5563;">${he.overtimeTasks || 'N/A'}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280;">${he.authorizedBy || 'N/A'}</td>
       </tr>

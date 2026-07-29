@@ -25,6 +25,7 @@ import { ROLE_TYPE_LABELS } from '../../data/usersData';
 import { PUESTO_LABELS, PUESTO_ICONS, PUESTO_BADGE_VARIANT, PUESTO_OPTIONS, DESIGN_PUESTOS } from '../../data/puestoConfig';
 import useConfig from '../../hooks/useConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { getOvertimeBlocks } from '../../utils/overtimeUtils';
 import { triggerDailyRHNotification } from '../../services/rhNotificationService';
 import PageHeader from '../../components/ui/PageHeader';
 import styles from './OperariosPage.module.css';
@@ -545,27 +546,17 @@ const OperariosPage = () => {
     });
   };
 
-  const getIsSaturdayFromDate = (dateStr) => {
-    if (!dateStr) return false;
-    const date = new Date(dateStr + 'T00:00:00');
-    return date.getDay() === 6; // 6 es Sábado
-  };
-
   const handleDateChange = (e) => {
     const dateStr = e.target.value;
     const startVal = Number(scheduleModal.startHour);
     const endVal = Number(scheduleModal.endHour);
 
-    const isSaturday = getIsSaturdayFromDate(dateStr);
-    const baseEnd = isSaturday ? 13 : 18;
-
-    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
-    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
+    const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, dateStr);
 
     setScheduleModal((prev) => ({
       ...prev,
       authorizedDate: dateStr,
-      overtimeHours: String(earlyOvertime + lateOvertime),
+      overtimeHours: String(earlyHours + lateHours),
     }));
   };
 
@@ -573,16 +564,12 @@ const OperariosPage = () => {
     const startVal = Number(e.target.value);
     const endVal = Number(scheduleModal.endHour);
 
-    const isSaturday = getIsSaturdayFromDate(scheduleModal.authorizedDate);
-    const baseEnd = isSaturday ? 13 : 18;
-
-    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
-    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
+    const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, scheduleModal.authorizedDate);
 
     setScheduleModal((prev) => ({
       ...prev,
       startHour: String(startVal),
-      overtimeHours: String(earlyOvertime + lateOvertime),
+      overtimeHours: String(earlyHours + lateHours),
     }));
   };
 
@@ -590,16 +577,12 @@ const OperariosPage = () => {
     const startVal = Number(scheduleModal.startHour);
     const endVal = Number(e.target.value);
 
-    const isSaturday = getIsSaturdayFromDate(scheduleModal.authorizedDate);
-    const baseEnd = isSaturday ? 13 : 18;
-
-    const earlyOvertime = startVal < 8 ? 8 - startVal : 0;
-    const lateOvertime = endVal > baseEnd ? endVal - baseEnd : 0;
+    const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, scheduleModal.authorizedDate);
 
     setScheduleModal((prev) => ({
       ...prev,
       endHour: String(endVal),
-      overtimeHours: String(earlyOvertime + lateOvertime),
+      overtimeHours: String(earlyHours + lateHours),
     }));
   };
 
@@ -1403,12 +1386,35 @@ const OperariosPage = () => {
 
             <div className={styles.formGroup}>
               <label className={styles.label}>Horas Extras Autorizadas</label>
-              <input
-                type="text"
-                className={styles.textInputDisabled}
-                value={`${scheduleModal.overtimeHours} hora(s)`}
-                disabled
-              />
+              {(() => {
+                const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(
+                  Number(scheduleModal.startHour),
+                  Number(scheduleModal.endHour),
+                  scheduleModal.authorizedDate
+                );
+                if (earlyHours === 0 && lateHours === 0) {
+                  return (
+                    <input type="text" className={styles.textInputDisabled} value="0 hora(s) — sin tiempo extra" disabled />
+                  );
+                }
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {earlyHours > 0 && (
+                      <div style={{ fontSize: '13px', padding: '8px 10px', backgroundColor: '#eff6ff', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                        🌅 <strong>Bloque Matutino:</strong> {earlyHours}h ({earlyRange})
+                      </div>
+                    )}
+                    {lateHours > 0 && (
+                      <div style={{ fontSize: '13px', padding: '8px 10px', backgroundColor: '#fff7ed', borderRadius: '6px', border: '1px solid #fed7aa' }}>
+                        🌆 <strong>Bloque Vespertino:</strong> {lateHours}h ({lateRange})
+                      </div>
+                    )}
+                    <div style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
+                      Total: {scheduleModal.overtimeHours} hora(s)
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {Number(scheduleModal.overtimeHours) > 0 && (
