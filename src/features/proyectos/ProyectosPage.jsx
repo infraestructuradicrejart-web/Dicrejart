@@ -44,6 +44,17 @@ const STATUS_BADGE_VARIANT = {
   diseno: 'info',
 };
 
+// Etiquetas de los botones de filtro: no se puede usar status.toUpperCase() a secas
+// porque 'diseno' (la clave interna, sin ñ) se vería "DISENO" en vez de "DISEÑO".
+const TAB_LABELS = {
+  activos: 'ACTIVOS',
+  progreso: 'PROGRESO',
+  diseno: 'DISEÑO',
+  pausado: 'PAUSADO',
+  completado: 'COMPLETADO',
+  todos: 'TODOS',
+};
+
 /**
  * Componente ProyectosPage - Gestión e historial de proyectos
  * @component
@@ -366,7 +377,7 @@ const ProyectosPage = () => {
               className={`${styles.tabButton} ${statusFilter === status ? styles.activeTab : ''}`}
               onClick={() => handleFilterChange(status)}
             >
-              {status.toUpperCase().replace('-', ' ')}
+              {TAB_LABELS[status] || status.toUpperCase().replace('-', ' ')}
             </button>
           ))}
         </div>
