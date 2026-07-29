@@ -28,7 +28,7 @@ export const ConfigContext = createContext(null);
 export const DEFAULT_LIMITS = {
   historialProduccionLimit: 5,
   inspeccionesLimit: 5,
-  evaluacionesLimit: 5,
+  evaluacionesLimit: 50,
   actividadesLimit: 5,
   requisicionesLimit: 5,
   movimientosPersonalLimit: 5,
