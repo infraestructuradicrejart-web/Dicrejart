@@ -849,7 +849,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                       key={`received_${item.gameId}_${item.areaId}`}
                       className={styles.gameItemCard}
                       variants={ITEM_VARIANTS}
-                      style={{ borderLeft: `4px solid ${item.areaColor}` }}
+                      style={{ borderLeft: `4px solid ${item.areaColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                     >
                       <div className={styles.gameInfo}>
                         <span className={styles.gameName}>
@@ -859,9 +859,22 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                           Proyecto: {item.projectName} | <strong>{item.available} piezas listas</strong> (de {item.totalProduced} recibidas / meta {item.target})
                         </span>
                       </div>
-                      <span style={{ fontSize: '11px', color: 'var(--color-gray-500)', fontStyle: 'italic' }}>
-                        Lista para agregar a tarima
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--color-gray-500)', fontStyle: 'italic' }}>
+                          Lista para agregar a tarima
+                        </span>
+                        {!readOnly && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => handleOpenReturnModal(item)}
+                            style={{ padding: '6px 12px', fontSize: '12px' }}
+                            title="Regresar este lote al área de origen (ej. se detectó un error antes de entarimar)"
+                          >
+                            ↩️ Regresar
+                          </Button>
+                        )}
+                      </div>
                     </motion.div>
                   ))}
 
