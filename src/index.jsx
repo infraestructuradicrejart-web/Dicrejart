@@ -7,8 +7,16 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { registerSW } from 'virtual:pwa-register';
 import App from './App';
 import ErrorBoundary from './components/ui/ErrorBoundary';
+
+// El script de registro que Vite inyecta por defecto solo instala el Service Worker,
+// pero no revisa si ya hay uno nuevo esperando ni recarga la pestaña — con
+// registerType: 'autoUpdate' (vite.config.js) esta llamada es la que de verdad detecta
+// una versión nueva desplegada y recarga automáticamente, para que una pestaña que ya
+// estaba abierta no se quede pegada mostrando código viejo indefinidamente.
+registerSW({ immediate: true });
 
 // Importar estilos globales
 // El orden es importante: variables → global → animations → responsive
