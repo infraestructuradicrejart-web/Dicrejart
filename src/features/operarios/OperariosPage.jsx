@@ -596,14 +596,6 @@ const OperariosPage = () => {
       return;
     }
 
-    updateOperarioSchedule(collaborator.id, {
-      startHour: Number(startHour),
-      endHour: Number(endHour),
-      overtimeHours: Number(overtimeHours),
-      authorizedBy: user?.name || 'Supervisor',
-      authorizedDate,
-    });
-
     // Si ya había una autorización pendiente de verificar para este mismo colaborador y
     // fecha (de una edición anterior), se cancela antes de continuar — así nunca queda
     // un registro "fantasma" pidiéndole a Calidad verificar tareas de un turno que se
@@ -611,6 +603,10 @@ const OperariosPage = () => {
     setIsSavingSchedule(true);
     await cancelPendingHorasExtra(collaborator.id, authorizedDate);
 
+    // El registro en horas_extra (lo que Calidad de verdad revisa) se crea ANTES de
+    // actualizar operarios.schedule (lo que enciende el badge "🔥 Extra") — si esto
+    // falla, no se debe activar el badge sin que exista nada que Calidad pueda ver o
+    // corregir, como pasaba antes (badge "EXTRA" visible pero sin registro real detrás).
     if (Number(overtimeHours) > 0) {
       const res = await authorizeOvertimeTasks(collaborator.id, {
         startHour: Number(startHour),
@@ -619,14 +615,21 @@ const OperariosPage = () => {
         overtimeTasks,
         authorizedDate,
       });
-      setIsSavingSchedule(false);
       if (!res.ok) {
+        setIsSavingSchedule(false);
         toast.danger(res.error || 'No se pudo registrar la autorización de horas extra.');
         return;
       }
-    } else {
-      setIsSavingSchedule(false);
     }
+
+    await updateOperarioSchedule(collaborator.id, {
+      startHour: Number(startHour),
+      endHour: Number(endHour),
+      overtimeHours: Number(overtimeHours),
+      authorizedBy: user?.name || 'Supervisor',
+      authorizedDate,
+    });
+    setIsSavingSchedule(false);
 
     const isToday = authorizedDate === getTodayLocalDateStr();
     toast.success(
