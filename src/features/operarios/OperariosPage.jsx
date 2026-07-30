@@ -822,9 +822,14 @@ const OperariosPage = () => {
           <div className={styles.filterBar}>
             <h3 className={styles.sectionTitle}>Padrón de Operarios</h3>
             <div className={styles.filtersGroup}>
-              <div className={styles.filterWrapper}>
+              <div className={styles.filterWrapper} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                {/* Select.jsx pone su etiqueta ARRIBA de la caja (empujándola hacia abajo);
+                    el label flotante de Input.jsx vive DENTRO de la caja, así que usar
+                    Input con label="" desalineaba las dos cajas. Se replica manualmente la
+                    misma etiqueta/espaciado de Select.module.css para que ambas cajas
+                    queden a la misma altura. */}
+                <label style={{ fontSize: 'var(--body-size)', color: 'var(--color-gray-600)' }}>Buscar por Nombre</label>
                 <Input
-                  label="Buscar por Nombre"
                   placeholder="Ej: Juan Pérez..."
                   value={nameSearch}
                   onChange={(e) => setNameSearch(e.target.value)}
