@@ -105,7 +105,7 @@ const OperariosPage = () => {
     horasExtra,
   } = useOperarios();
 
-  const { user } = useAuth();
+  const { user, users } = useAuth();
   const { areas: dynamicAreas } = useAreas();
   const { generalConfig, updateGeneralConfig } = useConfig();
   const toast = useToast();
@@ -183,12 +183,13 @@ const OperariosPage = () => {
     notas: '',
   });
 
-  // Estado para el modal de autorización (correo + contraseña del área que autoriza)
+  // Estado para el modal de autorización (se elige quién autoriza de una lista, y solo se
+  // pide su contraseña — el correo se resuelve internamente a partir del usuario elegido)
   const [authModal, setAuthModal] = useState({
     isOpen: false,
     movimiento: null,
     stage: null,
-    email: '',
+    userId: '',
     password: '',
     loading: false,
   });
@@ -446,23 +447,48 @@ const OperariosPage = () => {
     }
   };
 
-  // Autorización de movimientos (correo + contraseña de quien autoriza)
+  // Autorización de movimientos: se elige de una lista quién autoriza (Admin, Calidad, o
+  // el Encargado/Supervisor de esa área específica) y solo se pide su contraseña — el
+  // correo para verificarla se resuelve del perfil ya elegido, no se vuelve a capturar.
   const handleOpenAuthModal = (mov) => {
     const stage = mov.status === 'pendiente_origen' ? 'origen' : 'destino';
-    setAuthModal({ isOpen: true, movimiento: mov, stage, email: '', password: '', loading: false });
+    setAuthModal({ isOpen: true, movimiento: mov, stage, userId: '', password: '', loading: false });
   };
 
   const handleCloseAuthModal = () => {
-    setAuthModal({ isOpen: false, movimiento: null, stage: null, email: '', password: '', loading: false });
+    setAuthModal({ isOpen: false, movimiento: null, stage: null, userId: '', password: '', loading: false });
   };
+
+  // Quién puede autorizar el movimiento en la etapa actual (origen o destino): Admin y
+  // Calidad para cualquier área, Encargado de esa área específica, o Supervisor que la
+  // cubra — mismo criterio de autoridad que ya valida verifyAreaAuthorizer del lado del
+  // servidor; esta lista es solo para que el usuario elija a quién le va a pedir la
+  // contraseña, no reemplaza esa verificación.
+  const authModalAreaId = authModal.movimiento
+    ? (authModal.stage === 'origen' ? authModal.movimiento.fromAreaId : authModal.movimiento.toAreaId)
+    : null;
+  const authModalCandidates = authModalAreaId
+    ? users.filter((u) => {
+        if (u.status && u.status !== 'activo') return false;
+        if (u.roleType === 'admin' || u.roleType === 'calidad') return true;
+        if (u.roleType === 'encargado-area') return u.areaId === authModalAreaId;
+        if (u.roleType === 'supervisor-area') return (u.areaIds || []).includes(authModalAreaId);
+        return false;
+      })
+    : [];
 
   const handleSubmitAuth = async (e) => {
     e.preventDefault();
-    const { movimiento, stage, email, password } = authModal;
+    const { movimiento, stage, userId, password } = authModal;
+    const selectedUser = users.find((u) => u.id === userId);
+    if (!selectedUser) {
+      toast.danger('Selecciona quién autoriza el movimiento.');
+      return;
+    }
     setAuthModal((prev) => ({ ...prev, loading: true }));
 
     const authorize = stage === 'origen' ? authorizeMovimientoOrigen : authorizeMovimientoDestino;
-    const result = await authorize(movimiento.id, email, password);
+    const result = await authorize(movimiento.id, selectedUser.email, password);
 
     if (result.ok) {
       toast.success('✅ Movimiento autorizado correctamente.');
@@ -1250,7 +1276,7 @@ const OperariosPage = () => {
         </Modal>
       )}
 
-      {/* Modal: Autorizar Movimiento (correo + contraseña de quien autoriza) */}
+      {/* Modal: Autorizar Movimiento (se elige quién autoriza, solo se pide su contraseña) */}
       {authModal.isOpen && (
         <Modal
           isOpen={authModal.isOpen}
@@ -1269,20 +1295,28 @@ const OperariosPage = () => {
             </div>
 
             <p style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
-              Ingresa el correo y contraseña del encargado/supervisor (o administrador) de esa área para confirmar la
-              autorización.
+              Elige quién de esa área autoriza e ingresa solo su contraseña para confirmar.
             </p>
 
-            <div className={styles.formGroup}>
-              <label className={styles.label}>Correo</label>
-              <input
-                type="email"
-                required
-                className={styles.textInput}
-                value={authModal.email}
-                onChange={(e) => setAuthModal((prev) => ({ ...prev, email: e.target.value }))}
-              />
-            </div>
+            {authModalCandidates.length === 0 ? (
+              <p style={{ fontSize: '12px', color: 'var(--color-alert)' }}>
+                ⚠️ No se encontró ningún Encargado/Supervisor (ni Admin/Calidad) con autoridad sobre esa área.
+              </p>
+            ) : (
+              <div className={styles.formGroup}>
+                <label className={styles.label}>¿Quién autoriza?</label>
+                <Select
+                  value={authModal.userId}
+                  onChange={(e) => setAuthModal((prev) => ({ ...prev, userId: e.target.value }))}
+                  required
+                  placeholder="-- Selecciona quién autoriza --"
+                  options={authModalCandidates.map((u) => ({
+                    value: u.id,
+                    label: `${u.name} (${ROLE_TYPE_LABELS[u.roleType] || u.roleType})`,
+                  }))}
+                />
+              </div>
+            )}
 
             <div className={styles.formGroup}>
               <label className={styles.label}>Contraseña</label>
@@ -1299,7 +1333,7 @@ const OperariosPage = () => {
               <Button type="button" variant="secondary" onClick={handleCloseAuthModal} disabled={authModal.loading}>
                 Cancelar
               </Button>
-              <Button type="submit" variant="primary" disabled={authModal.loading}>
+              <Button type="submit" variant="primary" disabled={authModal.loading || authModalCandidates.length === 0}>
                 {authModal.loading ? 'Verificando...' : '🔑 Confirmar Autorización'}
               </Button>
             </div>

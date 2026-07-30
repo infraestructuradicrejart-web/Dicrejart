@@ -342,7 +342,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       const profile = profileSnap.data();
-      if (profile.status !== 'activo') {
+      if (profile.status && profile.status !== 'activo') {
         return { ok: false, error: 'Este usuario está inactivo.' };
       }
 
