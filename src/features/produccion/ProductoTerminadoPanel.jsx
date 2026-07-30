@@ -1060,20 +1060,34 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                     )}
 
                     {!readOnly && e.status === 'carga' && (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => {
-                          if (!e.items || e.items.length === 0) {
-                            toast.danger('No se puede despachar: el envío está vacío. Por favor, edita y agrega elementos primero.');
-                            return;
-                          }
-                          updateEnvioStatus(e.id, 'enviado');
-                          toast.success(`🟢 Envío ${e.id} despachado. ¡Camión en ruta!`);
-                        }}
-                      >
-                        🚚 Despachar Unidad
-                      </Button>
+                      <>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => {
+                            if (!e.items || e.items.length === 0) {
+                              toast.danger('No se puede despachar: el envío está vacío. Por favor, edita y agrega elementos primero.');
+                              return;
+                            }
+                            updateEnvioStatus(e.id, 'enviado');
+                            toast.success(`🟢 Envío ${e.id} despachado. ¡Camión en ruta!`);
+                          }}
+                        >
+                          🚚 Despachar Unidad
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            deleteEnvio(e.id);
+                            toast.info(`Envío ${e.id} cancelado (se detuvo el proceso de carga).`);
+                          }}
+                          style={{ color: 'var(--color-danger)' }}
+                          title="Detener el proceso de carga y eliminar este envío"
+                        >
+                          ❌ Cancelar Carga
+                        </Button>
+                      </>
                     )}
 
                     {e.status === 'enviado' && (

@@ -115,12 +115,19 @@ export const canAccessSection = (user, section, areaId) => {
  *
  * @param {Object} user - Usuario autenticado
  * @param {string} section - Identificador de la sección
+ * @param {string} [areaId] - Área actual dentro de la sección (relevante solo para 'produccion')
  * @returns {boolean} true si la sección debe mostrarse en modo solo lectura
  */
-export const isReadOnlySection = (user, section) => {
+export const isReadOnlySection = (user, section, areaId) => {
   if (!user) return true;
 
   if (user.roleType === ROLE_TYPES.SUPERVISOR_AREA) {
+    // Producto Terminado se opera de verdad (crear tarimas, programar y despachar
+    // envíos, recibir entregas) — a diferencia de las demás áreas, donde Supervisor de
+    // Área solo autoriza/consulta sin operar directamente. canAccessSection ya exige que
+    // esta área esté en su areaIds antes de llegar aquí, así que no hace falta
+    // revalidarlo de nuevo.
+    if (section === 'produccion' && areaId === 'producto-terminado') return false;
     return section === 'produccion';
   }
 

@@ -106,7 +106,7 @@ const ProduccionPage = () => {
 
   const { operarios } = useOperarios();
   const { user } = useAuth();
-  const isReadOnly = isReadOnlySection(user, 'produccion');
+  const isReadOnly = isReadOnlySection(user, 'produccion', areaId);
 
   // Se suscribe al historial de ESTA área (limitado, ver ConfigContext) al entrar, y se
   // desuscribe al salir o cambiar de área. En el selector general (sin areaId, ej. justo
