@@ -339,6 +339,9 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
         items.push({
           type: 'juego',
           gameId: bulkItemObj.gameId,
+          // areaId se guarda explícito (no solo en el texto de "name") para poder revertir
+          // palletizedPieces si esta tarima se elimina más adelante (ver deleteTarima).
+          areaId: bulkItemObj.areaId,
           name: `${bulkItemObj.gameName} (${bulkItemObj.areaName})`,
           quantity: qty,
         });
@@ -905,7 +908,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                           <button
                             onClick={() => {
                               deleteTarima(t.id);
-                              toast.info('Tarima eliminada correctamente.');
+                              toast.info('Tarima eliminada. Las piezas que contenía vuelven a estar disponibles para entarimar.');
                             }}
                             style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontWeight: 'bold' }}
                             title="Eliminar Tarima"

@@ -524,17 +524,40 @@ export const ProduccionProvider = ({ children }) => {
   }, [user]);
 
   /**
-   * Elimina una tarima consolidada
+   * Elimina una tarima consolidada. Antes de borrarla, revierte las piezas que se habían
+   * marcado como "entarimadas" (palletizedPieces) al crearla — de lo contrario esas
+   * piezas quedarían descontadas para siempre sin que ninguna tarima las representara,
+   * sin poder volver a asignarse a una tarima nueva.
    */
   const deleteTarima = useCallback(async (tarimaId) => {
     if (!db) return;
     try {
-      await deleteDoc(doc(db, 'tarimas', tarimaId));
+      const tarimaRef = doc(db, 'tarimas', tarimaId);
+      const tarimaSnap = await getDoc(tarimaRef);
+      if (tarimaSnap.exists()) {
+        const tarimaData = tarimaSnap.data();
+        // Las tarimas creadas antes de este fix no guardan areaId por ítem — esas no se
+        // pueden revertir automáticamente (no hay forma de saber a qué área descontar),
+        // se ignoran en vez de fallar.
+        const gameItems = (tarimaData.items || []).filter(
+          (item) => item.type === 'juego' && item.gameId && item.areaId
+        );
+        for (const item of gameItems) {
+          const j = juegos.find((jg) => jg.id === item.gameId);
+          if (!j) continue;
+          const currentPalletized = j.palletizedPieces?.[item.areaId] || 0;
+          const nextQty = Math.max(0, currentPalletized - (Number(item.quantity) || 0));
+          await updateDoc(doc(db, 'juegos', item.gameId), {
+            [`palletizedPieces.${item.areaId}`]: nextQty,
+          });
+        }
+      }
+      await deleteDoc(tarimaRef);
       logAudit({ user, module: 'produccion', action: 'Eliminó una tarima', details: tarimaId });
     } catch (error) {
       console.error('Error al eliminar tarima de Firestore:', error);
     }
-  }, [user]);
+  }, [user, juegos]);
 
   /**
    * Agrega un nuevo envío programado
