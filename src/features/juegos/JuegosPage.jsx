@@ -78,6 +78,19 @@ const JuegosPage = () => {
     }, {});
   }, [dynamicAreas]);
 
+  // Áreas que sí participan en la secuencia de manufactura de un juego (piezas, avance por
+  // área, checklist de entrega a PT). Diseño y Arquitectura son departamentos que responden
+  // de forma independiente (ver nonProductionAreasConfig.js) — no deben ofrecerse como área
+  // requerida de un juego ni aparecer en el avance de piezas por área, aunque existan como
+  // área dinámica en Firestore (ej. para agrupar colaboradores).
+  const manufacturingAreas = React.useMemo(() => {
+    return dynamicAreas.filter((area) => {
+      if (area.id === 'producto-terminado') return false;
+      const normalized = normalizeText(area.name);
+      return normalized !== 'arquitectura' && normalized !== 'diseno';
+    });
+  }, [dynamicAreas]);
+
   // Un Encargado de Área solo consulta (solo lectura) los juegos que pasan por su área
   const juegos = isEncargado ? allJuegos.filter((j) => j.areas.includes(user.areaId)) : allJuegos;
 
@@ -508,8 +521,8 @@ const JuegosPage = () => {
                 <div className={styles.routeContainer}>
                   <h4 className={styles.routeLabel}>Avance de Piezas por Área</h4>
                   <div className={styles.areaChipsGrid}>
-                    {dynamicAreas
-                      .filter((area) => juego.areas.includes(area.id) && area.id !== 'producto-terminado')
+                    {manufacturingAreas
+                      .filter((area) => juego.areas.includes(area.id))
                       .map((areaInfo) => {
                         const areaId = areaInfo.id;
                         const areaStatus = juego.areaStatus?.[areaId] || 'pendiente';
@@ -662,8 +675,7 @@ const JuegosPage = () => {
               Áreas Requeridas (sin orden; Herrería requiere Corte Láser)
             </label>
             <div className={styles.routeSelectorGrid}>
-              {dynamicAreas
-                .filter((area) => area.id !== 'producto-terminado')
+              {manufacturingAreas
                 .map((area) => {
                   const areaId = area.id;
                   const isSelected = newGame.areas.includes(areaId);
