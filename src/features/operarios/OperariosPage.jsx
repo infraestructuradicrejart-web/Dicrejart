@@ -13,6 +13,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
+import Input from '../../components/ui/Input';
 import Select from '../../components/ui/Select';
 import Badge from '../../components/ui/Badge';
 import Modal from '../../components/ui/Modal';
@@ -112,6 +113,7 @@ const OperariosPage = () => {
 
   const fileInputRef = useRef(null);
   const [areaFilter, setAreaFilter] = useState('todas');
+  const [nameSearch, setNameSearch] = useState('');
   const [sortOrder, setSortOrder] = useState('nombre-asc');
 
   // Barra de scroll horizontal duplicada arriba de la tabla: el navegador solo dibuja
@@ -695,7 +697,9 @@ const OperariosPage = () => {
   };
 
   const filteredOperarios = sortOperarios(
-    areaFilter === 'todas' ? operarios : operarios.filter((op) => op.currentArea === areaFilter)
+    (areaFilter === 'todas' ? operarios : operarios.filter((op) => op.currentArea === areaFilter)).filter((op) =>
+      (op.name || '').toLowerCase().includes(nameSearch.trim().toLowerCase())
+    )
   );
 
   const prestadosCount = operarios.filter((op) => op.currentArea !== op.homeArea).length;
@@ -818,6 +822,15 @@ const OperariosPage = () => {
           <div className={styles.filterBar}>
             <h3 className={styles.sectionTitle}>Padrón de Operarios</h3>
             <div className={styles.filtersGroup}>
+              <div className={styles.filterWrapper}>
+                <Input
+                  label="Buscar por Nombre"
+                  placeholder="Ej: Juan Pérez..."
+                  value={nameSearch}
+                  onChange={(e) => setNameSearch(e.target.value)}
+                  icon="🔍"
+                />
+              </div>
               <div className={styles.filterWrapper}>
                 <Select
                   label="Filtrar por Área Actual"
