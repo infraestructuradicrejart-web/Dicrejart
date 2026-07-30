@@ -21,7 +21,7 @@ import Modal from '../../components/ui/Modal';
 import useToast from '../../hooks/useToast';
 import useOperarios from '../../hooks/useOperarios';
 import useProduccion from '../../hooks/useProduccion';
-import { isAreaBlockedBySequence, AREA_SEQUENCE_DEPENDENCIES } from '../../context/ProduccionContext';
+import { isAreaBlockedBySequence, AREA_SEQUENCE_DEPENDENCIES, getFeederDependentAreaId } from '../../context/ProduccionContext';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection, canAccessSection } from '../../utils/roleAccess';
 import { ROLE_TYPES } from '../../data/usersData';
@@ -1029,6 +1029,12 @@ const ProduccionPage = () => {
                   const deliveryStatus = j.areaDeliveryStatus?.[areaId] || 'pendiente';
                   const qualityStatus = j.qualityReview?.[areaId]?.status || 'pendiente';
                   const isQualityApproved = qualityStatus === 'aprobado';
+                  // Si esta área alimenta a otra del mismo juego (ej. Corte Láser → Herrería),
+                  // su entrega es un traspaso interno — no pasa por Calidad ni se notifica a PT.
+                  const feederDependentAreaId = getFeederDependentAreaId(j, areaId);
+                  const feederDependentAreaName = feederDependentAreaId
+                    ? AREAS_CONFIG.find((a) => a.id === feederDependentAreaId)?.name || feederDependentAreaId
+                    : null;
 
                   const proj = proyectos?.find((p) => p.id === j.projectId);
                   const clientName = proj?.client || 'Cliente General';
@@ -1072,7 +1078,14 @@ const ProduccionPage = () => {
                         </Badge>
                       </td>
                       <td data-label="Entrega a PT">
-                        {!isFinished ? (
+                        {feederDependentAreaId ? (
+                          <span
+                            style={{ fontSize: '12px', color: 'var(--color-gray-500)', fontStyle: 'italic' }}
+                            title={`Esta área entrega su material directo a ${feederDependentAreaName} (proceso interno) — no pasa por Calidad ni se notifica a Producto Terminado.`}
+                          >
+                            ➜ Pasa a {feederDependentAreaName}
+                          </span>
+                        ) : !isFinished ? (
                           <span style={{ color: 'var(--color-gray-400)' }}>—</span>
                         ) : deliveryStatus === 'pendiente' && !isQualityApproved ? (
                           <Badge variant="warning">

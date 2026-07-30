@@ -80,11 +80,28 @@ export const isAreaBlockedBySequence = (game, areaId) => {
 };
 
 /**
+ * Si `areaId` alimenta a otra área del MISMO juego (ej. Corte Láser → Herrería), regresa
+ * el id de esa área dependiente; si no, null. Esa área NO entrega directo a Producto
+ * Terminado (es un traspaso interno) y por lo tanto no requiere aprobación de Calidad ni
+ * el flujo de notificar/recibir entrega.
+ */
+export const getFeederDependentAreaId = (game, areaId) => {
+  const entry = Object.entries(AREA_SEQUENCE_DEPENDENCIES).find(
+    ([dependentArea, requiredArea]) => requiredArea === areaId && game.areas.includes(dependentArea)
+  );
+  return entry ? entry[0] : null;
+};
+
+/**
  * Recalcula el estatus y progreso de Producto Terminado de un juego.
  */
 const recalculatePTStatus = (game) => {
   const operativeAreas = game.areas;
-  const allOperativeReceived = operativeAreas.every(
+  // Las áreas "alimentadoras" (ej. Corte Láser cuando el juego también tiene Herrería)
+  // entregan su material internamente a la siguiente área, no a Producto Terminado —
+  // no deben exigirse en 'recibido_pt' para considerar el juego consolidado en PT.
+  const terminalAreas = operativeAreas.filter((aid) => !getFeederDependentAreaId(game, aid));
+  const allOperativeReceived = terminalAreas.every(
     (aid) => game.areaDeliveryStatus?.[aid] === 'recibido_pt'
   );
 
@@ -969,7 +986,10 @@ export const ProduccionProvider = ({ children }) => {
     };
 
     const operativeAreas = j.areas;
-    const allOperativeReceived = operativeAreas.every(
+    // Ver recalculatePTStatus: las áreas alimentadoras (Corte Láser → Herrería) no
+    // entregan directo a PT, así que no se exigen en 'recibido_pt'.
+    const terminalAreas = operativeAreas.filter((aid) => !getFeederDependentAreaId(j, aid));
+    const allOperativeReceived = terminalAreas.every(
       (aid) => nextDeliveryStatus[aid] === 'recibido_pt'
     );
 
