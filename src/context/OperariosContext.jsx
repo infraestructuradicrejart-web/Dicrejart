@@ -363,6 +363,34 @@ export const OperariosProvider = ({ children }) => {
   }, [user]);
 
   /**
+   * Calidad registra el horario REAL (dentro del bloque de tiempo extra ya autorizado)
+   * cuando el colaborador no llegó o no se retiró a la hora indicada — ej. se autorizó
+   * entrada a las 6:00 pero llegó hasta las 8:00. No sobreescribe `startHour`/`endHour`
+   * (lo autorizado), se guarda como anotación aparte para conservar ambos datos.
+   */
+  const correctHorasExtraSchedule = useCallback(async (horasExtraId, { actualStartHour, actualEndHour, reason }) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    if (!reason?.trim()) return { ok: false, error: 'Indica el motivo de la corrección.' };
+    try {
+      await updateDoc(doc(db, 'horas_extra', horasExtraId), {
+        scheduleCorrection: {
+          actualStartHour: Number(actualStartHour),
+          actualEndHour: Number(actualEndHour),
+          reason: reason.trim(),
+          correctedBy: user?.name || null,
+          correctedByRole: user?.roleType || null,
+          correctedAt: new Date().toISOString(),
+        },
+      });
+      logAudit({ user, module: 'operarios', action: 'Corrigió el horario real de tiempo extra', details: `${horasExtraId}: ${actualStartHour}:00-${actualEndHour}:00 — ${reason.trim()}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al corregir horario de tiempo extra:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [user]);
+
+  /**
    * Cancela cualquier autorización de horas extra AÚN PENDIENTE de verificar para este
    * colaborador en esta fecha — se llama justo antes de guardar una nueva autorización
    * (o de quitar las horas por completo) para esa misma fecha, así Calidad nunca ve un
@@ -813,6 +841,7 @@ export const OperariosProvider = ({ children }) => {
       horasExtra,
       authorizeOvertimeTasks,
       verifyHorasExtra,
+      correctHorasExtraSchedule,
       cancelPendingHorasExtra,
     }),
     [
@@ -836,6 +865,7 @@ export const OperariosProvider = ({ children }) => {
       horasExtra,
       authorizeOvertimeTasks,
       verifyHorasExtra,
+      correctHorasExtraSchedule,
       cancelPendingHorasExtra,
     ]
   );

@@ -212,7 +212,7 @@ const CalidadPage = () => {
     notes: '',
   });
 
-  const { operarios, blockDuration, updateBlockDuration, horasExtra, verifyHorasExtra } = useOperarios();
+  const { operarios, blockDuration, updateBlockDuration, horasExtra, verifyHorasExtra, correctHorasExtraSchedule } = useOperarios();
   const {
     juegos,
     addQualityChecklistItem,
@@ -235,6 +235,17 @@ const CalidadPage = () => {
   // NO se autoriza tiempo extra desde Calidad (eso quedó en Operarios, a cargo del
   // supervisor del área o Admin); aquí solo se consulta y se marca el cumplimiento.
   const [horasExtraRejectModal, setHorasExtraRejectModal] = useState({ isOpen: false, horasExtraId: null, notes: '' });
+  // Desplegable de tarjetas de tiempo extra por colaborador — colapsado por defecto para
+  // que la tarjeta no se vuelva interminable en móvil (una tarjeta = un <tr> apilado ahí).
+  const [expandedOvertimeOperarios, setExpandedOvertimeOperarios] = useState(() => new Set());
+  // Corrección del horario REAL de tiempo extra (llegó/se retiró distinto a lo autorizado)
+  const [scheduleCorrectionModal, setScheduleCorrectionModal] = useState({
+    isOpen: false,
+    horasExtraId: null,
+    actualStartHour: '',
+    actualEndHour: '',
+    reason: '',
+  });
 
   // Tick para forzar el recálculo del bloque activo cada 30 segundos
   const [tick, setTick] = useState(0);
@@ -809,6 +820,41 @@ const CalidadPage = () => {
     }
     toast.warning('❌ Tareas de tiempo extra marcadas como no cumplidas.');
     handleCloseHorasExtraRejectModal();
+  };
+
+  const toggleOvertimeExpanded = (operarioId) => {
+    setExpandedOvertimeOperarios((prev) => {
+      const next = new Set(prev);
+      if (next.has(operarioId)) next.delete(operarioId);
+      else next.add(operarioId);
+      return next;
+    });
+  };
+
+  const handleOpenScheduleCorrectionModal = (h) => {
+    setScheduleCorrectionModal({
+      isOpen: true,
+      horasExtraId: h.id,
+      actualStartHour: String(h.startHour),
+      actualEndHour: String(h.endHour),
+      reason: '',
+    });
+  };
+
+  const handleCloseScheduleCorrectionModal = () => {
+    setScheduleCorrectionModal({ isOpen: false, horasExtraId: null, actualStartHour: '', actualEndHour: '', reason: '' });
+  };
+
+  const handleSubmitScheduleCorrection = async (e) => {
+    e.preventDefault();
+    const { horasExtraId, actualStartHour, actualEndHour, reason } = scheduleCorrectionModal;
+    const res = await correctHorasExtraSchedule(horasExtraId, { actualStartHour, actualEndHour, reason });
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo guardar la corrección de horario.');
+      return;
+    }
+    toast.success('⚠️ Horario de tiempo extra corregido correctamente.');
+    handleCloseScheduleCorrectionModal();
   };
 
   // ============================================
@@ -1735,12 +1781,40 @@ const CalidadPage = () => {
                               {/* Tareas de tiempo extra autorizadas para la FECHA seleccionada arriba
                                   (no solo "hoy") — autorizar quedó en Operarios (supervisor del área o
                                   Admin); aquí Calidad solo consulta y verifica si de verdad se cumplieron. */}
-                              {horasExtra
+                              {(() => {
                                 // Los "cancelado" (autorización retirada o reemplazada antes de
                                 // verificarse, ver cancelPendingHorasExtra) no se muestran — ya no
                                 // hay nada real que Calidad deba revisar de esos.
-                                .filter((h) => h.operarioId === op.id && h.authorizedDate === selectedDate && h.verificationStatus !== 'cancelado')
-                                .map((h) => {
+                                const opHorasExtraToday = horasExtra.filter(
+                                  (h) => h.operarioId === op.id && h.authorizedDate === selectedDate && h.verificationStatus !== 'cancelado'
+                                );
+                                if (opHorasExtraToday.length === 0) return null;
+
+                                const isExpanded = expandedOvertimeOperarios.has(op.id);
+                                const hasCorrection = opHorasExtraToday.some((h) => h.scheduleCorrection);
+
+                                return (
+                                  <div style={{ marginTop: '2px' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleOvertimeExpanded(op.id)}
+                                      style={{
+                                        fontSize: '10.5px',
+                                        fontWeight: 700,
+                                        color: 'var(--color-secondary)',
+                                        background: 'rgba(255, 153, 51, 0.1)',
+                                        border: '1px solid rgba(255, 153, 51, 0.3)',
+                                        borderRadius: '4px',
+                                        padding: '3px 8px',
+                                        cursor: 'pointer',
+                                        width: '100%',
+                                        textAlign: 'left',
+                                      }}
+                                    >
+                                      🕒 Tiempo Extra ({opHorasExtraToday.length}){hasCorrection ? ' ⚠️' : ''} {isExpanded ? '▲' : '▼'}
+                                    </button>
+
+                                    {isExpanded && opHorasExtraToday.map((h) => {
                                   const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(h.startHour, h.endHour, h.authorizedDate);
                                   return (
                                   <div
@@ -1771,7 +1845,7 @@ const CalidadPage = () => {
                                     </div>
                                     <div style={{ color: 'var(--color-gray-700)', marginBottom: '4px' }}>{h.overtimeTasks}</div>
                                     {h.verificationStatus === 'pendiente' ? (
-                                      <div style={{ display: 'flex', gap: '6px' }}>
+                                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                                         <button
                                           type="button"
                                           onClick={() => handleVerifyHorasExtraCumplido(h.id)}
@@ -1799,9 +1873,34 @@ const CalidadPage = () => {
                                         {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
                                       </span>
                                     )}
+                                    {/* Corregir el horario REAL es un concepto aparte de verificar si se
+                                        hicieron las tareas — se muestra sin importar verificationStatus. */}
+                                    <div style={{ marginTop: '4px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenScheduleCorrectionModal(h)}
+                                        style={{ fontSize: '10.5px', fontWeight: 700, color: '#374151', background: 'none', border: '1px solid var(--color-gray-400)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                      >
+                                        ✏️ Corregir Horario
+                                      </button>
+                                    </div>
+                                    {h.scheduleCorrection && (
+                                      <div style={{ marginTop: '4px', fontSize: '10.5px', color: '#b91c1c' }}>
+                                        {h.scheduleCorrection.actualStartHour !== h.startHour && (
+                                          <div>⚠️ Entrada real: {String(h.scheduleCorrection.actualStartHour).padStart(2, '0')}:00 (autorizado {String(h.startHour).padStart(2, '0')}:00)</div>
+                                        )}
+                                        {h.scheduleCorrection.actualEndHour !== h.endHour && (
+                                          <div>⚠️ Salida real: {String(h.scheduleCorrection.actualEndHour).padStart(2, '0')}:00 (autorizado {String(h.endHour).padStart(2, '0')}:00)</div>
+                                        )}
+                                        <div>Motivo: {h.scheduleCorrection.reason} — Corrigió: {h.scheduleCorrection.correctedBy}</div>
+                                      </div>
+                                    )}
                                   </div>
                                   );
-                                })}
+                                    })}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </td>
                           {activeBlocks.map((block, blockIndex) => {
@@ -2047,6 +2146,80 @@ const CalidadPage = () => {
           </form>
         </Modal>
       )}
+
+      {/* MODAL: CORREGIR HORARIO REAL DE TIEMPO EXTRA (llegó/se retiró distinto a lo autorizado) */}
+      {scheduleCorrectionModal.isOpen && (() => {
+        const targetHE = horasExtra.find((h) => h.id === scheduleCorrectionModal.horasExtraId);
+        if (!targetHE) return null;
+        const { earlyHours, lateHours, baseStartHour, baseEndHour } = getOvertimeBlocks(targetHE.startHour, targetHE.endHour, targetHE.authorizedDate);
+
+        const startOptions = [];
+        for (let hVal = targetHE.startHour; hVal <= baseStartHour; hVal += 1) {
+          startOptions.push({ value: String(hVal), label: `${String(hVal).padStart(2, '0')}:00` });
+        }
+        const endOptions = [];
+        for (let hVal = baseEndHour; hVal <= targetHE.endHour; hVal += 1) {
+          endOptions.push({ value: String(hVal), label: `${String(hVal).padStart(2, '0')}:00` });
+        }
+
+        return (
+          <Modal
+            isOpen={scheduleCorrectionModal.isOpen}
+            onClose={handleCloseScheduleCorrectionModal}
+            title="✏️ Corregir Horario de Tiempo Extra"
+          >
+            <form onSubmit={handleSubmitScheduleCorrection} className={styles.modalForm}>
+              <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 0 }}>
+                Autorizado: {String(targetHE.startHour).padStart(2, '0')}:00 - {String(targetHE.endHour).padStart(2, '0')}:00. Ajusta solo la hora del bloque que en realidad no se cumplió como se autorizó.
+              </p>
+
+              {earlyHours > 0 && (
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Hora Real de Entrada (bloque matutino)"
+                    value={scheduleCorrectionModal.actualStartHour}
+                    onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, actualStartHour: e.target.value }))}
+                    required
+                    options={startOptions}
+                  />
+                </div>
+              )}
+
+              {lateHours > 0 && (
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Hora Real de Salida (bloque vespertino)"
+                    value={scheduleCorrectionModal.actualEndHour}
+                    onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, actualEndHour: e.target.value }))}
+                    required
+                    options={endOptions}
+                  />
+                </div>
+              )}
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Motivo de la Corrección</label>
+                <textarea
+                  rows="3"
+                  required
+                  placeholder="Ej: Llegó a las 8:00 en vez de las 6:00 autorizadas, no se realizó el bloque matutino completo..."
+                  value={scheduleCorrectionModal.reason}
+                  onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, reason: e.target.value }))}
+                />
+              </div>
+
+              <div className={styles.modalActions}>
+                <Button type="button" variant="secondary" onClick={handleCloseScheduleCorrectionModal}>
+                  Cancelar
+                </Button>
+                <Button type="submit" variant="primary">
+                  Guardar Corrección
+                </Button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
 
       {/* MODAL: VISTA AMPLIADA DE EVIDENCIA FOTOGRÁFICA */}
       {photoPreview && (

@@ -21,6 +21,25 @@ const describeOvertimeBlocks = (he) => {
   return parts.length > 0 ? parts.join(' | ') : `${he.overtimeHours}h (${he.startHour}:00-${he.endHour}:00)`;
 };
 
+/**
+ * Describe la corrección de horario real que Calidad haya registrado (si el colaborador
+ * no llegó/se retiró a la hora autorizada), o null si no hay ninguna. Solo menciona el
+ * bloque que en verdad cambió, comparando contra lo originalmente autorizado.
+ */
+const describeScheduleCorrection = (he) => {
+  const correction = he.scheduleCorrection;
+  if (!correction) return null;
+  const parts = [];
+  if (correction.actualStartHour !== he.startHour) {
+    parts.push(`Entrada real ${String(correction.actualStartHour).padStart(2, '0')}:00 (autorizado ${String(he.startHour).padStart(2, '0')}:00)`);
+  }
+  if (correction.actualEndHour !== he.endHour) {
+    parts.push(`Salida real ${String(correction.actualEndHour).padStart(2, '0')}:00 (autorizado ${String(he.endHour).padStart(2, '0')}:00)`);
+  }
+  if (parts.length === 0) return null;
+  return `${parts.join(' / ')} — Motivo: ${correction.reason} — Corrigió: ${correction.correctedBy}`;
+};
+
 export const ESTADO_AUSENCIA_TITULOS = {
   falta: 'Falta (Inasistencia Injustificada)',
   incapacidad: 'Incapacidad Médica',
@@ -90,6 +109,10 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
       textLines.push(`   • Horas Extra Autorizadas: ${describeOvertimeBlocks(he)}`);
       textLines.push(`   • Tareas a Realizar: ${he.overtimeTasks || 'N/A'}`);
       textLines.push(`   • Autorizó: ${he.authorizedBy || 'N/A'}`);
+      const correctionText = describeScheduleCorrection(he);
+      if (correctionText) {
+        textLines.push(`   • ⚠️ Horario Corregido: ${correctionText}`);
+      }
       textLines.push(`-------------------------------------------------------------`);
     });
   }
@@ -118,7 +141,7 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
       <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #1f2937;">${he.operarioName} <br/><span style="font-size:11px; color:#6b7280; font-weight:normal;">ID: ${he.operarioId}</span></td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #374151;">${he.areaId || 'N/A'}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${describeOvertimeBlocks(he)}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${describeOvertimeBlocks(he)}${describeScheduleCorrection(he) ? `<br/><span style="font-size:11px; color:#b91c1c; font-weight:600;">⚠️ ${describeScheduleCorrection(he)}</span>` : ''}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #4b5563;">${he.overtimeTasks || 'N/A'}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280;">${he.authorizedBy || 'N/A'}</td>
       </tr>
@@ -240,6 +263,7 @@ export const triggerDailyRHNotification = async ({
       endHour: he.endHour,
       overtimeTasks: he.overtimeTasks || '',
       authorizedBy: he.authorizedBy || 'N/A',
+      scheduleCorrection: he.scheduleCorrection || null,
     })),
     status: 'enviado',
     subject,
