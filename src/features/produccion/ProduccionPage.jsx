@@ -338,10 +338,6 @@ const ProduccionPage = () => {
   const totalProyectado = producedPiecesForArea + qtyDigitada;
   const isCompleted = producedPiecesForArea >= targetPiecesForArea;
   const isExceeded = totalProyectado > targetPiecesForArea;
-  const deliveryStatus = selectedGameObj?.areaDeliveryStatus?.[areaId] || 'pendiente';
-  const qualityReviewForArea = selectedGameObj?.qualityReview?.[areaId];
-  const qualityStatus = qualityReviewForArea?.status || 'pendiente';
-  const isQualityApproved = qualityStatus === 'aprobado';
 
   // Bloqueo por secuencia entre áreas (ej. Herrería requiere que Corte Láser ya haya
   // completado el material de este juego antes de poder registrar producción)
@@ -693,49 +689,9 @@ const ProduccionPage = () => {
                         </span>
                       </div>
                     ) : isCompleted ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <div className={styles.bannerSuccess}>
-                          <strong>✓ Producción Finalizada:</strong>
-                          <span>La meta de <strong>{targetPiecesForArea}</strong> piezas para este juego en esta área ha sido completada al 100%. Registro de piezas cerrado.</span>
-                        </div>
-                        {deliveryStatus === 'pendiente' && !isQualityApproved && (
-                          <div className={styles.bannerDanger} style={{ marginTop: '4px' }}>
-                            <strong>{qualityStatus === 'rechazado' ? '❌ Calidad Rechazó la Revisión:' : '⏳ Esperando Aprobación de Calidad:'}</strong>
-                            <span>
-                              {qualityStatus === 'rechazado'
-                                ? (qualityReviewForArea?.notes || 'Corrige lo señalado por Calidad y solicita una nueva revisión.')
-                                : 'Calidad debe aprobar el checklist de revisión de esta área antes de poder notificar la entrega a Producto Terminado.'}
-                            </span>
-                          </div>
-                        )}
-                        {deliveryStatus === 'pendiente' && isQualityApproved && (
-                          <div style={{ marginTop: '4px' }}>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => {
-                                notifyAreaDelivery(selectedGameObj.id, areaId);
-                                toast.success(`🔔 Se ha notificado la entrega de "${selectedGameObj.name}" a Producto Terminado.`);
-                              }}
-                              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                            >
-                              🔔 Notificar Entrega a Producto Terminado
-                            </Button>
-                          </div>
-                        )}
-                        {deliveryStatus === 'notificado_pt' && (
-                          <div className={styles.bannerWarning} style={{ marginTop: '4px', borderLeftColor: 'var(--color-primary)' }}>
-                            <strong>⏳ Entrega Notificada:</strong>
-                            <span>Esperando que Producto Terminado (PT) verifique con el checklist y reciba el lote.</span>
-                          </div>
-                        )}
-                        {deliveryStatus === 'recibido_pt' && (
-                          <div className={styles.bannerSuccess} style={{ marginTop: '4px' }}>
-                            <strong>✅ Entrega Recibida:</strong>
-                            <span>El lote de piezas de esta área ya fue verificado y recibido en Producto Terminado.</span>
-                          </div>
-                        )}
+                      <div className={styles.bannerSuccess}>
+                        <strong>✓ Producción Finalizada:</strong>
+                        <span>La meta de <strong>{targetPiecesForArea}</strong> piezas para este juego en esta área ha sido completada al 100%. Registro de piezas cerrado. Usa la tabla de abajo para notificar la entrega a Producto Terminado.</span>
                       </div>
                     ) : producedPiecesForArea > 0 ? (
                       <div className={styles.bannerWarning}>
@@ -1057,6 +1013,7 @@ const ProduccionPage = () => {
                   <th>Piezas Producidas</th>
                   <th style={{ width: '200px' }}>Progreso del Área</th>
                   <th>Estado</th>
+                  <th>Entrega a PT</th>
                   <th>Fecha Límite</th>
                   <th>Piezas Externas</th>
                   {areaId === 'mantenimiento' && <th>Iluminación LED</th>}
@@ -1069,6 +1026,9 @@ const ProduccionPage = () => {
                   const pct = Math.min(100, Math.round((produced / target) * 100));
                   const isFinished = produced >= target;
                   const isStarted = produced > 0;
+                  const deliveryStatus = j.areaDeliveryStatus?.[areaId] || 'pendiente';
+                  const qualityStatus = j.qualityReview?.[areaId]?.status || 'pendiente';
+                  const isQualityApproved = qualityStatus === 'aprobado';
 
                   const proj = proyectos?.find((p) => p.id === j.projectId);
                   const clientName = proj?.client || 'Cliente General';
@@ -1111,6 +1071,35 @@ const ProduccionPage = () => {
                           {isFinished ? 'COMPLETADO' : isStarted ? 'EN PROCESO' : 'PENDIENTE'}
                         </Badge>
                       </td>
+                      <td data-label="Entrega a PT">
+                        {!isFinished ? (
+                          <span style={{ color: 'var(--color-gray-400)' }}>—</span>
+                        ) : deliveryStatus === 'pendiente' && !isQualityApproved ? (
+                          <Badge variant="warning">
+                            {qualityStatus === 'rechazado' ? '❌ Rechazado' : '⏳ Esperando Calidad'}
+                          </Badge>
+                        ) : deliveryStatus === 'pendiente' && isQualityApproved ? (
+                          canManageAreaWork(j) ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                notifyAreaDelivery(j.id, areaId);
+                                toast.success(`🔔 Se ha notificado la entrega de "${j.name}" a Producto Terminado.`);
+                              }}
+                            >
+                              🔔 Notificar
+                            </Button>
+                          ) : (
+                            <Badge variant="warning">🔔 Pendiente de Notificar</Badge>
+                          )
+                        ) : deliveryStatus === 'notificado_pt' ? (
+                          <Badge variant="warning">📨 Notificado</Badge>
+                        ) : (
+                          <Badge variant="success">✅ Recibido</Badge>
+                        )}
+                      </td>
                       <td data-label="Fecha Límite" style={{ color: 'var(--color-gray-600)', fontSize: '13px' }}>📅 {limitDate}</td>
                       <td data-label="Piezas Externas">
                         <button
@@ -1151,7 +1140,7 @@ const ProduccionPage = () => {
 
                 {filteredJuegos.length === 0 && (
                   <tr>
-                    <td colSpan={areaId === 'mantenimiento' ? 8 : 7} style={{ textAlign: 'center', padding: '24px', color: 'var(--color-gray-500)' }}>
+                    <td colSpan={areaId === 'mantenimiento' ? 9 : 8} style={{ textAlign: 'center', padding: '24px', color: 'var(--color-gray-500)' }}>
                       No hay juegos activos asignados a esta área actualmente.
                     </td>
                   </tr>
