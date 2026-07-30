@@ -159,6 +159,9 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
             totalProduced: j.producedPieces?.[areaId] || 0,
             target: j.targetPieces?.[areaId] || 10,
             checklist: j.checklist || [],
+            // Visto bueno adicional de Calidad, independiente de la aprobación previa a
+            // notificar — sin esto, PT no puede recibir (ver CalidadPage.jsx).
+            receptionApproved: Boolean(j.receptionApproval?.[areaId]),
           });
         }
       });
@@ -797,7 +800,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                         </span>
                       </div>
                       {!readOnly && (
-                        <div style={{ display: 'flex', gap: '8px' }}>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                           <Button
                             variant="secondary"
                             size="sm"
@@ -807,14 +810,23 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                           >
                             ↩️ Regresar
                           </Button>
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={() => handleOpenReceptionModal(item)}
-                            style={{ padding: '6px 12px', fontSize: '12px' }}
-                          >
-                            📋 Verificar y Recibir
-                          </Button>
+                          {item.receptionApproved ? (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => handleOpenReceptionModal(item)}
+                              style={{ padding: '6px 12px', fontSize: '12px' }}
+                            >
+                              📋 Verificar y Recibir
+                            </Button>
+                          ) : (
+                            <span
+                              style={{ fontSize: '12px', color: 'var(--color-alert)', fontWeight: 600 }}
+                              title="Calidad debe aprobar esta recepción (pestaña de Revisión de Calidad para Entrega a PT) antes de poder recibirla."
+                            >
+                              ⏳ Esperando aprobación de Calidad para recibir
+                            </span>
+                          )}
                         </div>
                       )}
                     </motion.div>

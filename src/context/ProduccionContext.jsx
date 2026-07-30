@@ -1395,6 +1395,32 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, user]);
 
   /**
+   * Calidad da el visto bueno final, como testigo, para que Producto Terminado pueda
+   * recibir físicamente una entrega ya notificada — aprobación adicional a la que ya se
+   * dio antes de notificar (qualityReview), sin checklist ni motivo, solo confirma "todo
+   * está correcto para recibir".
+   */
+  const approveReceptionForPT = useCallback(async (gameId, areaId, reviewerName, reviewerRole) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`receptionApproval.${areaId}`]: {
+          approvedBy: reviewerName,
+          approvedByRole: reviewerRole,
+          approvedAt: new Date().toISOString(),
+        },
+      });
+      logAudit({ user, module: 'produccion', action: 'Aprobó la recepción en Producto Terminado', details: `${j.name} (${areaId}) por ${reviewerName}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al aprobar recepción en Firestore:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
    * Producto Terminado regresa una entrega YA notificada (o ya recibida por error) al
    * área de origen para que la retrabaje: revierte `areaDeliveryStatus` a 'pendiente' (sale
    * de la cola de PT) y marca la revisión de Calidad como 'rechazado' con el motivo, para
@@ -1418,6 +1444,9 @@ export const ProduccionProvider = ({ children }) => {
           notes: notes.trim(),
         },
         [`areaDeliveryStatus.${areaId}`]: 'pendiente',
+        // Se limpia el visto bueno de recepción: si se vuelve a notificar tras corregir,
+        // Calidad debe volver a aprobarla, no debe quedar aprobada de la ronda anterior.
+        [`receptionApproval.${areaId}`]: null,
       });
       logAudit({ user, module: 'produccion', action: 'Regresó entrega a revisión del área', details: `${j.name} (${areaId}) por ${reviewerName}: ${notes.trim()}` });
       return { ok: true };
@@ -1471,6 +1500,7 @@ export const ProduccionProvider = ({ children }) => {
       toggleQualityChecklistItem,
       approveQualityReview,
       rejectQualityReview,
+      approveReceptionForPT,
       returnDeliveryForReview,
     }),
     [
@@ -1513,6 +1543,7 @@ export const ProduccionProvider = ({ children }) => {
       toggleQualityChecklistItem,
       approveQualityReview,
       rejectQualityReview,
+      approveReceptionForPT,
       returnDeliveryForReview,
     ]
   );

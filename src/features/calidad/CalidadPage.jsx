@@ -220,6 +220,7 @@ const CalidadPage = () => {
     toggleQualityChecklistItem,
     approveQualityReview,
     rejectQualityReview,
+    approveReceptionForPT,
   } = useProduccion();
   const { user } = useAuth();
   const toast = useToast();
@@ -1569,6 +1570,47 @@ const CalidadPage = () => {
                       <span> El área ya puede notificar su entrega a Producto Terminado.</span>
                     </div>
                   )}
+
+                  {/* Aprobación ADICIONAL, independiente de la anterior: cuando el área ya
+                      notificó la entrega, Calidad da un visto bueno como testigo antes de
+                      que Producto Terminado pueda recibirla — sin checklist ni motivo. */}
+                  {(() => {
+                    const reviewDeliveryStatus = reviewGameObj.areaDeliveryStatus?.[reviewAreaId] || 'pendiente';
+                    if (reviewDeliveryStatus !== 'notificado_pt' && reviewDeliveryStatus !== 'recibido_pt') return null;
+                    const receptionApproval = reviewGameObj.receptionApproval?.[reviewAreaId];
+                    return (
+                      <div className={receptionApproval ? styles.bannerSuccess : styles.bannerWarning} style={{ marginBottom: '10px' }}>
+                        {receptionApproval ? (
+                          <>
+                            <strong>✅ Recepción aprobada por {receptionApproval.approvedBy}:</strong>
+                            <span> Producto Terminado ya puede recibir esta entrega.</span>
+                          </>
+                        ) : (
+                          <>
+                            <strong>⏳ Falta aprobación para recibir:</strong>
+                            <span> El área ya notificó la entrega — confirma que todo está correcto para que Producto Terminado pueda recibirla.</span>
+                            <div style={{ marginTop: '8px' }}>
+                              <Button
+                                type="button"
+                                variant="primary"
+                                size="sm"
+                                onClick={async () => {
+                                  const res = await approveReceptionForPT(reviewGameObj.id, reviewAreaId, user.name, user.roleType);
+                                  if (!res.ok) {
+                                    toast.danger(res.error || 'No se pudo aprobar la recepción.');
+                                    return;
+                                  }
+                                  toast.success('✅ Recepción aprobada. Producto Terminado ya puede recibir esta entrega.');
+                                }}
+                              >
+                                ✅ Aprobado por Calidad para Recibir
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className={styles.itemsSelectionBox} style={{ maxHeight: '220px', padding: '8px', background: 'var(--color-gray-50)', borderRadius: '8px', border: '1px solid var(--color-gray-200)', marginBottom: '10px' }}>
                     {reviewData.checklist.map((item) => (
