@@ -679,8 +679,8 @@ const CalidadPage = () => {
     removeQualityChecklistItem(reviewGameObj.id, reviewAreaId, itemId);
   };
 
-  const handleApproveReview = () => {
-    const result = approveQualityReview(reviewGameObj.id, reviewAreaId, user.name, '');
+  const handleApproveReview = async () => {
+    const result = await approveQualityReview(reviewGameObj.id, reviewAreaId, user.name, '');
     if (!result.ok) {
       toast.danger(result.error);
       return;
