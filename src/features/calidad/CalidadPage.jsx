@@ -1925,7 +1925,13 @@ const CalidadPage = () => {
                             const isOvertimeBlock = block.startHour < 8 || block.startHour >= defaultEnd;
 
                             const isLive = selectedDate === todayStr && block.id === liveBlockId;
-                            const isPastBlock = selectedDate < todayStr || (selectedDate === todayStr && !isLive);
+                            // Un bloque de HOY que aún no llega (empieza después de la hora
+                            // actual) no es "pasado" — antes cualquier bloque que no fuera el
+                            // vivo se trataba como "previo" y quedaba editable, lo que permitía
+                            // abrir y calificar bloques FUTUROS por error.
+                            const currentHour = new Date().getHours();
+                            const isFutureBlock = selectedDate === todayStr && !isLive && block.startHour > currentHour;
+                            const isPastBlock = selectedDate < todayStr || (selectedDate === todayStr && !isLive && !isFutureBlock);
                             const isOpAbsent = Boolean(op.estado?.tipo && op.estado.tipo !== 'activo');
 
                             const existingEval = dailyEvaluaciones.find(
@@ -1941,6 +1947,19 @@ const CalidadPage = () => {
                                   title="Fuera de su jornada asignada"
                                 >
                                   <span className={styles.naText}>N/A</span>
+                                </td>
+                              );
+                            }
+
+                            if (isFutureBlock) {
+                              return (
+                                <td
+                                  key={block.id}
+                                  data-label={block.name}
+                                  className={styles.disabledCell}
+                                  title="Este bloque todavía no llega — no se puede evaluar por adelantado"
+                                >
+                                  <span className={styles.naText}>🔒 Aún no llega</span>
                                 </td>
                               );
                             }
