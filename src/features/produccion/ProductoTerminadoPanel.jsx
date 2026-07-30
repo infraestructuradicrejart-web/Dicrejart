@@ -9,6 +9,7 @@ import Modal from '../../components/ui/Modal';
 import Badge from '../../components/ui/Badge';
 import useToast from '../../hooks/useToast';
 import useProduccion from '../../hooks/useProduccion';
+import useAuth from '../../hooks/useAuth';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import styles from './ProductoTerminadoPanel.module.css';
@@ -54,9 +55,14 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     palletizePieces,
     updateGameChecklist,
     receiveAreaDelivery,
+    returnDeliveryForReview,
   } = useProduccion();
 
+  const { user } = useAuth();
   const toast = useToast();
+
+  // Regresar una entrega notificada al área de origen (error detectado antes de recibirla)
+  const [returnModal, setReturnModal] = useState({ isOpen: false, item: null, notes: '' });
 
   // Gestión de pestañas: 'recepcion' | 'envios'
   const [activeTab, setActiveTab] = useState('recepcion');
@@ -629,6 +635,27 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     setNewChecklistItem({ text: '', quantity: 1 });
   };
 
+  // Regresar una entrega ya notificada al área de origen (error detectado antes de recibirla)
+  const handleOpenReturnModal = (item) => {
+    setReturnModal({ isOpen: true, item, notes: '' });
+  };
+
+  const handleCloseReturnModal = () => {
+    setReturnModal({ isOpen: false, item: null, notes: '' });
+  };
+
+  const handleSubmitReturnModal = async (e) => {
+    e.preventDefault();
+    const { item, notes } = returnModal;
+    const res = await returnDeliveryForReview(item.gameId, item.areaId, user?.name || 'Producto Terminado', notes);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo regresar la entrega al área.');
+      return;
+    }
+    toast.warning(`↩️ Entrega de "${item.gameName}" regresada a ${item.areaName} para revisión.`);
+    handleCloseReturnModal();
+  };
+
   // Total de piezas ya asignadas en el checklist y piezas esperadas del lote manufacturado
   const checklistAssignedQty = checklistItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
   const checklistExpectedQty = selectedDelivery?.target || 0;
@@ -767,14 +794,25 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                         </span>
                       </div>
                       {!readOnly && (
-                        <Button 
-                          variant="primary" 
-                          size="sm" 
-                          onClick={() => handleOpenReceptionModal(item)}
-                          style={{ padding: '6px 12px', fontSize: '12px' }}
-                        >
-                          📋 Verificar y Recibir
-                        </Button>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => handleOpenReturnModal(item)}
+                            style={{ padding: '6px 12px', fontSize: '12px' }}
+                            title="Regresar al área de origen (ej. se detectó un error antes de recibirla)"
+                          >
+                            ↩️ Regresar
+                          </Button>
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => handleOpenReceptionModal(item)}
+                            style={{ padding: '6px 12px', fontSize: '12px' }}
+                          >
+                            📋 Verificar y Recibir
+                          </Button>
+                        </div>
                       )}
                     </motion.div>
                   ))}
@@ -1492,6 +1530,42 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
             </Button>
             <Button type="submit" variant="primary" size="md">
               {editingShipmentId ? 'Guardar Cambios' : 'Programar Envío'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ============================================
+          MODAL: REGRESAR ENTREGA AL ÁREA DE ORIGEN
+          ============================================ */}
+      <Modal
+        isOpen={returnModal.isOpen}
+        onClose={handleCloseReturnModal}
+        title={`↩️ Regresar Entrega: ${returnModal.item?.gameName || ''} (${returnModal.item?.areaName || ''})`}
+      >
+        <form onSubmit={handleSubmitReturnModal} className={styles.form}>
+          <p style={{ fontSize: '12px', color: 'var(--color-gray-600)', marginTop: 0 }}>
+            Esto quita la entrega de la cola de Producto Terminado y marca la revisión de Calidad
+            de esta área como rechazada, para que el área retrabaje y solicite una nueva revisión
+            antes de poder volver a notificar.
+          </p>
+          <div className={styles.formGroup}>
+            <label className={styles.label}>Motivo por el que se regresa</label>
+            <textarea
+              rows="3"
+              required
+              className={styles.textInput}
+              placeholder="Ej: Se detectó una pieza con medida incorrecta antes de recibir el lote..."
+              value={returnModal.notes}
+              onChange={(e) => setReturnModal((prev) => ({ ...prev, notes: e.target.value }))}
+            />
+          </div>
+          <div className={styles.row} style={{ marginTop: '12px' }}>
+            <Button type="button" variant="secondary" size="md" onClick={handleCloseReturnModal}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="danger" size="md">
+              Regresar al Área
             </Button>
           </div>
         </form>

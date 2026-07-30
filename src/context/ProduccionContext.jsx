@@ -1351,6 +1351,39 @@ export const ProduccionProvider = ({ children }) => {
     }
   }, [juegos, user]);
 
+  /**
+   * Producto Terminado regresa una entrega YA notificada (o ya recibida por error) al
+   * área de origen para que la retrabaje: revierte `areaDeliveryStatus` a 'pendiente' (sale
+   * de la cola de PT) y marca la revisión de Calidad como 'rechazado' con el motivo, para
+   * que el área vea por qué se regresó y deba solicitar una nueva revisión antes de poder
+   * volver a notificar.
+   */
+  const returnDeliveryForReview = useCallback(async (gameId, areaId, reviewerName, notes) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    if (!notes?.trim()) return { ok: false, error: 'Indica el motivo por el que se regresa al área.' };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    const review = getAreaReview(j, areaId);
+
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`qualityReview.${areaId}`]: {
+          ...review,
+          status: 'rechazado',
+          reviewedBy: reviewerName,
+          reviewedAt: new Date().toISOString(),
+          notes: notes.trim(),
+        },
+        [`areaDeliveryStatus.${areaId}`]: 'pendiente',
+      });
+      logAudit({ user, module: 'produccion', action: 'Regresó entrega a revisión del área', details: `${j.name} (${areaId}) por ${reviewerName}: ${notes.trim()}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al regresar entrega a revisión en Firestore:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
   // ============================================
   // PROVIDER VALUE
   // ============================================
@@ -1395,6 +1428,7 @@ export const ProduccionProvider = ({ children }) => {
       toggleQualityChecklistItem,
       approveQualityReview,
       rejectQualityReview,
+      returnDeliveryForReview,
     }),
     [
       proyectos,
@@ -1436,6 +1470,7 @@ export const ProduccionProvider = ({ children }) => {
       toggleQualityChecklistItem,
       approveQualityReview,
       rejectQualityReview,
+      returnDeliveryForReview,
     ]
   );
 
