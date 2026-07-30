@@ -10,6 +10,7 @@ import Badge from '../../components/ui/Badge';
 import useToast from '../../hooks/useToast';
 import useProduccion from '../../hooks/useProduccion';
 import useAuth from '../../hooks/useAuth';
+import useProgressiveList from '../../hooks/useProgressiveList';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import styles from './ProductoTerminadoPanel.module.css';
@@ -168,6 +169,33 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     });
     return list;
   }, [juegos]);
+
+  // Revela cada una de las 4 listas de esta página en tandas de 15, en vez de pintarlas
+  // completas de una vez conforme se acumulan entregas/tarimas/envíos.
+  const {
+    visibleItems: visiblePendingDeliveries,
+    hasMore: hasMorePendingDeliveries,
+    remaining: remainingPendingDeliveries,
+    showMore: showMorePendingDeliveries,
+  } = useProgressiveList(pendingDeliveries);
+  const {
+    visibleItems: visibleBulkItemsReceived,
+    hasMore: hasMoreBulkItemsReceived,
+    remaining: remainingBulkItemsReceived,
+    showMore: showMoreBulkItemsReceived,
+  } = useProgressiveList(bulkItemsReceived);
+  const {
+    visibleItems: visibleTarimas,
+    hasMore: hasMoreTarimas,
+    remaining: remainingTarimas,
+    showMore: showMoreTarimas,
+  } = useProgressiveList(tarimas);
+  const {
+    visibleItems: visibleEnvios,
+    hasMore: hasMoreEnvios,
+    remaining: remainingEnvios,
+    showMore: showMoreEnvios,
+  } = useProgressiveList(envios);
 
   // Filtrar piezas disponibles para el proyecto seleccionado en el modal de Tarima
   const bulkItemsForSelectedProject = useMemo(() => {
@@ -779,7 +807,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                 </div>
 
                 <div className={styles.listContainer}>
-                  {pendingDeliveries.map((item) => (
+                  {visiblePendingDeliveries.map((item) => (
                     <motion.div
                       key={`pending_${item.gameId}_${item.areaId}`}
                       className={styles.gameItemCard}
@@ -845,6 +873,13 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                       ✨ No hay entregas pendientes de manufactura en este momento.
                     </div>
                   )}
+                  {hasMorePendingDeliveries && (
+                    <div style={{ textAlign: 'center', marginTop: 'var(--space-3)' }}>
+                      <Button variant="secondary" size="sm" onClick={showMorePendingDeliveries}>
+                        Cargar {Math.min(remainingPendingDeliveries, 15)} más ({remainingPendingDeliveries} restantes)
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -856,7 +891,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                 </div>
 
                 <div className={styles.listContainer}>
-                  {bulkItemsReceived.map((item) => (
+                  {visibleBulkItemsReceived.map((item) => (
                     <motion.div
                       key={`received_${item.gameId}_${item.areaId}`}
                       className={styles.gameItemCard}
@@ -897,6 +932,13 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                       color="var(--color-blue-magenta-violet)"
                     />
                   )}
+                  {hasMoreBulkItemsReceived && (
+                    <div style={{ textAlign: 'center', marginTop: 'var(--space-3)' }}>
+                      <Button variant="secondary" size="sm" onClick={showMoreBulkItemsReceived}>
+                        Cargar {Math.min(remainingBulkItemsReceived, 15)} más ({remainingBulkItemsReceived} restantes)
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -913,7 +955,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
               </div>
 
               <div className={styles.listContainer}>
-                {tarimas.map((t) => (
+                {visibleTarimas.map((t) => (
                   <Card
                     key={t.id}
                     variant="default"
@@ -971,6 +1013,13 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                     color="var(--color-blue-magenta-violet)"
                   />
                 )}
+                {hasMoreTarimas && (
+                  <div style={{ textAlign: 'center', marginTop: 'var(--space-3)' }}>
+                    <Button variant="secondary" size="sm" onClick={showMoreTarimas}>
+                      Cargar {Math.min(remainingTarimas, 15)} más ({remainingTarimas} restantes)
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>
@@ -993,7 +1042,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
             </div>
 
             <div className={styles.shipmentsGrid}>
-              {envios.map((e) => (
+              {visibleEnvios.map((e) => (
                 <Card key={e.id} variant="default" className={styles.shipmentCard}>
                   <div className={styles.shipmentHeader}>
                     <span className={styles.shipmentId}>{e.id}</span>
@@ -1134,6 +1183,13 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                     shape="trebol"
                     color="var(--color-blue-magenta-violet)"
                   />
+                </div>
+              )}
+              {hasMoreEnvios && (
+                <div style={{ gridColumn: '1 / -1', textAlign: 'center', marginTop: 'var(--space-3)' }}>
+                  <Button variant="secondary" size="sm" onClick={showMoreEnvios}>
+                    Cargar {Math.min(remainingEnvios, 15)} más ({remainingEnvios} restantes)
+                  </Button>
                 </div>
               )}
             </div>

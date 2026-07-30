@@ -24,6 +24,7 @@ import PageHeader from '../../components/ui/PageHeader';
 import { isReadOnlySection } from '../../utils/roleAccess';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { getOvertimeBlocks } from '../../utils/overtimeUtils';
+import useProgressiveList from '../../hooks/useProgressiveList';
 import styles from './CalidadPage.module.css';
 
 /**
@@ -276,6 +277,15 @@ const CalidadPage = () => {
   const areaOperarios = useMemo(() => {
     return operarios.filter((op) => op.currentArea === evalAreaId);
   }, [operarios, evalAreaId]);
+
+  // Revela los colaboradores del área en tandas de 15 en vez de pintar la tabla completa
+  // de una vez — vuelve a empezar desde la primera tanda al cambiar de área o de fecha.
+  const {
+    visibleItems: visibleAreaOperarios,
+    hasMore: hasMoreAreaOperarios,
+    remaining: remainingAreaOperarios,
+    showMore: showMoreAreaOperarios,
+  } = useProgressiveList(areaOperarios, { resetKey: `${evalAreaId}-${selectedDate}` });
 
   const todayStr = useMemo(() => getTodayLocalDateStr(), []);
   // OJO: el horario extendido (horas extra) se calcula para la fecha SELECCIONADA en el
@@ -1782,7 +1792,7 @@ const CalidadPage = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {areaOperarios.map((op) => {
+                    {visibleAreaOperarios.map((op) => {
                       // Horario real de ESTE colaborador para la fecha seleccionada (no solo
                       // "hoy") — se consulta horas_extra por fecha en vez de operarios.schedule,
                       // que solo refleja el día vigente actual.
@@ -2114,6 +2124,13 @@ const CalidadPage = () => {
                   </tbody>
                 </table>
               </div>
+              {hasMoreAreaOperarios && (
+                <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+                  <Button variant="secondary" onClick={showMoreAreaOperarios}>
+                    Cargar {Math.min(remainingAreaOperarios, 15)} más ({remainingAreaOperarios} restantes)
+                  </Button>
+                </div>
+              )}
             </Card>
           </motion.div>
         </div>

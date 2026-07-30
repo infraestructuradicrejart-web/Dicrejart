@@ -22,6 +22,7 @@ import useToast from '../../hooks/useToast';
 import useOperarios from '../../hooks/useOperarios';
 import useProduccion from '../../hooks/useProduccion';
 import { isAreaBlockedBySequence, AREA_SEQUENCE_DEPENDENCIES, getFeederDependentAreaId } from '../../context/ProduccionContext';
+import useProgressiveList from '../../hooks/useProgressiveList';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection, canAccessSection } from '../../utils/roleAccess';
 import { ROLE_TYPES } from '../../data/usersData';
@@ -320,6 +321,14 @@ const ProduccionPage = () => {
     }
     return juegos.filter((j) => j.areas.includes(areaId));
   }, [juegos, areaId]);
+
+  // Revela la tabla de juegos asignados en tandas de 15 en vez de pintarla completa.
+  const {
+    visibleItems: visibleFilteredJuegos,
+    hasMore: hasMoreFilteredJuegos,
+    remaining: remainingFilteredJuegos,
+    showMore: showMoreFilteredJuegos,
+  } = useProgressiveList(filteredJuegos, { resetKey: areaId });
 
   // Operarios asignados temporal o permanentemente a esta área
   const operadoresDisponibles = operarios.filter((op) => op.currentArea === areaId);
@@ -1020,7 +1029,7 @@ const ProduccionPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredJuegos.map((j) => {
+                {visibleFilteredJuegos.map((j) => {
                   const target = j.targetPieces?.[areaId] || 10;
                   const produced = j.producedPieces?.[areaId] || 0;
                   const pct = Math.min(100, Math.round((produced / target) * 100));
@@ -1161,6 +1170,13 @@ const ProduccionPage = () => {
               </tbody>
             </table>
           </div>
+          {hasMoreFilteredJuegos && (
+            <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+              <Button variant="secondary" onClick={showMoreFilteredJuegos}>
+                Cargar {Math.min(remainingFilteredJuegos, 15)} más ({remainingFilteredJuegos} restantes)
+              </Button>
+            </div>
+          )}
         </Card>
       </motion.div>
 

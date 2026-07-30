@@ -28,6 +28,7 @@ import useConfig from '../../hooks/useConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { getOvertimeBlocks } from '../../utils/overtimeUtils';
 import { triggerDailyRHNotification } from '../../services/rhNotificationService';
+import useProgressiveList from '../../hooks/useProgressiveList';
 import PageHeader from '../../components/ui/PageHeader';
 import styles from './OperariosPage.module.css';
 
@@ -702,6 +703,13 @@ const OperariosPage = () => {
     )
   );
 
+  // Revela el padrón en tandas de 15 en vez de pintarlo completo de una vez — vuelve a
+  // empezar desde la primera tanda cuando cambia el filtro de área, la búsqueda o el orden.
+  const { visibleItems: visibleOperarios, hasMore: hasMoreOperarios, remaining: remainingOperarios, showMore: showMoreOperarios } = useProgressiveList(
+    filteredOperarios,
+    { resetKey: `${areaFilter}-${nameSearch}-${sortOrder}` }
+  );
+
   const prestadosCount = operarios.filter((op) => op.currentArea !== op.homeArea).length;
   
   const todayStr = getTodayLocalDateStr();
@@ -876,7 +884,7 @@ const OperariosPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredOperarios.map((op) => {
+                {visibleOperarios.map((op) => {
                   const isPrestado = op.currentArea !== op.homeArea;
                   // El personal de Diseño tiene una jerarquía distinta a la del piso de
                   // manufactura: no aplican préstamos/cambios de área entre áreas de
@@ -1011,6 +1019,13 @@ const OperariosPage = () => {
               </tbody>
             </table>
           </div>
+          {hasMoreOperarios && (
+            <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+              <Button variant="secondary" onClick={showMoreOperarios}>
+                Cargar {Math.min(remainingOperarios, 15)} más ({remainingOperarios} restantes)
+              </Button>
+            </div>
+          )}
         </Card>
       </motion.div>
 

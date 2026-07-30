@@ -25,6 +25,7 @@ import useAreas from '../../hooks/useAreas';
 import { PRIORITY_LABELS, ACTIVITY_STATUS_LABELS } from '../../data/actividadesData';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
+import useProgressiveList from '../../hooks/useProgressiveList';
 import styles from './ActividadesPage.module.css';
 
 /**
@@ -191,6 +192,14 @@ const ActividadesPage = () => {
     return matchesArea && matchesStatus;
   });
 
+  // Revela la lista de actividades en tandas de 15, en vez de pintarla completa.
+  const {
+    visibleItems: visibleFilteredActividades,
+    hasMore: hasMoreFilteredActividades,
+    remaining: remainingFilteredActividades,
+    showMore: showMoreFilteredActividades,
+  } = useProgressiveList(filteredActividades, { resetKey: `${areaFilter}-${statusFilter}` });
+
   // ============================================
   // ANIMACIONES
   // ============================================
@@ -253,7 +262,7 @@ const ActividadesPage = () => {
           ============================================ */}
       {filteredActividades.length > 0 ? (
         <motion.div className={styles.grid} variants={listVariants} initial="initial" animate="animate">
-          {filteredActividades.map((act) => (
+          {visibleFilteredActividades.map((act) => (
             <motion.div key={act.id} variants={cardVariants}>
               <Card variant="default" className={styles.activityCard}>
                 <div className={styles.cardHeader}>
@@ -334,6 +343,13 @@ const ActividadesPage = () => {
           shape="trebol"
           color="var(--color-princeton-orange)"
         />
+      )}
+      {hasMoreFilteredActividades && (
+        <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+          <Button variant="secondary" onClick={showMoreFilteredActividades}>
+            Cargar {Math.min(remainingFilteredActividades, 15)} más ({remainingFilteredActividades} restantes)
+          </Button>
+        </div>
       )}
 
       {/* ============================================

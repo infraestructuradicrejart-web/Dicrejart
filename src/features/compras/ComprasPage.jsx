@@ -13,6 +13,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
+import useProgressiveList from '../../hooks/useProgressiveList';
 import Select from '../../components/ui/Select';
 import Badge from '../../components/ui/Badge';
 import Modal from '../../components/ui/Modal';
@@ -939,6 +940,32 @@ const ComprasPage = () => {
     return requisiciones.filter((r) => r.requestedByUserId === user?.id);
   }, [requisiciones, isAdmin, user]);
 
+  // Revela cada una de las 3 listas en tandas de 15, en vez de pintarlas completas.
+  const {
+    visibleItems: visiblePendientesAutorizacion,
+    hasMore: hasMorePendientesAutorizacion,
+    remaining: remainingPendientesAutorizacion,
+    showMore: showMorePendientesAutorizacion,
+  } = useProgressiveList(pendientesAutorizacion);
+  const {
+    visibleItems: visibleAutorizadasPendientesCompra,
+    hasMore: hasMoreAutorizadasPendientesCompra,
+    remaining: remainingAutorizadasPendientesCompra,
+    showMore: showMoreAutorizadasPendientesCompra,
+  } = useProgressiveList(autorizadasPendientesCompra);
+  const {
+    visibleItems: visibleMisSolicitudes,
+    hasMore: hasMoreMisSolicitudes,
+    remaining: remainingMisSolicitudes,
+    showMore: showMoreMisSolicitudes,
+  } = useProgressiveList(misSolicitudes);
+  const {
+    visibleItems: visibleRequisiciones,
+    hasMore: hasMoreRequisiciones,
+    remaining: remainingRequisiciones,
+    showMore: showMoreRequisiciones,
+  } = useProgressiveList(requisiciones);
+
   const containerVariants = {
     initial: { opacity: 0 },
     animate: { opacity: 1, transition: { staggerChildren: 0.05 } },
@@ -1101,7 +1128,7 @@ const ComprasPage = () => {
           {pendientesAutorizacion.length === 0 && (
             <EmptyState message="No hay requisiciones pendientes de autorización." shape="arco-doble" color="var(--color-princeton-orange)" />
           )}
-          {pendientesAutorizacion.map((req) => (
+          {visiblePendientesAutorizacion.map((req) => (
             <RequisitionCard key={req.id} req={req}>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <Button variant="primary" size="sm" onClick={() => handleOpenReviewModal(req, 'authorize')}>
@@ -1113,6 +1140,13 @@ const ComprasPage = () => {
               </div>
             </RequisitionCard>
           ))}
+          {hasMorePendientesAutorizacion && (
+            <div style={{ textAlign: 'center', marginTop: 'var(--space-3)' }}>
+              <Button variant="secondary" size="sm" onClick={showMorePendientesAutorizacion}>
+                Cargar {Math.min(remainingPendientesAutorizacion, 15)} más ({remainingPendientesAutorizacion} restantes)
+              </Button>
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -1123,13 +1157,20 @@ const ComprasPage = () => {
           {autorizadasPendientesCompra.length === 0 && (
             <EmptyState message="No hay requisiciones autorizadas pendientes de compra." shape="anillo" color="var(--color-tiffany-blue)" />
           )}
-          {autorizadasPendientesCompra.map((req) => (
+          {visibleAutorizadasPendientesCompra.map((req) => (
             <RequisitionCard key={req.id} req={req}>
               <Button variant="primary" size="sm" onClick={() => handleOpenPurchaseModal(req)}>
                 💳 Registrar Compra
               </Button>
             </RequisitionCard>
           ))}
+          {hasMoreAutorizadasPendientesCompra && (
+            <div style={{ textAlign: 'center', marginTop: 'var(--space-3)' }}>
+              <Button variant="secondary" size="sm" onClick={showMoreAutorizadasPendientesCompra}>
+                Cargar {Math.min(remainingAutorizadasPendientesCompra, 15)} más ({remainingAutorizadasPendientesCompra} restantes)
+              </Button>
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -1140,7 +1181,7 @@ const ComprasPage = () => {
           {misSolicitudes.length === 0 && (
             <EmptyState message="Aún no has creado ninguna requisición." shape="cacahuate" color="var(--color-princeton-orange)" />
           )}
-          {misSolicitudes.map((req) => (
+          {visibleMisSolicitudes.map((req) => (
             <RequisitionCard key={req.id} req={req}>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 {req.status === 'regresada' && (
@@ -1163,6 +1204,13 @@ const ComprasPage = () => {
               </div>
             </RequisitionCard>
           ))}
+          {hasMoreMisSolicitudes && (
+            <div style={{ textAlign: 'center', marginTop: 'var(--space-3)' }}>
+              <Button variant="secondary" size="sm" onClick={showMoreMisSolicitudes}>
+                Cargar {Math.min(remainingMisSolicitudes, 15)} más ({remainingMisSolicitudes} restantes)
+              </Button>
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -1170,9 +1218,16 @@ const ComprasPage = () => {
       {(isDireccion || isCompras) && (
         <motion.div variants={itemVariants}>
           <h3 style={{ marginBottom: '10px' }}>📚 Historial General ({requisiciones.length})</h3>
-          {requisiciones.map((req) => (
+          {visibleRequisiciones.map((req) => (
             <RequisitionCard key={req.id} req={req} />
           ))}
+          {hasMoreRequisiciones && (
+            <div style={{ textAlign: 'center', marginTop: 'var(--space-3)' }}>
+              <Button variant="secondary" size="sm" onClick={showMoreRequisiciones}>
+                Cargar {Math.min(remainingRequisiciones, 15)} más ({remainingRequisiciones} restantes)
+              </Button>
+            </div>
+          )}
         </motion.div>
       )}
 

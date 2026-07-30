@@ -20,6 +20,7 @@ import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection } from '../../utils/roleAccess';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
+import useProgressiveList from '../../hooks/useProgressiveList';
 import styles from './ProyectosPage.module.css';
 
 /**
@@ -303,6 +304,14 @@ const ProyectosPage = () => {
     return matchesSearch && matchesStatus;
   });
 
+  // Revela las tarjetas de proyectos en tandas de 15, en vez de pintarlas todas de una vez.
+  const {
+    visibleItems: visibleFilteredProyectos,
+    hasMore: hasMoreFilteredProyectos,
+    remaining: remainingFilteredProyectos,
+    showMore: showMoreFilteredProyectos,
+  } = useProgressiveList(filteredProyectos, { resetKey: `${searchTerm}-${statusFilter}` });
+
   // ============================================
   // ANIMACIONES
   // ============================================
@@ -391,7 +400,7 @@ const ProyectosPage = () => {
           initial="initial"
           animate="animate"
         >
-          {filteredProyectos.map((proj) => {
+          {visibleFilteredProyectos.map((proj) => {
             // Obtener los juegos pertenecientes a este proyecto
             const projectGames = juegos.filter((jg) => jg.projectId === proj.id);
 
@@ -520,6 +529,13 @@ const ProyectosPage = () => {
           shape="arco-doble"
           color="var(--color-tiffany-blue)"
         />
+      )}
+      {hasMoreFilteredProyectos && (
+        <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+          <Button variant="secondary" onClick={showMoreFilteredProyectos}>
+            Cargar {Math.min(remainingFilteredProyectos, 15)} más ({remainingFilteredProyectos} restantes)
+          </Button>
+        </div>
       )}
 
       {/* MODAL NUEVO PROYECTO */}

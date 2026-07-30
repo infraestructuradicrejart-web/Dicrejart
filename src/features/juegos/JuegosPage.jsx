@@ -20,6 +20,7 @@ import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection } from '../../utils/roleAccess';
 import { normalizeText } from '../../data/areasConfig';
 import useAreas from '../../hooks/useAreas';
+import useProgressiveList from '../../hooks/useProgressiveList';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import styles from './JuegosPage.module.css';
@@ -370,6 +371,14 @@ const JuegosPage = () => {
     return matchesSearch && matchesProject && matchesStatus;
   });
 
+  // Revela las tarjetas de juegos en tandas de 15, en vez de pintarlas todas de una vez.
+  const {
+    visibleItems: visibleFilteredJuegos,
+    hasMore: hasMoreFilteredJuegos,
+    remaining: remainingFilteredJuegos,
+    showMore: showMoreFilteredJuegos,
+  } = useProgressiveList(filteredJuegos, { resetKey: `${searchTerm}-${projectFilter}-${statusFilter}` });
+
   // ============================================
   // ANIMACIONES
   // ============================================
@@ -475,7 +484,7 @@ const JuegosPage = () => {
           initial="initial"
           animate="animate"
         >
-          {filteredJuegos.map((juego) => (
+          {visibleFilteredJuegos.map((juego) => (
             <motion.div key={juego.id} variants={cardVariants}>
               <Card variant="default" className={styles.gameCard}>
                 <div className={styles.cardHeader}>
@@ -623,6 +632,13 @@ const JuegosPage = () => {
         </motion.div>
       ) : (
         <EmptyState message="No se encontraron juegos activos." shape="mancha" color="var(--color-golden-yellow)" />
+      )}
+      {hasMoreFilteredJuegos && (
+        <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+          <Button variant="secondary" onClick={showMoreFilteredJuegos}>
+            Cargar {Math.min(remainingFilteredJuegos, 15)} más ({remainingFilteredJuegos} restantes)
+          </Button>
+        </div>
       )}
 
       {/* MODAL REGISTRAR JUEGO */}
