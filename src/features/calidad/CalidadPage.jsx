@@ -277,26 +277,37 @@ const CalidadPage = () => {
   }, [operarios, evalAreaId]);
 
   const todayStr = useMemo(() => getTodayLocalDateStr(), []);
-  const isSaturday = useMemo(() => new Date().getDay() === 6, []);
-  const defaultEnd = useMemo(() => (isSaturday ? 13 : 18), [isSaturday]);
+  // OJO: el horario extendido (horas extra) se calcula para la fecha SELECCIONADA en el
+  // navegador de arriba (selectedDate), no para "hoy" — de lo contrario, al consultar un
+  // día previo con horas extra ya autorizadas, esos bloques (ej. 06:00-08:00 o
+  // 18:00-20:00) ni siquiera se generarían como columnas, y las evaluaciones de ese
+  // colaborador en ese día se verían "totalmente bloqueadas" (N/A) sin explicación.
+  const isSelectedDateSaturday = useMemo(() => new Date(`${selectedDate}T00:00:00`).getDay() === 6, [selectedDate]);
+  const defaultEnd = useMemo(() => (isSelectedDateSaturday ? 13 : 18), [isSelectedDateSaturday]);
 
-  // Encontrar el horario de entrada más temprano registrado para hoy para los operarios del área elegida
+  // Encontrar el horario de entrada más temprano registrado para la fecha seleccionada,
+  // consultando el registro auditable por fecha (horas_extra) en vez del campo "vigente
+  // hoy" operarios.schedule
   const minStartHour = useMemo(() => {
     return areaOperarios.reduce((min, op) => {
-      const isTodaySchedule = op.schedule?.authorizedDate === todayStr;
-      const opStart = isTodaySchedule ? (op.schedule?.startHour || 8) : 8;
+      const dateRecord = horasExtra.find(
+        (h) => h.operarioId === op.id && h.authorizedDate === selectedDate && h.verificationStatus !== 'cancelado'
+      );
+      const opStart = dateRecord ? dateRecord.startHour : 8;
       return opStart < min ? opStart : min;
     }, 8);
-  }, [areaOperarios, todayStr]);
+  }, [areaOperarios, selectedDate, horasExtra]);
 
-  // Encontrar el horario de salida más tarde registrado para hoy para los operarios del área elegida
+  // Encontrar el horario de salida más tarde registrado para la fecha seleccionada
   const maxEndHour = useMemo(() => {
     return areaOperarios.reduce((max, op) => {
-      const isTodaySchedule = op.schedule?.authorizedDate === todayStr;
-      const opEnd = isTodaySchedule ? (op.schedule?.endHour || defaultEnd) : defaultEnd;
+      const dateRecord = horasExtra.find(
+        (h) => h.operarioId === op.id && h.authorizedDate === selectedDate && h.verificationStatus !== 'cancelado'
+      );
+      const opEnd = dateRecord ? dateRecord.endHour : defaultEnd;
       return opEnd > max ? opEnd : max;
     }, defaultEnd);
-  }, [areaOperarios, defaultEnd, todayStr]);
+  }, [areaOperarios, defaultEnd, selectedDate, horasExtra]);
 
   // Generar bloques correspondientes a la duración elegida y la jornada extendida máxima
   const activeBlocks = useMemo(() => {
@@ -1730,9 +1741,14 @@ const CalidadPage = () => {
                   </thead>
                   <tbody>
                     {areaOperarios.map((op) => {
-                      const isTodaySchedule = op.schedule?.authorizedDate === todayStr;
-                      const opStartHour = isTodaySchedule ? (op.schedule?.startHour || 8) : 8;
-                      const opEndHour = isTodaySchedule ? (op.schedule?.endHour || defaultEnd) : defaultEnd;
+                      // Horario real de ESTE colaborador para la fecha seleccionada (no solo
+                      // "hoy") — se consulta horas_extra por fecha en vez de operarios.schedule,
+                      // que solo refleja el día vigente actual.
+                      const opDateOvertimeRecord = horasExtra.find(
+                        (h) => h.operarioId === op.id && h.authorizedDate === selectedDate && h.verificationStatus !== 'cancelado'
+                      );
+                      const opStartHour = opDateOvertimeRecord ? opDateOvertimeRecord.startHour : 8;
+                      const opEndHour = opDateOvertimeRecord ? opDateOvertimeRecord.endHour : defaultEnd;
 
                       // Promedios diarios e históricos del colaborador
                       const opDailyEvals = dailyEvaluaciones.filter((ev) => ev.operarioId === op.id);
@@ -1772,9 +1788,9 @@ const CalidadPage = () => {
                                 <span style={{ fontSize: '10px', color: 'var(--color-gray-600)', backgroundColor: 'var(--color-gray-100)', padding: '2px 6px', borderRadius: '4px' }}>
                                   ⏰ {String(opStartHour).padStart(2, '0')}:00 - {String(opEndHour).padStart(2, '0')}:00
                                 </span>
-                                {isTodaySchedule && op.schedule?.overtimeHours > 0 && (
+                                {opDateOvertimeRecord && (
                                   <Badge variant="warning" size="sm">
-                                    🔥 Extra (+{op.schedule.overtimeHours}h)
+                                    🔥 Extra (+{opDateOvertimeRecord.overtimeHours}h)
                                   </Badge>
                                 )}
                               </div>
@@ -1906,9 +1922,7 @@ const CalidadPage = () => {
                           {activeBlocks.map((block, blockIndex) => {
                             const opHasBlock = block.startHour >= opStartHour && block.endHour <= opEndHour;
                             
-                            const isSaturday = new Date().getDay() === 6;
-                            const baseEnd = isSaturday ? 13 : 18;
-                            const isOvertimeBlock = block.startHour < 8 || block.startHour >= baseEnd;
+                            const isOvertimeBlock = block.startHour < 8 || block.startHour >= defaultEnd;
 
                             const isLive = selectedDate === todayStr && block.id === liveBlockId;
                             const isPastBlock = selectedDate < todayStr || (selectedDate === todayStr && !isLive);
