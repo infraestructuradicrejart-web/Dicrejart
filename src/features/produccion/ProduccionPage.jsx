@@ -2446,29 +2446,45 @@ const ProduccionPage = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className={styles.formGroup}>
                   <Select
-                    label="Cantidad de Horas"
-                    value={requestOvertimeModal.horas}
-                    onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, horas: e.target.value }))}
+                    label="Bloque de Tiempo"
+                    value={requestOvertimeModal.bloque}
+                    onChange={(e) => {
+                      const newBloque = e.target.value;
+                      setRequestOvertimeModal((prev) => {
+                        let newHoras = prev.horas;
+                        if (newBloque === 'matutino' && Number(newHoras) > 2) {
+                          newHoras = '2';
+                        }
+                        return { ...prev, bloque: newBloque, horas: newHoras };
+                      });
+                    }}
                     required
                     options={[
-                      { value: '1', label: '1 hora extra' },
-                      { value: '2', label: '2 horas extras' },
-                      { value: '3', label: '3 horas extras' },
-                      { value: '4', label: '4 horas extras' },
+                      { value: 'vespertino', label: '🌆 Vespertino (Extensión hasta 22:00 max)' },
+                      { value: 'matutino', label: '🌅 Matutino (Entrada desde 6:00 AM max)' },
                     ]}
                   />
                 </div>
 
                 <div className={styles.formGroup}>
                   <Select
-                    label="Bloque de Tiempo"
-                    value={requestOvertimeModal.bloque}
-                    onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, bloque: e.target.value }))}
+                    label="Cantidad de Horas"
+                    value={requestOvertimeModal.horas}
+                    onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, horas: e.target.value }))}
                     required
-                    options={[
-                      { value: 'vespertino', label: '🌆 Vespertino (Extensión de Salida)' },
-                      { value: 'matutino', label: '🌅 Matutino (Entrada Anticipada)' },
-                    ]}
+                    options={
+                      requestOvertimeModal.bloque === 'matutino'
+                        ? [
+                            { value: '1', label: '1 hora extra (Entrada 7:00 AM)' },
+                            { value: '2', label: '2 horas extras (Entrada 6:00 AM — Máx)' },
+                          ]
+                        : [
+                            { value: '1', label: '1 hora extra (Salida 19:00 / 7:00 PM)' },
+                            { value: '2', label: '2 horas extras (Salida 20:00 / 8:00 PM)' },
+                            { value: '3', label: '3 horas extras (Salida 21:00 / 9:00 PM)' },
+                            { value: '4', label: '4 horas extras (Salida 22:00 / 10:00 PM — Máx)' },
+                          ]
+                    }
                   />
                 </div>
               </div>
@@ -2542,29 +2558,45 @@ const ProduccionPage = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className={styles.formGroup}>
                   <Select
-                    label="Cantidad de Horas"
-                    value={editOvertimeRequestModal.horas}
-                    onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, horas: e.target.value }))}
+                    label="Bloque de Tiempo"
+                    value={editOvertimeRequestModal.bloque}
+                    onChange={(e) => {
+                      const newBloque = e.target.value;
+                      setEditOvertimeRequestModal((prev) => {
+                        let newHoras = prev.horas;
+                        if (newBloque === 'matutino' && Number(newHoras) > 2) {
+                          newHoras = '2';
+                        }
+                        return { ...prev, bloque: newBloque, horas: newHoras };
+                      });
+                    }}
                     required
                     options={[
-                      { value: '1', label: '1 hora extra' },
-                      { value: '2', label: '2 horas extras' },
-                      { value: '3', label: '3 horas extras' },
-                      { value: '4', label: '4 horas extras' },
+                      { value: 'vespertino', label: '🌆 Vespertino (Extensión hasta 22:00 max)' },
+                      { value: 'matutino', label: '🌅 Matutino (Entrada desde 6:00 AM max)' },
                     ]}
                   />
                 </div>
 
                 <div className={styles.formGroup}>
                   <Select
-                    label="Bloque de Tiempo"
-                    value={editOvertimeRequestModal.bloque}
-                    onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, bloque: e.target.value }))}
+                    label="Cantidad de Horas"
+                    value={editOvertimeRequestModal.horas}
+                    onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, horas: e.target.value }))}
                     required
-                    options={[
-                      { value: 'vespertino', label: '🌆 Vespertino (Extensión de Salida)' },
-                      { value: 'matutino', label: '🌅 Matutino (Entrada Anticipada)' },
-                    ]}
+                    options={
+                      editOvertimeRequestModal.bloque === 'matutino'
+                        ? [
+                            { value: '1', label: '1 hora extra (Entrada 7:00 AM)' },
+                            { value: '2', label: '2 horas extras (Entrada 6:00 AM — Máx)' },
+                          ]
+                        : [
+                            { value: '1', label: '1 hora extra (Salida 19:00 / 7:00 PM)' },
+                            { value: '2', label: '2 horas extras (Salida 20:00 / 8:00 PM)' },
+                            { value: '3', label: '3 horas extras (Salida 21:00 / 9:00 PM)' },
+                            { value: '4', label: '4 horas extras (Salida 22:00 / 10:00 PM — Máx)' },
+                          ]
+                    }
                   />
                 </div>
               </div>

@@ -103,22 +103,24 @@ export const calculateScheduleFromOvertime = (baseStart = 8, baseEnd = 18, overt
   }
 
   if (bloque === 'matutino') {
-    // Las horas se agregan ANTES del inicio regular
-    const newStart = Math.max(0, baseStart - hours);
+    // Las horas extras matutinas inician a las 6:00 AM como máximo (máximo 2h antes de las 8:00 AM)
+    const effectiveHours = Math.min(hours, Math.max(0, baseStart - 6));
+    const newStart = Math.max(6, baseStart - effectiveHours);
     return {
       startHour: newStart,
       endHour: baseEnd,
-      overtimeHours: hours,
+      overtimeHours: effectiveHours,
       bloque: 'matutino',
     };
   }
 
-  // Por defecto 'vespertino': las horas se agregan DESPUÉS del fin regular
-  const newEnd = Math.min(24, baseEnd + hours);
+  // Bloque 'vespertino': las horas extras terminan a las 22:00 (10:00 PM) como máximo (hasta 4h después de las 18:00 PM)
+  const effectiveHours = Math.min(hours, Math.max(0, 22 - baseEnd));
+  const newEnd = Math.min(22, baseEnd + effectiveHours);
   return {
     startHour: baseStart,
     endHour: newEnd,
-    overtimeHours: hours,
+    overtimeHours: effectiveHours,
     bloque: 'vespertino',
   };
 };
