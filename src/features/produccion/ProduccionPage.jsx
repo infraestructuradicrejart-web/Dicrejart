@@ -1377,8 +1377,12 @@ const ProduccionPage = () => {
                 const startStr = String(op.schedule?.startHour ?? 8).padStart(2, '0');
                 const endStr = String(op.schedule?.endHour ?? 18).padStart(2, '0');
                 const hasOvertimeToday = op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === getTodayLocalDateStr();
-                const opPendingHEs = horasExtra.filter(
-                  (h) => h.operarioId === op.id && h.verificationStatus === 'pendiente'
+                // Se muestran TODAS las autorizaciones no canceladas (no solo las pendientes):
+                // así, cuando Calidad (u otro Supervisor) ya verificó una en Calidad, el área y
+                // el colaborador siguen viendo el resultado y el comentario puesto, en vez de que
+                // el registro simplemente desaparezca de esta lista al verificarse.
+                const opRecentHEs = horasExtra.filter(
+                  (h) => h.operarioId === op.id && h.verificationStatus !== 'cancelado'
                 );
                 const isExpanded = expandedOvertimeOperarios.has(op.id);
 
@@ -1402,7 +1406,7 @@ const ProduccionPage = () => {
                         </Badge>
                       )}
 
-                      {canManageJornada && opPendingHEs.length > 0 && (
+                      {canManageJornada && opRecentHEs.length > 0 && (
                         <div style={{ marginTop: '4px', minWidth: '260px' }}>
                           <button
                             type="button"
@@ -1413,9 +1417,9 @@ const ProduccionPage = () => {
                               borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', width: '100%', textAlign: 'left',
                             }}
                           >
-                            🕒 Verificar Horas Extra ({opPendingHEs.length}) {isExpanded ? '▲' : '▼'}
+                            🕒 Tiempo Extra ({opRecentHEs.length}) {isExpanded ? '▲' : '▼'}
                           </button>
-                          {isExpanded && opPendingHEs.map((h) => {
+                          {isExpanded && opRecentHEs.map((h) => {
                             const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(h.startHour, h.endHour, h.authorizedDate);
                             return (
                               <div
@@ -1442,22 +1446,45 @@ const ProduccionPage = () => {
                                   )}
                                 </div>
                                 <div style={{ color: 'var(--color-gray-700)', marginBottom: '4px' }}>{h.overtimeTasks}</div>
-                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleVerifyHorasExtraCumplido(h.id)}
-                                    style={{ fontSize: '10.5px', fontWeight: 700, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
-                                  >
-                                    ✅ Cumplió
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenHorasExtraRejectModal(h.id)}
-                                    style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
-                                  >
-                                    ❌ No Cumplió
-                                  </button>
-                                </div>
+                                {h.verificationStatus === 'pendiente' ? (
+                                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                                      style={{ fontSize: '10.5px', fontWeight: 700, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                    >
+                                      ✅ Cumplió
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                                      style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                    >
+                                      ❌ No Cumplió
+                                    </button>
+                                  </div>
+                                ) : (
+                                  // Ya verificado (por Calidad o por un Supervisor) — se muestra el
+                                  // resultado, quién lo verificó y el comentario (tooltip con
+                                  // verificationNotes), en vez de que el registro desaparezca sin dejar
+                                  // rastro visible para el área/colaborador.
+                                  <div style={{ marginBottom: '4px' }}>
+                                    <span
+                                      title={h.verificationNotes ? `${h.verificationNotes} — ${h.verifiedBy}` : h.verifiedBy}
+                                      style={{
+                                        fontSize: '10.5px', fontWeight: 700,
+                                        color: h.verificationStatus === 'cumplido' ? '#15803d' : 'var(--color-alert)',
+                                      }}
+                                    >
+                                      {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
+                                    </span>
+                                    {h.verificationStatus === 'no_cumplido' && h.verificationNotes && (
+                                      <div style={{ marginTop: '2px', fontSize: '10.5px', color: 'var(--color-gray-700)' }}>
+                                        Comentario: {h.verificationNotes}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => handleOpenScheduleCorrectionModal(h)}
