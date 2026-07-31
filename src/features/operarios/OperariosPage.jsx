@@ -105,6 +105,8 @@ const OperariosPage = () => {
     authorizeOvertimeTasks,
     cancelPendingHorasExtra,
     horasExtra,
+    verifyHorasExtra,
+    correctHorasExtraSchedule,
   } = useOperarios();
 
   const { user, users } = useAuth();
@@ -165,6 +167,18 @@ const OperariosPage = () => {
     overtimeTasks: '',
   });
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+
+  // Verificación de cumplimiento de horas extra por el Supervisor de Área (mismo permiso
+  // que ya autoriza las horas, ver canAuthorizeOvertime) — antes solo Calidad podía hacerlo.
+  const [expandedOvertimeOperarios, setExpandedOvertimeOperarios] = useState(() => new Set());
+  const [horasExtraRejectModal, setHorasExtraRejectModal] = useState({ isOpen: false, horasExtraId: null, notes: '' });
+  const [scheduleCorrectionModal, setScheduleCorrectionModal] = useState({
+    isOpen: false,
+    horasExtraId: null,
+    actualStartHour: '',
+    actualEndHour: '',
+    reason: '',
+  });
 
   // Estado para el modal de solicitud de préstamo/cambio de área
   const [movRequestModal, setMovRequestModal] = useState({
@@ -266,6 +280,75 @@ const OperariosPage = () => {
     if (user.roleType === 'admin') return true;
     if (user.roleType === 'supervisor-area') return (user.areaIds || []).includes(areaId);
     return false;
+  };
+
+  // ============================================
+  // VERIFICACIÓN DE HORAS EXTRA (mismo permiso que autorizarlas — antes solo Calidad)
+  // ============================================
+  const toggleOvertimeExpanded = (operarioId) => {
+    setExpandedOvertimeOperarios((prev) => {
+      const next = new Set(prev);
+      if (next.has(operarioId)) next.delete(operarioId);
+      else next.add(operarioId);
+      return next;
+    });
+  };
+
+  const handleVerifyHorasExtraCumplido = async (horasExtraId) => {
+    const res = await verifyHorasExtra(horasExtraId, { verificationStatus: 'cumplido', verificationNotes: '' });
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo registrar la verificación.');
+      return;
+    }
+    toast.success('✅ Tareas de tiempo extra marcadas como cumplidas.');
+  };
+
+  const handleOpenHorasExtraRejectModal = (horasExtraId) => {
+    setHorasExtraRejectModal({ isOpen: true, horasExtraId, notes: '' });
+  };
+
+  const handleCloseHorasExtraRejectModal = () => {
+    setHorasExtraRejectModal({ isOpen: false, horasExtraId: null, notes: '' });
+  };
+
+  const handleSubmitHorasExtraReject = async (e) => {
+    e.preventDefault();
+    const res = await verifyHorasExtra(horasExtraRejectModal.horasExtraId, {
+      verificationStatus: 'no_cumplido',
+      verificationNotes: horasExtraRejectModal.notes,
+    });
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo registrar la verificación.');
+      return;
+    }
+    toast.warning('❌ Tareas de tiempo extra marcadas como no cumplidas.');
+    handleCloseHorasExtraRejectModal();
+  };
+
+  const handleOpenScheduleCorrectionModal = (h) => {
+    setScheduleCorrectionModal({
+      isOpen: true,
+      horasExtraId: h.id,
+      actualStartHour: String(h.startHour),
+      actualEndHour: String(h.endHour),
+      reason: '',
+    });
+  };
+
+  const handleCloseScheduleCorrectionModal = () => {
+    setScheduleCorrectionModal({ isOpen: false, horasExtraId: null, actualStartHour: '', actualEndHour: '', reason: '' });
+  };
+
+  const handleSubmitScheduleCorrection = async (e) => {
+    e.preventDefault();
+    const { horasExtraId, actualStartHour, actualEndHour, reason } = scheduleCorrectionModal;
+    const res = await correctHorasExtraSchedule(horasExtraId, { actualStartHour, actualEndHour, reason });
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo guardar la corrección de horario.');
+      return;
+    }
+    toast.success('⚠️ Horario de tiempo extra corregido correctamente.');
+    handleCloseScheduleCorrectionModal();
   };
 
   // ============================================
@@ -940,6 +1023,95 @@ const OperariosPage = () => {
                               📅 Extra: +{nextFutureHE.overtimeHours}h el {nextFutureHE.authorizedDate}
                             </div>
                           )}
+                          {/* Verificación de cumplimiento de horas extra — mismo permiso que
+                              autoriza las horas (Supervisor de Área o Admin); antes solo
+                              Calidad podía verificar/corregir. */}
+                          {canAuthorizeOvertime(op.currentArea) && (() => {
+                            const opPendingHEs = horasExtra.filter(
+                              (h) => h.operarioId === op.id && h.verificationStatus === 'pendiente'
+                            );
+                            if (opPendingHEs.length === 0) return null;
+                            const isExpanded = expandedOvertimeOperarios.has(op.id);
+                            return (
+                              <div style={{ marginTop: '4px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleOvertimeExpanded(op.id)}
+                                  style={{
+                                    fontSize: '10.5px', fontWeight: 700, color: 'var(--color-secondary)',
+                                    background: 'rgba(255, 153, 51, 0.1)', border: '1px solid rgba(255, 153, 51, 0.3)',
+                                    borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', width: '100%', textAlign: 'left',
+                                  }}
+                                >
+                                  🕒 Verificar Horas Extra ({opPendingHEs.length}) {isExpanded ? '▲' : '▼'}
+                                </button>
+                                {isExpanded && opPendingHEs.map((h) => {
+                                  const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(h.startHour, h.endHour, h.authorizedDate);
+                                  return (
+                                    <div
+                                      key={h.id}
+                                      style={{
+                                        marginTop: '2px', padding: '6px 8px', borderRadius: '6px',
+                                        background: 'rgba(255, 153, 51, 0.08)', border: '1px solid rgba(255, 153, 51, 0.25)',
+                                        fontSize: '11px',
+                                      }}
+                                    >
+                                      <div style={{ fontWeight: 600, color: 'var(--color-secondary)', marginBottom: '2px' }}>
+                                        🕒 {h.authorizedDate} — Tareas ({h.overtimeHours}h):
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                        {earlyHours > 0 && (
+                                          <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                                            🌅 Matutino: {earlyHours}h ({earlyRange})
+                                          </span>
+                                        )}
+                                        {lateHours > 0 && (
+                                          <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa' }}>
+                                            🌆 Vespertino: {lateHours}h ({lateRange})
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div style={{ color: 'var(--color-gray-700)', marginBottom: '4px' }}>{h.overtimeTasks}</div>
+                                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                                          style={{ fontSize: '10.5px', fontWeight: 700, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                        >
+                                          ✅ Cumplió
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                                          style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                        >
+                                          ❌ No Cumplió
+                                        </button>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenScheduleCorrectionModal(h)}
+                                        style={{ fontSize: '10.5px', fontWeight: 700, color: '#374151', background: 'none', border: '1px solid var(--color-gray-400)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                      >
+                                        ✏️ Corregir Horario
+                                      </button>
+                                      {h.scheduleCorrection && (
+                                        <div style={{ marginTop: '4px', fontSize: '10.5px', color: '#b91c1c' }}>
+                                          {h.scheduleCorrection.actualStartHour !== h.startHour && (
+                                            <div>⚠️ Entrada real: {String(h.scheduleCorrection.actualStartHour).padStart(2, '0')}:00 (autorizado {String(h.startHour).padStart(2, '0')}:00)</div>
+                                          )}
+                                          {h.scheduleCorrection.actualEndHour !== h.endHour && (
+                                            <div>⚠️ Salida real: {String(h.scheduleCorrection.actualEndHour).padStart(2, '0')}:00 (autorizado {String(h.endHour).padStart(2, '0')}:00)</div>
+                                          )}
+                                          <div>Motivo: {h.scheduleCorrection.reason} — Corrigió: {h.scheduleCorrection.correctedBy}</div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </td>
                       <td data-label="Estado">
@@ -1697,6 +1869,111 @@ const OperariosPage = () => {
           </div>
         </Modal>
       )}
+
+      {/* Modal: Marcar tareas de tiempo extra como "No Cumplido" (requiere motivo) */}
+      {horasExtraRejectModal.isOpen && (
+        <Modal
+          isOpen={horasExtraRejectModal.isOpen}
+          onClose={handleCloseHorasExtraRejectModal}
+          title="❌ Tareas de Tiempo Extra No Cumplidas"
+        >
+          <form onSubmit={handleSubmitHorasExtraReject} className={styles.modalForm}>
+            <div className={styles.formGroup}>
+              <label className={styles.label}>¿Qué no se cumplió?</label>
+              <textarea
+                rows="3"
+                required
+                className={styles.textInput}
+                placeholder="Ej: Solo terminó la mitad del pedido, no se realizó el lijado final..."
+                value={horasExtraRejectModal.notes}
+                onChange={(e) => setHorasExtraRejectModal((prev) => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+            <div className={styles.modalActions}>
+              <Button type="button" variant="secondary" onClick={handleCloseHorasExtraRejectModal}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="danger">
+                Confirmar No Cumplido
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Corregir horario real de tiempo extra */}
+      {scheduleCorrectionModal.isOpen && (() => {
+        const targetHE = horasExtra.find((h) => h.id === scheduleCorrectionModal.horasExtraId);
+        if (!targetHE) return null;
+        const { earlyHours, lateHours, baseStartHour, baseEndHour } = getOvertimeBlocks(targetHE.startHour, targetHE.endHour, targetHE.authorizedDate);
+
+        const startOptions = [];
+        for (let hVal = targetHE.startHour; hVal <= baseStartHour; hVal += 1) {
+          startOptions.push({ value: String(hVal), label: `${String(hVal).padStart(2, '0')}:00` });
+        }
+        const endOptions = [];
+        for (let hVal = baseEndHour; hVal <= targetHE.endHour; hVal += 1) {
+          endOptions.push({ value: String(hVal), label: `${String(hVal).padStart(2, '0')}:00` });
+        }
+
+        return (
+          <Modal
+            isOpen={scheduleCorrectionModal.isOpen}
+            onClose={handleCloseScheduleCorrectionModal}
+            title="✏️ Corregir Horario de Tiempo Extra"
+          >
+            <form onSubmit={handleSubmitScheduleCorrection} className={styles.modalForm}>
+              <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 0 }}>
+                Autorizado: {String(targetHE.startHour).padStart(2, '0')}:00 - {String(targetHE.endHour).padStart(2, '0')}:00 el {targetHE.authorizedDate}. Ajusta solo la hora del bloque que en realidad no se cumplió como se autorizó.
+              </p>
+
+              {earlyHours > 0 && (
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Hora Real de Entrada (bloque matutino)"
+                    value={scheduleCorrectionModal.actualStartHour}
+                    onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, actualStartHour: e.target.value }))}
+                    required
+                    options={startOptions}
+                  />
+                </div>
+              )}
+
+              {lateHours > 0 && (
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Hora Real de Salida (bloque vespertino)"
+                    value={scheduleCorrectionModal.actualEndHour}
+                    onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, actualEndHour: e.target.value }))}
+                    required
+                    options={endOptions}
+                  />
+                </div>
+              )}
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Motivo de la Corrección</label>
+                <textarea
+                  rows="3"
+                  required
+                  placeholder="Ej: Llegó a las 8:00 en vez de las 6:00 autorizadas, no se realizó el bloque matutino completo..."
+                  value={scheduleCorrectionModal.reason}
+                  onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, reason: e.target.value }))}
+                />
+              </div>
+
+              <div className={styles.modalActions}>
+                <Button type="button" variant="secondary" onClick={handleCloseScheduleCorrectionModal}>
+                  Cancelar
+                </Button>
+                <Button type="submit" variant="primary">
+                  Guardar Corrección
+                </Button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
     </motion.div>
   );
 };
