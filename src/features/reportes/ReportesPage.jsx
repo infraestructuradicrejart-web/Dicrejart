@@ -29,6 +29,10 @@ import Select from '../../components/ui/Select';
 import useToast from '../../hooks/useToast';
 import useProduccion from '../../hooks/useProduccion';
 import useCalidad from '../../hooks/useCalidad';
+import useActividades from '../../hooks/useActividades';
+import useOperarios from '../../hooks/useOperarios';
+import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { PRIORITY_LABELS } from '../../data/actividadesData';
 import PageHeader from '../../components/ui/PageHeader';
 import { addPdfTable } from '../../utils/pdfTable';
 import styles from './ReportesPage.module.css';
@@ -70,6 +74,8 @@ const ReportesPage = () => {
   const toast = useToast();
   const { historialProduccion } = useProduccion();
   const { inspecciones } = useCalidad();
+  const { actividades } = useActividades();
+  const { operarios } = useOperarios();
 
   // ============================================
   // PROCESAMIENTO DE DATOS PARA GRÁFICAS
@@ -137,6 +143,60 @@ const ReportesPage = () => {
     { name: '♻️ Reutilización / Reclasificación', cantidad: accionesCalidadRaw.reutilizacion },
   ];
 
+  // 4. Actividades: se reportan por su fecha de creación (mismo criterio que producción/calidad)
+  const todayStr = getTodayLocalDateStr();
+  const getOperarioName = (operarioId) => operarios.find((op) => op.id === operarioId)?.name || null;
+  const actividadesFiltradas = actividades.filter(
+    (a) => (areaFilter === 'todos' || a.areaId === areaFilter) && withinDateRange(a.createdAt || new Date().toISOString())
+  );
+
+  // 4a. % de actividades completadas por área
+  const actividadesPorAreaRaw = actividadesFiltradas.reduce((acc, curr) => {
+    if (!acc[curr.areaId]) acc[curr.areaId] = { completadas: 0, total: 0 };
+    if (curr.status === 'completado') acc[curr.areaId].completadas += 1;
+    acc[curr.areaId].total += 1;
+    return acc;
+  }, {});
+  const dataActividadesArea = Object.keys(actividadesPorAreaRaw).map((key) => ({
+    area: key.toUpperCase().replace('-', ' '),
+    cumplimiento: Number(((actividadesPorAreaRaw[key].completadas / actividadesPorAreaRaw[key].total) * 100).toFixed(1)),
+  }));
+
+  // 4b. Actividades por prioridad
+  const prioridadRaw = actividadesFiltradas.reduce((acc, curr) => {
+    acc[curr.priority] = (acc[curr.priority] || 0) + 1;
+    return acc;
+  }, { alta: 0, media: 0, baja: 0 });
+  const dataActividadesPrioridad = Object.entries(PRIORITY_LABELS).map(([key, label]) => ({
+    name: label,
+    cantidad: prioridadRaw[key] || 0,
+  }));
+
+  // 4c. Actividades vencidas por área (fecha límite ya pasada, sin completar)
+  const vencidasRaw = actividadesFiltradas.reduce((acc, curr) => {
+    const isOverdue = curr.dueDate && curr.dueDate < todayStr && curr.status !== 'completado';
+    if (isOverdue) acc[curr.areaId] = (acc[curr.areaId] || 0) + 1;
+    return acc;
+  }, {});
+  const dataActividadesVencidas = Object.keys(vencidasRaw).map((key) => ({
+    area: key.toUpperCase().replace('-', ' '),
+    vencidas: vencidasRaw[key],
+  }));
+
+  // 4d. Tiempo promedio de resolución (días entre creación y cierre) por área
+  const tiempoResolucionRaw = actividadesFiltradas.reduce((acc, curr) => {
+    if (curr.status !== 'completado' || !curr.createdAt || !curr.completedAt) return acc;
+    const dias = (new Date(curr.completedAt) - new Date(curr.createdAt)) / (1000 * 60 * 60 * 24);
+    if (!acc[curr.areaId]) acc[curr.areaId] = { sumaDias: 0, total: 0 };
+    acc[curr.areaId].sumaDias += dias;
+    acc[curr.areaId].total += 1;
+    return acc;
+  }, {});
+  const dataActividadesTiempoResolucion = Object.keys(tiempoResolucionRaw).map((key) => ({
+    area: key.toUpperCase().replace('-', ' '),
+    diasPromedio: Number((tiempoResolucionRaw[key].sumaDias / tiempoResolucionRaw[key].total).toFixed(1)),
+  }));
+
   // ============================================
   // HANDLERS DE EXPORTACIÓN
   // ============================================
@@ -194,6 +254,44 @@ const ReportesPage = () => {
         }))),
         'Detalle Calidad'
       );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(dataActividadesArea.map((d) => ({ Área: d.area, 'Cumplimiento (%)': d.cumplimiento }))),
+        'Actividades por Área'
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(dataActividadesPrioridad.map((d) => ({ Prioridad: d.name, Cantidad: d.cantidad }))),
+        'Actividades por Prioridad'
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(dataActividadesVencidas.map((d) => ({ Área: d.area, Vencidas: d.vencidas }))),
+        'Actividades Vencidas'
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(dataActividadesTiempoResolucion.map((d) => ({ Área: d.area, 'Días Promedio de Resolución': d.diasPromedio }))),
+        'Tiempo de Resolución'
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(actividadesFiltradas.map((a) => ({
+          ID: a.id,
+          Título: a.title,
+          Área: a.areaId,
+          Responsable: getOperarioName(a.operarioId) || 'Sin asignar específico',
+          Proyecto: a.projectName || '',
+          Juego: a.gameName || '',
+          Prioridad: PRIORITY_LABELS[a.priority] || a.priority,
+          Estado: a.status,
+          Vencida: a.dueDate && a.dueDate < todayStr && a.status !== 'completado' ? 'Sí' : 'No',
+          'Fecha Límite': a.dueDate || '',
+          Creada: a.createdAt ? new Date(a.createdAt).toLocaleString('es-MX') : '',
+          Completada: a.completedAt ? new Date(a.completedAt).toLocaleString('es-MX') : '',
+        }))),
+        'Detalle Actividades'
+      );
 
       XLSX.writeFile(wb, `Reporte-Dicrejart-${fechaArchivo}.xlsx`);
       toast.success('📊 Excel generado correctamente y descargado.');
@@ -237,6 +335,30 @@ const ReportesPage = () => {
         rows: dataAcciones.map((d) => [d.name, d.cantidad]),
         startY: y,
       });
+      y = addPdfTable(doc, {
+        title: 'Actividades: Cumplimiento por Área (%)',
+        headers: ['Área', 'Cumplimiento %'],
+        rows: dataActividadesArea.map((d) => [d.area, d.cumplimiento]),
+        startY: y,
+      });
+      y = addPdfTable(doc, {
+        title: 'Actividades por Prioridad',
+        headers: ['Prioridad', 'Cantidad'],
+        rows: dataActividadesPrioridad.map((d) => [d.name, d.cantidad]),
+        startY: y,
+      });
+      y = addPdfTable(doc, {
+        title: 'Actividades Vencidas por Área',
+        headers: ['Área', 'Vencidas'],
+        rows: dataActividadesVencidas.map((d) => [d.area, d.vencidas]),
+        startY: y,
+      });
+      y = addPdfTable(doc, {
+        title: 'Tiempo Promedio de Resolución por Área (días)',
+        headers: ['Área', 'Días Promedio'],
+        rows: dataActividadesTiempoResolucion.map((d) => [d.area, d.diasPromedio]),
+        startY: y,
+      });
 
       doc.addPage();
       addPdfTable(doc, {
@@ -255,6 +377,19 @@ const ReportesPage = () => {
         rows: inspeccionesFiltradas.map((r) => [
           new Date(r.date).toLocaleDateString('es-MX'), r.areaId, r.gameName, r.pieceName,
           r.status === 'aprobado' ? 'Aprobado' : 'Defectuoso', r.defectAction,
+        ]),
+        startY: 20,
+      });
+
+      doc.addPage();
+      addPdfTable(doc, {
+        title: 'Detalle de Actividades',
+        headers: ['Título', 'Área', 'Responsable', 'Prioridad', 'Estado', 'Vencida', 'Fecha Límite'],
+        rows: actividadesFiltradas.map((a) => [
+          a.title, a.areaId, getOperarioName(a.operarioId) || 'Sin asignar',
+          PRIORITY_LABELS[a.priority] || a.priority, a.status,
+          a.dueDate && a.dueDate < todayStr && a.status !== 'completado' ? 'Sí' : 'No',
+          a.dueDate || '-',
         ]),
         startY: 20,
       });
@@ -442,6 +577,111 @@ const ReportesPage = () => {
                       return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
                     })}
                   </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* Gráfica 4: Cumplimiento de Actividades por Área */}
+        <motion.div variants={itemVariants}>
+          <Card variant="default">
+            <h3 className={styles.chartTitle}>Cumplimiento de Actividades por Área (%)</h3>
+            <div className={styles.chartContainer}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dataActividadesArea} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                  <XAxis dataKey="area" tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#6B7280' }} domain={[0, 100]} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      borderRadius: '8px',
+                      border: '1px solid #E5E7EB',
+                      boxShadow: 'var(--shadow-md)',
+                    }}
+                  />
+                  <Bar dataKey="cumplimiento" name="Cumplimiento (%)" fill="var(--color-golden-yellow)" radius={[4, 4, 0, 0]} barSize={30} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* Gráfica 5: Actividades por Prioridad */}
+        <motion.div variants={itemVariants}>
+          <Card variant="default">
+            <h3 className={styles.chartTitle}>Actividades por Prioridad</h3>
+            <div className={styles.chartContainer}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dataActividadesPrioridad} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6B7280' }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      borderRadius: '8px',
+                      border: '1px solid #E5E7EB',
+                      boxShadow: 'var(--shadow-md)',
+                    }}
+                  />
+                  <Bar dataKey="cantidad" name="Cantidad" radius={[4, 4, 0, 0]} barSize={40}>
+                    {dataActividadesPrioridad.map((entry, index) => {
+                      const colors = ['var(--color-alert)', 'var(--color-warning)', 'var(--color-gray-400)'];
+                      return <Cell key={`cell-prio-${index}`} fill={colors[index % colors.length]} />;
+                    })}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* Gráfica 6: Actividades Vencidas por Área */}
+        <motion.div variants={itemVariants}>
+          <Card variant="default">
+            <h3 className={styles.chartTitle}>Actividades Vencidas por Área</h3>
+            <div className={styles.chartContainer}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dataActividadesVencidas} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                  <XAxis dataKey="area" tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      borderRadius: '8px',
+                      border: '1px solid #E5E7EB',
+                      boxShadow: 'var(--shadow-md)',
+                    }}
+                  />
+                  <Bar dataKey="vencidas" name="Vencidas" fill="var(--color-alert)" radius={[4, 4, 0, 0]} barSize={30} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* Gráfica 7: Tiempo Promedio de Resolución */}
+        <motion.div variants={itemVariants}>
+          <Card variant="default">
+            <h3 className={styles.chartTitle}>Tiempo Promedio de Resolución por Área (días)</h3>
+            <div className={styles.chartContainer}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dataActividadesTiempoResolucion} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                  <XAxis dataKey="area" tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      borderRadius: '8px',
+                      border: '1px solid #E5E7EB',
+                      boxShadow: 'var(--shadow-md)',
+                    }}
+                  />
+                  <Bar dataKey="diasPromedio" name="Días Promedio" fill="var(--color-purple-x11)" radius={[4, 4, 0, 0]} barSize={30} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

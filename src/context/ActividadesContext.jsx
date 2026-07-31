@@ -113,6 +113,10 @@ export const ActividadesProvider = ({ children }) => {
       links: links.filter(Boolean),
       modelFile: uploadedModelFile,
       modelLink: modelLink?.trim() || null,
+      createdAt: new Date().toISOString(),
+      startedAt: null,
+      completedAt: null,
+      checklist: [],
       ...restData,
     };
     try {
@@ -152,11 +156,82 @@ export const ActividadesProvider = ({ children }) => {
     const act = actividades.find((a) => a.id === activityId);
     if (!act) return;
     const nextStatus = { pendiente: 'proceso', proceso: 'completado', completado: 'pendiente' };
+    const newStatus = nextStatus[act.status];
+
+    // Marca de tiempo para poder medir después cuánto tarda una actividad en resolverse
+    // (ver Reportes → sección Actividades): se fija al llegar a cada etapa, y se limpia
+    // si el ciclo vuelve a 'pendiente' (reinicio manual), para que un reporte no muestre
+    // una actividad "completada" con una fecha vieja después de reabrirla.
+    const updates = { status: newStatus };
+    if (newStatus === 'proceso' && !act.startedAt) {
+      updates.startedAt = new Date().toISOString();
+    } else if (newStatus === 'completado') {
+      updates.completedAt = new Date().toISOString();
+    } else if (newStatus === 'pendiente') {
+      updates.startedAt = null;
+      updates.completedAt = null;
+    }
+
     try {
-      await updateDoc(doc(db, 'actividades', activityId), { status: nextStatus[act.status] });
-      logAudit({ user, module: 'actividades', action: 'Avanzó el estatus de una actividad', details: `${act.title}: ${act.status} -> ${nextStatus[act.status]}` });
+      await updateDoc(doc(db, 'actividades', activityId), updates);
+      logAudit({ user, module: 'actividades', action: 'Avanzó el estatus de una actividad', details: `${act.title}: ${act.status} -> ${newStatus}` });
     } catch (error) {
       console.error('Error al actualizar estatus de actividad en Firestore:', error);
+    }
+  }, [actividades, user]);
+
+  /**
+   * Agrega un punto a la checklist de subtareas de una actividad (mismo patrón que el
+   * checklist de revisión de calidad en ProduccionContext.jsx, pero como campo plano —
+   * una actividad no se divide por área).
+   */
+  const addChecklistItem = useCallback(async (activityId, text) => {
+    if (!db) return;
+    const act = actividades.find((a) => a.id === activityId);
+    if (!act) return;
+    const newItem = { id: `chk-${Date.now()}`, text, checked: false };
+    try {
+      await updateDoc(doc(db, 'actividades', activityId), {
+        checklist: [...(act.checklist || []), newItem],
+      });
+      logAudit({ user, module: 'actividades', action: 'Agregó punto de checklist a una actividad', details: `${act.title}: "${text}"` });
+    } catch (error) {
+      console.error('Error al agregar item de checklist en Firestore:', error);
+    }
+  }, [actividades, user]);
+
+  /**
+   * Marca/desmarca un punto de la checklist de una actividad
+   */
+  const toggleChecklistItem = useCallback(async (activityId, itemId) => {
+    if (!db) return;
+    const act = actividades.find((a) => a.id === activityId);
+    if (!act) return;
+    const nextChecklist = (act.checklist || []).map((it) =>
+      it.id === itemId ? { ...it, checked: !it.checked } : it
+    );
+    try {
+      await updateDoc(doc(db, 'actividades', activityId), { checklist: nextChecklist });
+      logAudit({ user, module: 'actividades', action: 'Marcó/desmarcó punto de checklist de una actividad', details: act.title });
+    } catch (error) {
+      console.error('Error al marcar item de checklist en Firestore:', error);
+    }
+  }, [actividades, user]);
+
+  /**
+   * Quita un punto de la checklist de una actividad
+   */
+  const removeChecklistItem = useCallback(async (activityId, itemId) => {
+    if (!db) return;
+    const act = actividades.find((a) => a.id === activityId);
+    if (!act) return;
+    try {
+      await updateDoc(doc(db, 'actividades', activityId), {
+        checklist: (act.checklist || []).filter((it) => it.id !== itemId),
+      });
+      logAudit({ user, module: 'actividades', action: 'Quitó punto de checklist de una actividad', details: act.title });
+    } catch (error) {
+      console.error('Error al remover item de checklist en Firestore:', error);
     }
   }, [actividades, user]);
 
@@ -188,8 +263,17 @@ export const ActividadesProvider = ({ children }) => {
   }, [actividades, user]);
 
   const value = useMemo(
-    () => ({ actividades, addActividad, updateActividad, advanceStatus, deleteActividad }),
-    [actividades, addActividad, updateActividad, advanceStatus, deleteActividad]
+    () => ({
+      actividades,
+      addActividad,
+      updateActividad,
+      advanceStatus,
+      deleteActividad,
+      addChecklistItem,
+      toggleChecklistItem,
+      removeChecklistItem,
+    }),
+    [actividades, addActividad, updateActividad, advanceStatus, deleteActividad, addChecklistItem, toggleChecklistItem, removeChecklistItem]
   );
 
   return <ActividadesContext.Provider value={value}>{children}</ActividadesContext.Provider>;

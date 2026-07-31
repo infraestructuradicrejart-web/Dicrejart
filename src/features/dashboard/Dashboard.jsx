@@ -27,7 +27,9 @@ import Modal from '../../components/ui/Modal';
 import PageHeader from '../../components/ui/PageHeader';
 import useProduccion from '../../hooks/useProduccion';
 import useConfig from '../../hooks/useConfig';
+import useActividades from '../../hooks/useActividades';
 import { CalidadContext } from '../../context/CalidadContext';
+import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import styles from './Dashboard.module.css';
 
 /**
@@ -58,6 +60,7 @@ const Dashboard = () => {
   const { proyectos, juegos, historialProduccion } = useProduccion();
   const { inspecciones } = useContext(CalidadContext) || { inspecciones: [] };
   const { generalConfig } = useConfig();
+  const { actividades } = useActividades();
 
   // Vista de evidencia fotográfica de un registro de producción reciente
   const [previewLog, setPreviewLog] = useState(null);
@@ -79,6 +82,13 @@ const Dashboard = () => {
 
   const qualityIndex = totalInspecciones > 0 ? ((aprobadas / totalInspecciones) * 100).toFixed(1) : '0.0';
   const defectRate = totalInspecciones > 0 ? ((defectuosas / totalInspecciones) * 100).toFixed(1) : '0.0';
+
+  // Actividades activas (pendiente/proceso) y vencidas (fecha límite ya pasada sin completar)
+  const todayStr = getTodayLocalDateStr();
+  const actividadesActivas = actividades.filter((a) => a.status !== 'completado').length;
+  const actividadesVencidas = actividades.filter(
+    (a) => a.dueDate && a.dueDate < todayStr && a.status !== 'completado'
+  ).length;
 
   // Compara el Índice de Calidad contra la Tolerancia de Calidad Exigida configurada
   // por el Admin (config/general.qualityTolerance, ver AdminPage) — solo tiene sentido
@@ -195,6 +205,35 @@ const Dashboard = () => {
               <span className={styles.kpiLabel}>Tasa de Defectos</span>
               <h3 className={styles.kpiValue}>{defectRate}%</h3>
               <p className={styles.kpiFooter}>Objetivo: &lt;10%</p>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* KPI 5: Actividades Activas */}
+        <motion.div variants={itemVariants}>
+          <Card variant="default" className={styles.kpiCard} shape="cacahuate" shapeColor="var(--color-golden-yellow)">
+            <div className={styles.kpiIcon}>📌</div>
+            <div className={styles.kpiContent}>
+              <span className={styles.kpiLabel}>Actividades Activas</span>
+              <h3 className={styles.kpiValue}>{actividadesActivas}</h3>
+              <p className={styles.kpiFooter}>Pendientes o en proceso</p>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* KPI 6: Actividades Vencidas */}
+        <motion.div variants={itemVariants}>
+          <Card
+            variant={actividadesVencidas > 0 ? 'danger' : 'success'}
+            className={styles.kpiCard}
+            shape="trebol"
+            shapeColor={actividadesVencidas > 0 ? 'var(--color-alert)' : 'var(--color-success)'}
+          >
+            <div className={styles.kpiIcon}>⏰</div>
+            <div className={styles.kpiContent}>
+              <span className={styles.kpiLabel}>Actividades Vencidas</span>
+              <h3 className={styles.kpiValue}>{actividadesVencidas}</h3>
+              <p className={styles.kpiFooter}>{actividadesVencidas > 0 ? 'Requieren atención' : 'Sin pendientes vencidos'}</p>
             </div>
           </Card>
         </motion.div>

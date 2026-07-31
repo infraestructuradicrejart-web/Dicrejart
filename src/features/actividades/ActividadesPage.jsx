@@ -22,6 +22,7 @@ import useActividades from '../../hooks/useActividades';
 import useProduccion from '../../hooks/useProduccion';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection } from '../../utils/roleAccess';
+import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import useAreas from '../../hooks/useAreas';
 import { PRIORITY_LABELS, ACTIVITY_STATUS_LABELS } from '../../data/actividadesData';
 import PageHeader from '../../components/ui/PageHeader';
@@ -73,7 +74,15 @@ const ActividadesPage = () => {
   // ============================================
   // ESTADO
   // ============================================
-  const { actividades: allActividades, addActividad, advanceStatus, deleteActividad } = useActividades();
+  const {
+    actividades: allActividades,
+    addActividad,
+    advanceStatus,
+    deleteActividad,
+    addChecklistItem,
+    toggleChecklistItem,
+    removeChecklistItem,
+  } = useActividades();
   const [areaFilter, setAreaFilter] = useState('todas');
   const [statusFilter, setStatusFilter] = useState('activos');
 
@@ -83,6 +92,11 @@ const ActividadesPage = () => {
     isOpen: false,
     activityId: null,
     title: '',
+  });
+  const [checklistModal, setChecklistModal] = useState({
+    isOpen: false,
+    activityId: null,
+    newItemText: '',
   });
 
   const { operarios } = useOperarios();
@@ -196,10 +210,34 @@ const ActividadesPage = () => {
     setDeleteConfirmation({ isOpen: false, activityId: null, title: '' });
   };
 
+  const handleOpenChecklistModal = (activityId) => {
+    setChecklistModal({ isOpen: true, activityId, newItemText: '' });
+  };
+
+  const handleCloseChecklistModal = () => {
+    setChecklistModal({ isOpen: false, activityId: null, newItemText: '' });
+  };
+
+  const handleAddChecklistItem = () => {
+    const text = checklistModal.newItemText.trim();
+    if (!text) return;
+    addChecklistItem(checklistModal.activityId, text);
+    setChecklistModal((prev) => ({ ...prev, newItemText: '' }));
+  };
+
+  const handleToggleChecklistItem = (itemId) => {
+    toggleChecklistItem(checklistModal.activityId, itemId);
+  };
+
+  const handleRemoveChecklistItem = (itemId) => {
+    removeChecklistItem(checklistModal.activityId, itemId);
+  };
+
   // ============================================
   // FILTRADO
   // ============================================
   const operariosDelArea = operarios.filter((op) => op.currentArea === newActivity.areaId);
+  const todayStr = getTodayLocalDateStr();
   // Si se eligió un proyecto, solo muestra sus juegos; si no, todos (con el proyecto en la etiqueta)
   const juegosDisponibles = newActivity.projectId
     ? juegos.filter((j) => j.projectId === newActivity.projectId)
@@ -288,14 +326,23 @@ const ActividadesPage = () => {
           ============================================ */}
       {filteredActividades.length > 0 ? (
         <motion.div className={styles.grid} variants={listVariants} initial="initial" animate="animate">
-          {visibleFilteredActividades.map((act) => (
+          {visibleFilteredActividades.map((act) => {
+            const isOverdue = Boolean(act.dueDate) && act.dueDate < todayStr && act.status !== 'completado';
+            const checklistTotal = act.checklist?.length || 0;
+            const checklistDone = act.checklist?.filter((c) => c.checked).length || 0;
+            const checklistPct = checklistTotal > 0 ? Math.round((checklistDone / checklistTotal) * 100) : null;
+
+            return (
             <motion.div key={act.id} variants={cardVariants}>
               <Card variant="default" className={styles.activityCard}>
                 <div className={styles.cardHeader}>
                   <span className={styles.activityId}>{act.id}</span>
-                  <Badge variant={PRIORITY_BADGE_VARIANT[act.priority]}>
-                    {PRIORITY_LABELS[act.priority]}
-                  </Badge>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {isOverdue && <Badge variant="danger">⏰ Vencida</Badge>}
+                    <Badge variant={PRIORITY_BADGE_VARIANT[act.priority]}>
+                      {PRIORITY_LABELS[act.priority]}
+                    </Badge>
+                  </div>
                 </div>
                 <h3 className={styles.activityTitle}>{act.title}</h3>
                 <p className={styles.activityDesc}>{act.description}</p>
@@ -326,6 +373,12 @@ const ActividadesPage = () => {
                     <strong>{act.dueDate}</strong>
                   </div>
                 )}
+                {checklistTotal > 0 && (
+                  <div className={styles.metaRow}>
+                    <span className={styles.metaLabel}>Avance:</span>
+                    <strong>{checklistDone}/{checklistTotal} ({checklistPct}%)</strong>
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' }}>
                   {isReadOnly ? (
@@ -346,34 +399,61 @@ const ActividadesPage = () => {
                     </button>
                   )}
 
-                  {!isReadOnly && act.status === 'pendiente' && (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteActivity(act.id, act.title)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: 'var(--color-alert)',
-                        cursor: 'pointer',
-                        fontSize: '16px',
-                        padding: '4px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderRadius: '4px',
-                        transition: 'background-color 0.2s',
-                      }}
-                      title="Eliminar Actividad"
-                      onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 51, 0, 0.1)')}
-                      onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
-                    >
-                      🗑️
-                    </button>
+                  {!isReadOnly && (
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenChecklistModal(act.id)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--color-primary)',
+                          cursor: 'pointer',
+                          fontSize: '16px',
+                          padding: '4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: '4px',
+                          transition: 'background-color 0.2s',
+                        }}
+                        title="Checklist de Subtareas"
+                        onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 153, 51, 0.1)')}
+                        onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
+                      >
+                        📋
+                      </button>
+                      {act.status === 'pendiente' && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteActivity(act.id, act.title)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--color-alert)',
+                            cursor: 'pointer',
+                            fontSize: '16px',
+                            padding: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: '4px',
+                            transition: 'background-color 0.2s',
+                          }}
+                          title="Eliminar Actividad"
+                          onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 51, 0, 0.1)')}
+                          onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
+                        >
+                          🗑️
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </Card>
             </motion.div>
-          ))}
+            );
+          })}
         </motion.div>
       ) : (
         <EmptyState
@@ -541,6 +621,77 @@ const ActividadesPage = () => {
           </div>
         </Modal>
       )}
+
+      {/* MODAL: CHECKLIST DE SUBTAREAS DE UNA ACTIVIDAD */}
+      {checklistModal.isOpen && (() => {
+        const activity = actividades.find((a) => a.id === checklistModal.activityId);
+        if (!activity) return null;
+        const checklist = activity.checklist || [];
+        const done = checklist.filter((c) => c.checked).length;
+        const pct = checklist.length > 0 ? Math.round((done / checklist.length) * 100) : 0;
+
+        return (
+          <Modal
+            isOpen={checklistModal.isOpen}
+            onClose={handleCloseChecklistModal}
+            title={`📋 Checklist: ${activity.title}`}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+              <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', margin: 0 }}>
+                {checklist.length > 0
+                  ? `${done}/${checklist.length} completadas (${pct}%)`
+                  : 'Aún no hay subtareas. Agrega las que consideres necesarias.'}
+              </p>
+
+              <div style={{ maxHeight: '220px', overflowY: 'auto', padding: '8px', background: 'var(--color-gray-50)', borderRadius: '8px', border: '1px solid var(--color-gray-200)' }}>
+                {checklist.map((item) => (
+                  <label
+                    key={item.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 4px' }}
+                  >
+                    <input type="checkbox" checked={item.checked} onChange={() => handleToggleChecklistItem(item.id)} />
+                    <span style={{ flexGrow: 1, textDecoration: item.checked ? 'line-through' : 'none', color: item.checked ? 'var(--color-gray-500)' : 'var(--color-dark)' }}>
+                      {item.text}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveChecklistItem(item.id)}
+                      style={{ border: 'none', background: 'none', color: 'var(--color-alert)', cursor: 'pointer', fontWeight: 'bold' }}
+                    >
+                      ✕
+                    </button>
+                  </label>
+                ))}
+                {checklist.length === 0 && (
+                  <span style={{ fontSize: '12px', color: 'var(--color-gray-500)', display: 'block', textAlign: 'center', padding: '12px' }}>
+                    Sin subtareas todavía.
+                  </span>
+                )}
+              </div>
+
+              <div className={styles.row}>
+                <input
+                  type="text"
+                  className={styles.textInput}
+                  placeholder="Ej: Solicitar refacción, revisar nivel de aceite..."
+                  value={checklistModal.newItemText}
+                  style={{ flexGrow: 1 }}
+                  onChange={(e) => setChecklistModal((prev) => ({ ...prev, newItemText: e.target.value }))}
+                />
+                <Button type="button" variant="secondary" size="md" onClick={handleAddChecklistItem}>
+                  ➕ Agregar
+                </Button>
+              </div>
+
+              <div className={styles.formActions}>
+                <Button type="button" variant="primary" size="md" onClick={handleCloseChecklistModal}>
+                  Cerrar
+                </Button>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 };
