@@ -391,12 +391,15 @@ export const OperariosProvider = ({ children }) => {
   }, [user]);
 
   /**
-   * Cancela cualquier autorización de horas extra AÚN PENDIENTE de verificar para este
-   * colaborador en esta fecha — se llama justo antes de guardar una nueva autorización
-   * (o de quitar las horas por completo) para esa misma fecha, así Calidad nunca ve un
-   * registro "fantasma" pidiendo verificar tareas de un turno que ya se canceló o
-   * cambió. Los registros YA verificados (cumplido/no_cumplido) no se tocan — son
-   * historial cerrado, no se reescriben.
+   * Cancela CUALQUIER autorización de horas extra previa (pendiente, cumplido o
+   * no_cumplido) de este colaborador para esta fecha — se llama justo antes de guardar
+   * una nueva autorización (o de quitar las horas por completo) para esa misma fecha.
+   * Antes solo se cancelaban las 'pendiente', dejando "huérfano" un registro YA
+   * verificado si el supervisor ponía, quitaba y volvía a poner horas extra el mismo
+   * día (ej. corrigiendo un bloque mal capturado) — eso producía dos registros activos
+   * simultáneos para la misma fecha (duplicados visibles en Producción/Calidad). Al
+   * redefinir la jornada de un día, el registro anterior (verificado o no) deja de ser
+   * vigente, así que se cancela también.
    */
   const cancelPendingHorasExtra = useCallback(async (operarioId, authorizedDate) => {
     if (!db) return;
@@ -404,17 +407,17 @@ export const OperariosProvider = ({ children }) => {
       const snap = await getDocs(query(
         collection(db, 'horas_extra'),
         where('operarioId', '==', operarioId),
-        where('authorizedDate', '==', authorizedDate),
-        where('verificationStatus', '==', 'pendiente')
+        where('authorizedDate', '==', authorizedDate)
       ));
-      if (snap.empty) return;
-      await Promise.all(snap.docs.map((docSnap) => updateDoc(docSnap.ref, {
+      const toCancel = snap.docs.filter((docSnap) => docSnap.data().verificationStatus !== 'cancelado');
+      if (toCancel.length === 0) return;
+      await Promise.all(toCancel.map((docSnap) => updateDoc(docSnap.ref, {
         verificationStatus: 'cancelado',
         canceledBy: user?.name || null,
         canceledByRole: user?.roleType || null,
         canceledAt: new Date().toISOString(),
       })));
-      logAudit({ user, module: 'operarios', action: 'Canceló autorización(es) de horas extra previas', details: `${operarioId} (${authorizedDate}): ${snap.size} registro(s)` });
+      logAudit({ user, module: 'operarios', action: 'Canceló autorización(es) de horas extra previas', details: `${operarioId} (${authorizedDate}): ${toCancel.length} registro(s)` });
     } catch (error) {
       console.error('Error al cancelar autorizaciones de horas extra previas:', error);
     }

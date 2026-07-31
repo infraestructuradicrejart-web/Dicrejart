@@ -1377,12 +1377,12 @@ const ProduccionPage = () => {
                 const startStr = String(op.schedule?.startHour ?? 8).padStart(2, '0');
                 const endStr = String(op.schedule?.endHour ?? 18).padStart(2, '0');
                 const hasOvertimeToday = op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === getTodayLocalDateStr();
-                // Se muestran TODAS las autorizaciones no canceladas (no solo las pendientes):
-                // así, cuando Calidad (u otro Supervisor) ya verificó una en Calidad, el área y
-                // el colaborador siguen viendo el resultado y el comentario puesto, en vez de que
-                // el registro simplemente desaparezca de esta lista al verificarse.
+                // Solo las horas extra del DÍA EN CURSO (no canceladas): las pendientes siguen
+                // mostrando los botones de verificar, y las ya verificadas muestran el resultado
+                // y el comentario, en vez de desaparecer de la vista al verificarse. El histórico
+                // de días anteriores se consulta desde Operarios, no aquí.
                 const opRecentHEs = horasExtra.filter(
-                  (h) => h.operarioId === op.id && h.verificationStatus !== 'cancelado'
+                  (h) => h.operarioId === op.id && h.authorizedDate === getTodayLocalDateStr() && h.verificationStatus !== 'cancelado'
                 );
                 const isExpanded = expandedOvertimeOperarios.has(op.id);
 
