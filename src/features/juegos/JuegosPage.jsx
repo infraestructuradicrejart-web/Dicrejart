@@ -18,6 +18,7 @@ import useToast from '../../hooks/useToast';
 import useProduccion from '../../hooks/useProduccion';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection } from '../../utils/roleAccess';
+import { ROLE_TYPES } from '../../data/usersData';
 import { normalizeText } from '../../data/areasConfig';
 import useAreas from '../../hooks/useAreas';
 import useProgressiveList from '../../hooks/useProgressiveList';
@@ -65,11 +66,14 @@ const JuegosPage = () => {
   // ============================================
   // ESTADO Y CONTEXTO GLOBAL
   // ============================================
-  const { juegos: allJuegos, proyectos, addGame, deleteGame } = useProduccion();
+  const { juegos: allJuegos, proyectos, addGame, updateGameTargetPieces, deleteGame } = useProduccion();
   const { user } = useAuth();
   const { areas: dynamicAreas, resolveAreaId } = useAreas();
   const isEncargado = user?.roleType === 'encargado-area';
   const isReadOnly = isReadOnlySection(user, 'juegos');
+  // Modificar las metas de piezas por área de un juego ya creado es exclusivo de
+  // Supervisor de Área y Admin — Encargado de Área y Dirección solo consultan.
+  const canEditGameQuantities = user?.roleType === ROLE_TYPES.ADMIN || user?.roleType === ROLE_TYPES.SUPERVISOR_AREA;
 
   // Construir mapa de áreas para acceso rápido por ID
   const AREAS_MAP = React.useMemo(() => {
@@ -106,6 +110,12 @@ const JuegosPage = () => {
     gameId: null,
     gameName: '',
   });
+  const [editQuantitiesModal, setEditQuantitiesModal] = useState({
+    isOpen: false,
+    game: null,
+    targetPieces: {},
+  });
+  const [isSavingQuantities, setIsSavingQuantities] = useState(false);
   const [newGame, setNewGame] = useState({
     name: '',
     projectId: '',
@@ -352,6 +362,35 @@ const JuegosPage = () => {
     setDeleteConfirmation({ isOpen: false, gameId: null, gameName: '' });
   };
 
+  const handleOpenEditQuantitiesModal = (juego) => {
+    setEditQuantitiesModal({
+      isOpen: true,
+      game: juego,
+      targetPieces: { ...juego.targetPieces },
+    });
+  };
+
+  const handleCloseEditQuantitiesModal = () => {
+    setEditQuantitiesModal({ isOpen: false, game: null, targetPieces: {} });
+  };
+
+  const handleSaveQuantities = async (e) => {
+    e.preventDefault();
+    const { game, targetPieces } = editQuantitiesModal;
+    if (!game) return;
+
+    setIsSavingQuantities(true);
+    const res = await updateGameTargetPieces(game.id, targetPieces);
+    setIsSavingQuantities(false);
+
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudieron modificar las cantidades.');
+      return;
+    }
+    toast.success(`✅ Metas de piezas de "${game.name}" actualizadas correctamente.`);
+    handleCloseEditQuantitiesModal();
+  };
+
   // ============================================
   // FILTRADO
   // ============================================
@@ -496,6 +535,30 @@ const JuegosPage = () => {
                     <Badge variant={STATUS_BADGE_VARIANT[juego.status] || 'neutral'}>
                       {juego.status.toUpperCase()}
                     </Badge>
+                    {canEditGameQuantities && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditQuantitiesModal(juego)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--color-primary)',
+                          cursor: 'pointer',
+                          fontSize: '16px',
+                          padding: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: '4px',
+                          transition: 'background-color 0.2s',
+                        }}
+                        title="Editar Cantidades de Piezas"
+                        onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 51, 0, 0.08)')}
+                        onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
+                      >
+                        ✏️
+                      </button>
+                    )}
                     {!isReadOnly && juego.progress === 0 && (
                       <button
                         type="button"
@@ -809,6 +872,57 @@ const JuegosPage = () => {
               </Button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {/* MODAL: EDITAR CANTIDADES DE PIEZAS POR ÁREA (Supervisor de Área / Admin) */}
+      {editQuantitiesModal.isOpen && editQuantitiesModal.game && (
+        <Modal
+          isOpen={editQuantitiesModal.isOpen}
+          onClose={handleCloseEditQuantitiesModal}
+          title={`✏️ Editar Cantidades: ${editQuantitiesModal.game.name}`}
+        >
+          <form onSubmit={handleSaveQuantities} className={styles.form}>
+            <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 0 }}>
+              Ajusta la meta de piezas por área si el pedido del cliente cambió. No se puede fijar una meta menor a lo que ya se produjo en esa área.
+            </p>
+            <div className={styles.targetPiecesInputsGrid}>
+              {editQuantitiesModal.game.areas.map((areaId) => {
+                const area = AREAS_MAP[areaId];
+                const produced = editQuantitiesModal.game.producedPieces?.[areaId] || 0;
+                return (
+                  <div key={areaId} className={styles.targetPiecesInputGroup}>
+                    <span className={styles.targetPiecesLabel}>
+                      {area?.icon} {area?.name || areaId} <span style={{ fontWeight: 400, color: 'var(--color-gray-500)' }}>(producidas: {produced})</span>
+                    </span>
+                    <input
+                      type="number"
+                      min={produced || 1}
+                      required
+                      className={styles.numberInput}
+                      value={editQuantitiesModal.targetPieces[areaId] ?? ''}
+                      onChange={(e) => {
+                        const val = Math.max(1, Number(e.target.value));
+                        setEditQuantitiesModal((prev) => ({
+                          ...prev,
+                          targetPieces: { ...prev.targetPieces, [areaId]: val },
+                        }));
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className={styles.formActions}>
+              <Button type="button" variant="secondary" size="md" onClick={handleCloseEditQuantitiesModal}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary" size="md" isLoading={isSavingQuantities}>
+                Guardar Cambios
+              </Button>
+            </div>
+          </form>
         </Modal>
       )}
     </div>

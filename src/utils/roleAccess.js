@@ -79,7 +79,10 @@ export const canAccessSection = (user, section, areaId) => {
 
   if (user.roleType === ROLE_TYPES.SUPERVISOR_AREA) {
     if (section === 'produccion') return Boolean(areaId) && (user.areaIds || []).includes(areaId);
-    return section === 'dashboard' || section === 'reportes' || section === 'compras' || section === 'operarios';
+    // Acceso a Juegos solo para modificar las metas de piezas por área de juegos ya
+    // creados (ver canEditGameQuantities en JuegosPage.jsx) — crear juego, cargar Excel y
+    // eliminar siguen siendo exclusivos de Admin (ver isReadOnlySection más abajo).
+    return section === 'dashboard' || section === 'reportes' || section === 'compras' || section === 'operarios' || section === 'juegos';
   }
 
   if (user.roleType === ROLE_TYPES.DIRECCION) {
@@ -128,7 +131,10 @@ export const isReadOnlySection = (user, section, areaId) => {
     // esta área esté en su areaIds antes de llegar aquí, así que no hace falta
     // revalidarlo de nuevo.
     if (section === 'produccion' && areaId === 'producto-terminado') return false;
-    return section === 'produccion';
+    // En Juegos, "solo lectura" aquí bloquea crear/cargar Excel/eliminar (igual que
+    // Encargado de Área y Dirección) — la excepción de poder EDITAR las metas de piezas
+    // por área se resuelve aparte, con canEditGameQuantities en JuegosPage.jsx.
+    return section === 'produccion' || section === 'juegos';
   }
 
   if (user.roleType === ROLE_TYPES.ENCARGADO_AREA) {

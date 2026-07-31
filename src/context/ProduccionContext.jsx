@@ -380,6 +380,71 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, proyectos, user]);
 
   /**
+   * Modifica las metas de piezas por área de un juego YA CREADO (ej. el cliente amplió o
+   * redujo el pedido) — exclusivo de Supervisor de Área y Admin (ver canEditGameQuantities
+   * en JuegosPage.jsx). No permite fijar una meta por debajo de lo que YA se produjo en esa
+   * área, para no dejar el progreso de esa área por encima de 100% ni datos inconsistentes.
+   */
+  const updateGameTargetPieces = useCallback(async (gameId, newTargetPieces) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const game = juegos.find((j) => j.id === gameId);
+    if (!game) return { ok: false, error: 'Juego no encontrado.' };
+
+    for (const areaId of Object.keys(newTargetPieces)) {
+      const newTarget = Number(newTargetPieces[areaId]);
+      const produced = game.producedPieces?.[areaId] || 0;
+      if (!Number.isFinite(newTarget) || newTarget <= 0) {
+        return { ok: false, error: `La cantidad debe ser un número mayor a 0.` };
+      }
+      if (newTarget < produced) {
+        return { ok: false, error: `No se puede fijar una meta de ${newTarget} pzas: ya se produjeron ${produced} en esa área.` };
+      }
+    }
+
+    const targetPieces = { ...game.targetPieces, ...newTargetPieces };
+    const areaStatus = { ...game.areaStatus };
+    game.areas.forEach((areaId) => {
+      const target = targetPieces[areaId] || 10;
+      const produced = game.producedPieces?.[areaId] || 0;
+      if (produced >= target) areaStatus[areaId] = 'completado';
+      else if (produced > 0) areaStatus[areaId] = 'proceso';
+      else areaStatus[areaId] = 'pendiente';
+    });
+
+    const allAreas = [...game.areas, 'producto-terminado'];
+    const totalProgressSum = allAreas.reduce((sum, aid) => {
+      const areaTarget = targetPieces[aid] || 1;
+      const areaProd = game.producedPieces?.[aid] || 0;
+      return sum + (areaProd / areaTarget) * 100;
+    }, 0);
+    const progress = Math.round(totalProgressSum / allAreas.length);
+    const status = progress === 100 ? 'completado' : 'progreso';
+
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), { targetPieces, areaStatus, progress, status });
+      logAudit({ user, module: 'produccion', action: 'Modificó metas de piezas de un juego', details: `${game.name}: ${JSON.stringify(newTargetPieces)}` });
+
+      const project = proyectos.find((p) => p.id === game.projectId);
+      if (project) {
+        const projectGames = juegos
+          .map((jg) => (jg.id === game.id ? { ...jg, progress } : jg))
+          .filter((jg) => jg.projectId === project.id);
+        if (projectGames.length > 0) {
+          const sumGamePct = projectGames.reduce((sum, jg) => sum + jg.progress, 0);
+          const projProgress = Math.round(sumGamePct / projectGames.length);
+          const projStatus = projProgress === 100 ? 'completado' : project.status;
+          await updateDoc(doc(db, 'proyectos', project.id), { progress: projProgress, status: projStatus });
+        }
+      }
+
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al modificar metas de piezas del juego:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, proyectos, user]);
+
+  /**
    * Registra un log de producción de piezas y recalcula progresos
    */
   const registerProductionLog = useCallback(async (logData) => {
@@ -1469,6 +1534,7 @@ export const ProduccionProvider = ({ children }) => {
       addProject,
       updateProject,
       addGame,
+      updateGameTargetPieces,
       deleteProject,
       deleteGame,
       registerProductionLog,
@@ -1512,6 +1578,7 @@ export const ProduccionProvider = ({ children }) => {
       addProject,
       updateProject,
       addGame,
+      updateGameTargetPieces,
       deleteProject,
       deleteGame,
       registerProductionLog,
