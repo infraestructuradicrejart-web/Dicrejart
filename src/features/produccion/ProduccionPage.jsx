@@ -900,21 +900,34 @@ const ProduccionPage = () => {
       animate="animate"
     >
       {/* Cabecera del área */}
-      <div className={styles.areaViewHeader}>
-        {canViewAreaSelector && (
-          <Button variant="secondary" size="md" onClick={handleBackToSelector}>
-            ⬅ Volver a Áreas
-          </Button>
-        )}
-        <div className={styles.areaViewTitleBlock}>
-          <div
-            className={styles.areaColorIndicator}
-            style={{ backgroundColor: activeArea?.color }}
-          />
-          <h2 className={styles.areaViewTitle}>
-            {activeArea?.icon} Panel de {activeArea?.name}
-          </h2>
+      <div className={styles.areaViewHeader} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {canViewAreaSelector && (
+            <Button variant="secondary" size="md" onClick={handleBackToSelector}>
+              ⬅ Volver a Áreas
+            </Button>
+          )}
+          <div className={styles.areaViewTitleBlock}>
+            <div
+              className={styles.areaColorIndicator}
+              style={{ backgroundColor: activeArea?.color }}
+            />
+            <h2 className={styles.areaViewTitle}>
+              {activeArea?.icon} Panel de {activeArea?.name}
+            </h2>
+          </div>
         </div>
+
+        {/* Botón de Solicitar Horas Extras visible para Encargados, Supervisores y Admin */}
+        <Button
+          type="button"
+          variant="secondary"
+          size="md"
+          onClick={handleOpenRequestOvertimeModal}
+          style={{ backgroundColor: 'var(--color-secondary)', color: '#ffffff', fontWeight: 'bold' }}
+        >
+          ⏰ Solicitar Horas Extras
+        </Button>
       </div>
 
       {isReadOnly && (
@@ -1622,39 +1635,62 @@ const ProduccionPage = () => {
               })}
             </div>
           )}
+        </Card>
+      </motion.div>
+      )}
 
-          {/* Solicitudes de Horas Extras de esta Área */}
-          {(() => {
-            const areaSolicitudes = solicitudesHorasExtra.filter((s) => s.areaId === areaId);
-            if (areaSolicitudes.length === 0) return null;
+      {/* Tablero de Solicitudes de Horas Extras del Área — Visible para Encargados, Supervisores y Admin */}
+      {(() => {
+        const areaSolicitudes = solicitudesHorasExtra.filter((s) => s.areaId === areaId);
+        return (
+          <motion.div variants={itemVariants} style={{ marginTop: 'var(--space-6)' }}>
+            <Card variant="default">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--space-4)' }}>
+                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>
+                  📋 Solicitudes de Horas Extras — {activeArea?.name}
+                </h3>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleOpenRequestOvertimeModal}
+                  style={{ backgroundColor: 'var(--color-secondary)', color: '#ffffff', fontWeight: 'bold' }}
+                >
+                  ⏰ Solicitar Horas Extras
+                </Button>
+              </div>
 
-            return (
-              <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--color-gray-200)' }}>
-                <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-gray-700)', marginBottom: '8px' }}>
-                  📋 Solicitudes de Horas Extras del Área
-                </h4>
+              {areaSolicitudes.length === 0 ? (
+                <div style={{ padding: '16px', color: 'var(--color-gray-500)', textAlign: 'center', fontSize: '13px' }}>
+                  No se han registrado solicitudes de horas extras para esta área todavía. Haz clic en "Solicitar Horas Extras" para crear una.
+                </div>
+              ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {areaSolicitudes.slice(0, 10).map((sol) => (
+                  {areaSolicitudes.slice(0, 15).map((sol) => (
                     <div
                       key={sol.id}
                       style={{
                         display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
-                        gap: '8px', padding: '8px 12px', background: 'var(--color-gray-50)', borderRadius: '6px',
-                        border: '1px solid var(--color-gray-200)', fontSize: '13px',
+                        gap: '8px', padding: '10px 14px', background: sol.status === 'pendiente' ? '#fffbeb' : 'var(--color-gray-50)',
+                        borderRadius: '8px', border: sol.status === 'pendiente' ? '1px solid #fde68a' : '1px solid var(--color-gray-200)',
+                        fontSize: '13px',
                       }}
                     >
-                      <div>
-                        <strong>{sol.operarioName}</strong> — ⏱️ {sol.horas}h ({sol.bloque}) el {sol.fecha}
-                        {sol.motivo && <span style={{ color: 'var(--color-gray-500)', marginLeft: '6px' }}>({sol.motivo})</span>}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <div>
+                          <strong>{sol.operarioName}</strong> — ⏱️ <strong>{sol.horas}h</strong> extra ({sol.bloque === 'matutino' ? '🌅 Matutino' : '🌆 Vespertino'}) para el 📅 <strong>{sol.fecha}</strong>
+                        </div>
+                        {sol.motivo && <div style={{ color: 'var(--color-gray-600)', fontSize: '12px' }}>Motivo/Tareas: <em>"{sol.motivo}"</em></div>}
                         <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
-                          Solicitado por: {sol.solicitadoPor} ({new Date(sol.createdAt).toLocaleDateString()})
+                          Solicitado por: <strong>{sol.solicitadoPor}</strong> · {new Date(sol.createdAt).toLocaleDateString()} {new Date(sol.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
+
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {sol.status === 'pendiente' && <Badge variant="warning">🟡 Pendiente de Autorización</Badge>}
-                        {sol.status === 'autorizada' && <Badge variant="success">🟢 Autorizada ({sol.revisadoPor})</Badge>}
-                        {sol.status === 'rechazada' && <Badge variant="danger">🔴 Rechazada</Badge>}
-                        {sol.status === 'cancelada' && <Badge variant="neutral">⚪ Cancelada</Badge>}
+                        {sol.status === 'autorizada' && <Badge variant="success">🟢 Autorizada por {sol.revisadoPor}</Badge>}
+                        {sol.status === 'rechazada' && <Badge variant="danger">🔴 Rechazada por {sol.revisadoPor}</Badge>}
+                        {sol.status === 'cancelada' && <Badge variant="neutral">⚪ Cancelada ({sol.canceladaPor})</Badge>}
 
                         {(sol.status === 'pendiente' || sol.status === 'autorizada') && (
                           <div style={{ display: 'flex', gap: '4px' }}>
@@ -1670,12 +1706,11 @@ const ProduccionPage = () => {
                     </div>
                   ))}
                 </div>
-              </div>
-            );
-          })()}
-        </Card>
-      </motion.div>
-      )}
+              )}
+            </Card>
+          </motion.div>
+        );
+      })()}
 
       {/* ============================================
           MODAL: ÓRDENES DE TRABAJO A PROVEEDORES EXTERNOS
