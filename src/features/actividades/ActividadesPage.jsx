@@ -19,6 +19,7 @@ import Badge from '../../components/ui/Badge';
 import useToast from '../../hooks/useToast';
 import useOperarios from '../../hooks/useOperarios';
 import useActividades from '../../hooks/useActividades';
+import useProduccion from '../../hooks/useProduccion';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection } from '../../utils/roleAccess';
 import useAreas from '../../hooks/useAreas';
@@ -59,6 +60,8 @@ const EMPTY_ACTIVITY_FORM = {
   operarioId: '',
   dueDate: '',
   priority: 'media',
+  projectId: '',
+  gameId: '',
 };
 
 /**
@@ -83,6 +86,7 @@ const ActividadesPage = () => {
   });
 
   const { operarios } = useOperarios();
+  const { proyectos, juegos } = useProduccion();
   const { user } = useAuth();
   const { areas: dynamicAreas } = useAreas();
   const toast = useToast();
@@ -121,6 +125,14 @@ const ActividadesPage = () => {
       if (name === 'areaId') {
         updated.operarioId = '';
       }
+      // Si cambia el proyecto, se limpia el juego si ya no pertenece al nuevo proyecto
+      // (o si se quitó el proyecto por completo).
+      if (name === 'projectId') {
+        const selectedGame = juegos.find((j) => j.id === prev.gameId);
+        if (!selectedGame || selectedGame.projectId !== value) {
+          updated.gameId = '';
+        }
+      }
       return updated;
     });
   };
@@ -132,6 +144,12 @@ const ActividadesPage = () => {
       return;
     }
 
+    // El juego relacionado ya trae su propio proyecto — si se eligió un juego sin elegir
+    // proyecto explícitamente, el proyecto se toma de ahí.
+    const selectedGame = juegos.find((j) => j.id === newActivity.gameId);
+    const selectedProject = proyectos.find((p) => p.id === newActivity.projectId)
+      || (selectedGame ? proyectos.find((p) => p.id === selectedGame.projectId) : null);
+
     addActividad({
       title: newActivity.title,
       description: newActivity.description || 'Sin descripción.',
@@ -139,6 +157,10 @@ const ActividadesPage = () => {
       operarioId: newActivity.operarioId || null,
       dueDate: newActivity.dueDate || null,
       priority: newActivity.priority,
+      projectId: selectedProject?.id || null,
+      projectName: selectedProject?.name || null,
+      gameId: selectedGame?.id || null,
+      gameName: selectedGame?.name || null,
     });
     toast.success('✅ Actividad registrada.');
     handleCloseModal();
@@ -178,6 +200,10 @@ const ActividadesPage = () => {
   // FILTRADO
   // ============================================
   const operariosDelArea = operarios.filter((op) => op.currentArea === newActivity.areaId);
+  // Si se eligió un proyecto, solo muestra sus juegos; si no, todos (con el proyecto en la etiqueta)
+  const juegosDisponibles = newActivity.projectId
+    ? juegos.filter((j) => j.projectId === newActivity.projectId)
+    : juegos;
 
   const filteredActividades = actividades.filter((act) => {
     const matchesArea = areaFilter === 'todas' || act.areaId === areaFilter;
@@ -282,6 +308,18 @@ const ActividadesPage = () => {
                   <span className={styles.metaLabel}>Responsable:</span>
                   <strong>{getOperarioName(act.operarioId) || 'Sin asignar específico'}</strong>
                 </div>
+                {act.projectName && (
+                  <div className={styles.metaRow}>
+                    <span className={styles.metaLabel}>Proyecto:</span>
+                    <strong>{act.projectName}</strong>
+                  </div>
+                )}
+                {act.gameName && (
+                  <div className={styles.metaRow}>
+                    <span className={styles.metaLabel}>Juego:</span>
+                    <strong>🧩 {act.gameName}</strong>
+                  </div>
+                )}
                 {act.dueDate && (
                   <div className={styles.metaRow}>
                     <span className={styles.metaLabel}>Fecha límite:</span>
@@ -405,6 +443,32 @@ const ActividadesPage = () => {
                   newActivity.areaId ? 'Sin asignar a alguien específico' : 'Primero elige un área'
                 }
                 options={operariosDelArea.map((op) => ({ value: op.id, label: op.name }))}
+              />
+            </div>
+          </div>
+
+          <div className={styles.row}>
+            <div className={styles.formGroup}>
+              <Select
+                label="Proyecto Relacionado (opcional)"
+                name="projectId"
+                value={newActivity.projectId}
+                onChange={handleFormChange}
+                placeholder="-- Ninguno --"
+                options={proyectos.map((p) => ({ value: p.id, label: p.name }))}
+              />
+            </div>
+            <div className={styles.formGroup}>
+              <Select
+                label="Juego Relacionado (opcional)"
+                name="gameId"
+                value={newActivity.gameId}
+                onChange={handleFormChange}
+                placeholder="-- Ninguno --"
+                options={juegosDisponibles.map((j) => ({
+                  value: j.id,
+                  label: newActivity.projectId ? j.name : `${j.name} (${j.projectName})`,
+                }))}
               />
             </div>
           </div>
