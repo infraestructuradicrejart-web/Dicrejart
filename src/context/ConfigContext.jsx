@@ -32,7 +32,7 @@ export const DEFAULT_LIMITS = {
   actividadesLimit: 5,
   requisicionesLimit: 5,
   movimientosPersonalLimit: 5,
-  horasExtraLimit: 5,
+  horasExtraLimit: 50,
   auditLogLimit: 100,
 };
 
