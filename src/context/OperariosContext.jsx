@@ -30,6 +30,7 @@ import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
 import { getTodayLocalDateStr } from '../utils/dateUtils';
 import { triggerDailyRHNotification } from '../services/rhNotificationService';
+import { checkOvertimeEligibility, calculateScheduleFromOvertime } from '../utils/overtimeRules';
 
 export const OperariosContext = createContext(null);
 
@@ -115,6 +116,7 @@ export const OperariosProvider = ({ children }) => {
   const [operarios, setOperarios] = useState([]);
   const [movimientos, setMovimientos] = useState([]);
   const [horasExtra, setHorasExtra] = useState([]);
+  const [solicitudesHorasExtra, setSolicitudesHorasExtra] = useState([]);
 
   // verifyAreaAuthorizer valida, con la contraseña real de un tercero, que tenga
   // autoridad (Admin, Encargado o Supervisor) sobre un área específica
@@ -173,16 +175,19 @@ export const OperariosProvider = ({ children }) => {
     let unsubOperarios = null;
     let unsubMovimientos = null;
     let unsubHorasExtra = null;
+    let unsubSolicitudesHorasExtra = null;
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       if (unsubOperarios) unsubOperarios();
       if (unsubMovimientos) unsubMovimientos();
       if (unsubHorasExtra) unsubHorasExtra();
+      if (unsubSolicitudesHorasExtra) unsubSolicitudesHorasExtra();
 
       if (!user) {
         setOperarios([]);
         setMovimientos([]);
         setHorasExtra([]);
+        setSolicitudesHorasExtra([]);
         return;
       }
 
@@ -222,6 +227,16 @@ export const OperariosProvider = ({ children }) => {
           setHorasExtra(list);
         }
       );
+
+      unsubSolicitudesHorasExtra = onSnapshot(
+        query(collection(db, 'solicitudes_horas_extra'), orderBy('createdAt', 'desc'), limit(horasExtraLimit)),
+        (snapshot) => {
+          const list = [];
+          snapshot.forEach((doc) => list.push(doc.data()));
+          list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          setSolicitudesHorasExtra(list);
+        }
+      );
     });
 
     return () => {
@@ -229,6 +244,7 @@ export const OperariosProvider = ({ children }) => {
       if (unsubOperarios) unsubOperarios();
       if (unsubMovimientos) unsubMovimientos();
       if (unsubHorasExtra) unsubHorasExtra();
+      if (unsubSolicitudesHorasExtra) unsubSolicitudesHorasExtra();
     };
   }, [movimientosPersonalLimit, horasExtraLimit]);
 
@@ -820,6 +836,286 @@ export const OperariosProvider = ({ children }) => {
   }, [operarios, user]);
 
   // ============================================
+  // SOLICITUDES Y AUTORIZACIÓN DE HORAS EXTRAS (ENCARGADOS & SUPERVISORES)
+  // ============================================
+
+  /**
+   * Encargado de área solicita horas extras para un colaborador.
+   * Ejecuta la validación de elegibilidad (bloqueo por falta en los últimos 7 días).
+   */
+  const solicitarHorasExtra = useCallback(
+    async ({ operarioId, fecha, horas, bloque, motivo }) => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
+      const op = operarios.find((o) => o.id === operarioId);
+      if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
+
+      const targetFecha = fecha || getTodayLocalDateStr();
+
+      // Evaluar elegibilidad por faltas o ausencias
+      const eligibility = checkOvertimeEligibility(op, targetFecha);
+      if (!eligibility.isEligible) {
+        return { ok: false, error: eligibility.reason };
+      }
+
+      const id = `SOL-HE-${Date.now()}`;
+      const nuevaSolicitud = {
+        id,
+        operarioId: op.id,
+        operarioName: op.name,
+        operarioPuesto: op.puesto || 'operario',
+        areaId: op.currentArea,
+        fecha: targetFecha,
+        horas: Number(horas) || 1,
+        bloque: bloque || 'vespertino',
+        motivo: motivo || '',
+        solicitadoPor: user?.name || 'Encargado de Área',
+        solicitadoPorUid: user?.id || null,
+        solicitadoPorRole: user?.roleType || 'encargado-area',
+        status: 'pendiente',
+        revisadoPor: null,
+        revisadoAt: null,
+        notasRevision: '',
+        createdAt: new Date().toISOString(),
+      };
+
+      try {
+        await setDoc(doc(db, 'solicitudes_horas_extra', id), nuevaSolicitud);
+        logAudit({
+          user,
+          module: 'operarios',
+          action: 'Solicitó horas extras para colaborador',
+          details: `${op.name}: ${horas}h (${bloque}) el ${targetFecha}`,
+        });
+        return { ok: true, id };
+      } catch (error) {
+        console.error('Error al solicitar horas extras:', error);
+        return { ok: false, error: error.message };
+      }
+    },
+    [operarios, user]
+  );
+
+  /**
+   * Supervisor o Admin autoriza una solicitud de horas extras.
+   * Sincroniza automáticamente:
+   * 1. Actualiza la solicitud a 'autorizada'.
+   * 2. Registra en 'horas_extra'.
+   * 3. Si es HOY, actualiza en vivo el horario del operario.
+   */
+  const autorizarSolicitudHoraExtra = useCallback(
+    async (solicitudId, notes = '') => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
+      const sol = solicitudesHorasExtra.find((s) => s.id === solicitudId);
+      if (!sol) return { ok: false, error: 'Solicitud no encontrada.' };
+      const op = operarios.find((o) => o.id === sol.operarioId);
+      if (!op) return { ok: false, error: 'Colaborador asociado no encontrado.' };
+
+      const reviewerName = user?.name || 'Supervisor';
+      const todayStr = getTodayLocalDateStr();
+      const isSaturday = new Date(`${sol.fecha}T00:00:00`).getDay() === 6;
+      const baseEnd = isSaturday ? 13 : 18;
+
+      const scheduleCalc = calculateScheduleFromOvertime(8, baseEnd, sol.horas, sol.bloque);
+
+      try {
+        await updateDoc(doc(db, 'solicitudes_horas_extra', solicitudId), {
+          status: 'autorizada',
+          revisadoPor: reviewerName,
+          revisadoPorRole: user?.roleType || 'supervisor-area',
+          revisadoAt: new Date().toISOString(),
+          notasRevision: notes || '',
+        });
+
+        const heId = `HE-${Date.now()}`;
+        await setDoc(doc(db, 'horas_extra', heId), {
+          id: heId,
+          solicitudId: sol.id,
+          operarioId: op.id,
+          operarioName: op.name,
+          operarioPuesto: op.puesto || 'operario',
+          areaId: op.currentArea,
+          authorizedDate: sol.fecha,
+          startHour: scheduleCalc.startHour,
+          endHour: scheduleCalc.endHour,
+          overtimeHours: scheduleCalc.overtimeHours,
+          overtimeTasks: sol.motivo || 'Horas extras autorizadas',
+          authorizedBy: reviewerName,
+          authorizedByRole: user?.roleType || 'supervisor-area',
+          createdAt: new Date().toISOString(),
+          verificationStatus: 'pendiente',
+          verificationNotes: '',
+        });
+
+        if (sol.fecha === todayStr) {
+          await updateDoc(doc(db, 'operarios', op.id), {
+            schedule: {
+              ...op.schedule,
+              startHour: scheduleCalc.startHour,
+              endHour: scheduleCalc.endHour,
+              overtimeHours: scheduleCalc.overtimeHours,
+              authorizedBy: reviewerName,
+              authorizedDate: sol.fecha,
+            },
+          });
+        }
+
+        logAudit({
+          user,
+          module: 'operarios',
+          action: 'Autorizó solicitud de horas extras',
+          details: `${op.name}: ${sol.horas}h el ${sol.fecha}`,
+        });
+        return { ok: true };
+      } catch (error) {
+        console.error('Error al autorizar solicitud de horas extras:', error);
+        return { ok: false, error: error.message };
+      }
+    },
+    [solicitudesHorasExtra, operarios, user]
+  );
+
+  /**
+   * Rechaza una solicitud de horas extras.
+   */
+  const rechazarSolicitudHoraExtra = useCallback(
+    async (solicitudId, notes = '') => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
+      try {
+        await updateDoc(doc(db, 'solicitudes_horas_extra', solicitudId), {
+          status: 'rechazada',
+          revisadoPor: user?.name || 'Supervisor',
+          revisadoPorRole: user?.roleType || null,
+          revisadoAt: new Date().toISOString(),
+          notasRevision: notes || '',
+        });
+        logAudit({
+          user,
+          module: 'operarios',
+          action: 'Rechazó solicitud de horas extras',
+          details: solicitudId,
+        });
+        return { ok: true };
+      } catch (error) {
+        console.error('Error al rechazar solicitud de horas extras:', error);
+        return { ok: false, error: error.message };
+      }
+    },
+    [user]
+  );
+
+  /**
+   * Cancela una solicitud de horas extras.
+   */
+  const cancelarSolicitudHoraExtra = useCallback(
+    async (solicitudId, reason = '') => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
+      const sol = solicitudesHorasExtra.find((s) => s.id === solicitudId);
+      if (!sol) return { ok: false, error: 'Solicitud no encontrada.' };
+      const op = operarios.find((o) => o.id === sol.operarioId);
+
+      const todayStr = getTodayLocalDateStr();
+
+      try {
+        await updateDoc(doc(db, 'solicitudes_horas_extra', solicitudId), {
+          status: 'cancelada',
+          canceladaPor: user?.name || 'Usuario',
+          canceladaAt: new Date().toISOString(),
+          motivoCancelacion: reason || '',
+        });
+
+        if (sol.status === 'autorizada' && sol.fecha === todayStr && op) {
+          const isSaturday = new Date().getDay() === 6;
+          await updateDoc(doc(db, 'operarios', op.id), {
+            schedule: {
+              ...op.schedule,
+              startHour: 8,
+              endHour: isSaturday ? 13 : 18,
+              overtimeHours: 0,
+              authorizedBy: '',
+              authorizedDate: '',
+            },
+          });
+        }
+
+        logAudit({
+          user,
+          module: 'operarios',
+          action: 'Canceló solicitud de horas extras',
+          details: `${solicitudId} - ${reason || 'Sin motivo'}`,
+        });
+        return { ok: true };
+      } catch (error) {
+        console.error('Error al cancelar solicitud de horas extras:', error);
+        return { ok: false, error: error.message };
+      }
+    },
+    [solicitudesHorasExtra, operarios, user]
+  );
+
+  /**
+   * Modifica una solicitud de horas extras.
+   */
+  const modificarSolicitudHoraExtra = useCallback(
+    async (solicitudId, { horas, bloque, motivo, fecha }) => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
+      const sol = solicitudesHorasExtra.find((s) => s.id === solicitudId);
+      if (!sol) return { ok: false, error: 'Solicitud no encontrada.' };
+      const op = operarios.find((o) => o.id === sol.operarioId);
+
+      const newFecha = fecha || sol.fecha;
+      const newHoras = Number(horas) || sol.horas;
+      const newBloque = bloque || sol.bloque;
+
+      if (op && newFecha !== sol.fecha) {
+        const eligibility = checkOvertimeEligibility(op, newFecha);
+        if (!eligibility.isEligible) {
+          return { ok: false, error: eligibility.reason };
+        }
+      }
+
+      try {
+        await updateDoc(doc(db, 'solicitudes_horas_extra', solicitudId), {
+          fecha: newFecha,
+          horas: newHoras,
+          bloque: newBloque,
+          motivo: motivo || sol.motivo,
+          modificadoPor: user?.name || 'Usuario',
+          modificadoAt: new Date().toISOString(),
+        });
+
+        const todayStr = getTodayLocalDateStr();
+        if (sol.status === 'autorizada' && newFecha === todayStr && op) {
+          const isSaturday = new Date().getDay() === 6;
+          const baseEnd = isSaturday ? 13 : 18;
+          const scheduleCalc = calculateScheduleFromOvertime(8, baseEnd, newHoras, newBloque);
+
+          await updateDoc(doc(db, 'operarios', op.id), {
+            schedule: {
+              ...op.schedule,
+              startHour: scheduleCalc.startHour,
+              endHour: scheduleCalc.endHour,
+              overtimeHours: scheduleCalc.overtimeHours,
+              authorizedDate: newFecha,
+            },
+          });
+        }
+
+        logAudit({
+          user,
+          module: 'operarios',
+          action: 'Modificó solicitud de horas extras',
+          details: `${solicitudId}: ${newHoras}h (${newBloque})`,
+        });
+        return { ok: true };
+      } catch (error) {
+        console.error('Error al modificar solicitud de horas extras:', error);
+        return { ok: false, error: error.message };
+      }
+    },
+    [solicitudesHorasExtra, operarios, user]
+  );
+
+  // ============================================
   // VALOR DEL CONTEXTO
   // ============================================
   const value = useMemo(
@@ -846,6 +1142,12 @@ export const OperariosProvider = ({ children }) => {
       verifyHorasExtra,
       correctHorasExtraSchedule,
       cancelPendingHorasExtra,
+      solicitudesHorasExtra,
+      solicitarHorasExtra,
+      autorizarSolicitudHoraExtra,
+      rechazarSolicitudHoraExtra,
+      cancelarSolicitudHoraExtra,
+      modificarSolicitudHoraExtra,
     }),
     [
       operarios,
@@ -870,6 +1172,12 @@ export const OperariosProvider = ({ children }) => {
       verifyHorasExtra,
       correctHorasExtraSchedule,
       cancelPendingHorasExtra,
+      solicitudesHorasExtra,
+      solicitarHorasExtra,
+      autorizarSolicitudHoraExtra,
+      rechazarSolicitudHoraExtra,
+      cancelarSolicitudHoraExtra,
+      modificarSolicitudHoraExtra,
     ]
   );
 

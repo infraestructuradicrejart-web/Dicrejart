@@ -101,6 +101,11 @@ const OperariosPage = () => {
     rejectMovimiento,
     setOperarioEstado,
     horasExtra,
+    solicitudesHorasExtra,
+    autorizarSolicitudHoraExtra,
+    rechazarSolicitudHoraExtra,
+    cancelarSolicitudHoraExtra,
+    modificarSolicitudHoraExtra,
   } = useOperarios();
 
   const { user, users } = useAuth();
@@ -674,6 +679,120 @@ const OperariosPage = () => {
           </div>
         </Card>
       </div>
+
+      {/* Panel de Supervisión y Autorización de Horas Extras */}
+      {(user?.roleType === 'admin' || user?.roleType === 'supervisor-area' || user?.roleType === 'calidad') && solicitudesHorasExtra.length > 0 && (
+        <motion.div variants={itemVariants} style={{ marginBottom: 'var(--space-6)' }}>
+          <Card variant="default">
+            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <h3 className={styles.sectionTitle} style={{ margin: 0 }}>
+                  ⏰ Solicitudes de Horas Extras ({solicitudesHorasExtra.filter(s => s.status === 'pendiente').length} Pendientes)
+                </h3>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {solicitudesHorasExtra.map((sol) => (
+                <div
+                  key={sol.id}
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justify: 'space-between',
+                    gap: '12px',
+                    padding: '12px 16px',
+                    backgroundColor: sol.status === 'pendiente' ? '#fffbeb' : '#f8fafc',
+                    borderRadius: '8px',
+                    border: sol.status === 'pendiente' ? '1px solid #fde68a' : '1px solid #e2e8f0',
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <strong>{sol.operarioName}</strong>
+                      <span style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>
+                        ({getAreaName(sol.areaId)})
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--color-gray-800)' }}>
+                      ⏱️ <strong>{sol.horas}h</strong> extra ({sol.bloque === 'matutino' ? '🌅 Matutino' : '🌆 Vespertino'}) para el 📅 <strong>{sol.fecha}</strong>
+                    </div>
+                    {sol.motivo && (
+                      <div style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>
+                        Motivo/Tareas: <em>"{sol.motivo}"</em>
+                      </div>
+                    )}
+                    <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                      Solicitado por: <strong>{sol.solicitadoPor}</strong> ({actorLabel(sol.solicitadoPor, sol.solicitadoPorRole)}) · {formatDateTime(sol.createdAt)}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {sol.status === 'pendiente' && <Badge variant="warning">🟡 Pendiente de Revisión</Badge>}
+                    {sol.status === 'autorizada' && <Badge variant="success">🟢 Autorizada por {sol.revisadoPor}</Badge>}
+                    {sol.status === 'rechazada' && <Badge variant="danger">🔴 Rechazada por {sol.revisadoPor}</Badge>}
+                    {sol.status === 'cancelada' && <Badge variant="neutral">⚪ Cancelada ({sol.canceladaPor})</Badge>}
+
+                    {sol.status === 'pendiente' && (user?.roleType === 'admin' || user?.roleType === 'supervisor-area') && (
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="sm"
+                          onClick={async () => {
+                            const res = await autorizarSolicitudHoraExtra(sol.id, 'Autorizada desde panel de supervisión');
+                            if (res.ok) {
+                              toast.success(`✅ Solicitud autorizada para ${sol.operarioName}. Horario actualizado automáticamente.`);
+                            } else {
+                              toast.danger(res.error || 'Error al autorizar.');
+                            }
+                          }}
+                        >
+                          ✅ Autorizar
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          style={{ color: 'var(--color-alert)' }}
+                          onClick={async () => {
+                            const notes = window.prompt(`Indica el motivo de rechazo para la solicitud de ${sol.operarioName}:`);
+                            if (notes === null) return;
+                            const res = await rechazarSolicitudHoraExtra(sol.id, notes);
+                            if (res.ok) {
+                              toast.success(`Solicitud de ${sol.operarioName} rechazada.`);
+                            }
+                          }}
+                        >
+                          ❌ Rechazar
+                        </Button>
+                      </div>
+                    )}
+
+                    {(sol.status === 'pendiente' || sol.status === 'autorizada') && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={async () => {
+                          if (!window.confirm(`¿Seguro que deseas cancelar la solicitud de ${sol.operarioName}?`)) return;
+                          const res = await cancelarSolicitudHoraExtra(sol.id, 'Cancelado desde panel de supervisión');
+                          if (res.ok) {
+                            toast.success(`Solicitud cancelada. Horario de ${sol.operarioName} resincronizado.`);
+                          }
+                        }}
+                      >
+                        🚫 Cancelar
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Tabla e Historial */}
       <motion.div variants={itemVariants}>

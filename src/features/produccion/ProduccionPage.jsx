@@ -27,6 +27,7 @@ import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection, canAccessSection } from '../../utils/roleAccess';
 import { getOvertimeBlocks } from '../../utils/overtimeUtils';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { checkOvertimeEligibility } from '../../utils/overtimeRules';
 import { ROLE_TYPES } from '../../data/usersData';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
@@ -115,6 +116,10 @@ const ProduccionPage = () => {
     horasExtra,
     verifyHorasExtra,
     correctHorasExtraSchedule,
+    solicitudesHorasExtra,
+    solicitarHorasExtra,
+    cancelarSolicitudHoraExtra,
+    modificarSolicitudHoraExtra,
   } = useOperarios();
   const { user } = useAuth();
   const isReadOnly = isReadOnlySection(user, 'produccion', areaId);
@@ -455,6 +460,95 @@ const ProduccionPage = () => {
         : `📅 Horas extra programadas para ${collaborator.name} el ${authorizedDate} (${overtimeHours}h). El horario de hoy no se modificó.`
     );
     handleCloseScheduleModal();
+  };
+
+  // Modal de Solicitud de Horas Extras por Encargado
+  const [requestOvertimeModal, setRequestOvertimeModal] = useState({
+    isOpen: false,
+    operarioId: '',
+    fecha: getTodayLocalDateStr(),
+    horas: '2',
+    bloque: 'vespertino',
+    motivo: '',
+  });
+
+  const [editOvertimeRequestModal, setEditOvertimeRequestModal] = useState({
+    isOpen: false,
+    solicitud: null,
+    horas: '2',
+    bloque: 'vespertino',
+    motivo: '',
+    fecha: '',
+  });
+
+  const handleOpenRequestOvertimeModal = () => {
+    const firstOp = operadoresDisponibles[0]?.id || '';
+    setRequestOvertimeModal({
+      isOpen: true,
+      operarioId: firstOp,
+      fecha: getTodayLocalDateStr(),
+      horas: '2',
+      bloque: 'vespertino',
+      motivo: '',
+    });
+  };
+
+  const handleCloseRequestOvertimeModal = () => {
+    setRequestOvertimeModal((prev) => ({ ...prev, isOpen: false }));
+  };
+
+  const handleSubmitOvertimeRequest = async (e) => {
+    e.preventDefault();
+    const { operarioId, fecha, horas, bloque, motivo } = requestOvertimeModal;
+    if (!operarioId) {
+      toast.warning('Selecciona un colaborador.');
+      return;
+    }
+    const res = await solicitarHorasExtra({ operarioId, fecha, horas: Number(horas), bloque, motivo });
+    if (res.ok) {
+      toast.success('✅ Solicitud de horas extras enviada a revisión del supervisor.');
+      handleCloseRequestOvertimeModal();
+    } else {
+      toast.danger(res.error || 'No se pudo registrar la solicitud.');
+    }
+  };
+
+  const handleOpenEditOvertimeRequestModal = (sol) => {
+    setEditOvertimeRequestModal({
+      isOpen: true,
+      solicitud: sol,
+      horas: String(sol.horas),
+      bloque: sol.bloque || 'vespertino',
+      motivo: sol.motivo || '',
+      fecha: sol.fecha || getTodayLocalDateStr(),
+    });
+  };
+
+  const handleCloseEditOvertimeRequestModal = () => {
+    setEditOvertimeRequestModal((prev) => ({ ...prev, isOpen: false, solicitud: null }));
+  };
+
+  const handleSaveEditOvertimeRequest = async (e) => {
+    e.preventDefault();
+    const { solicitud, horas, bloque, motivo, fecha } = editOvertimeRequestModal;
+    if (!solicitud) return;
+    const res = await modificarSolicitudHoraExtra(solicitud.id, { horas: Number(horas), bloque, motivo, fecha });
+    if (res.ok) {
+      toast.success('✅ Solicitud de horas extras actualizada.');
+      handleCloseEditOvertimeRequestModal();
+    } else {
+      toast.danger(res.error || 'No se pudo modificar la solicitud.');
+    }
+  };
+
+  const handleCancelOvertimeRequest = async (sol) => {
+    if (!window.confirm(`¿Seguro que deseas cancelar la solicitud de horas extras de ${sol.operarioName}?`)) return;
+    const res = await cancelarSolicitudHoraExtra(sol.id, 'Cancelada desde vista de área de producción');
+    if (res.ok) {
+      toast.success(`Solicitud de ${sol.operarioName} cancelada.`);
+    } else {
+      toast.danger(res.error || 'No se pudo cancelar la solicitud.');
+    }
   };
 
   // ============================================
@@ -1355,15 +1449,23 @@ const ProduccionPage = () => {
         </Card>
       </motion.div>
 
-      {/* Tablero de Control: Personal del Área — Jornada y Horas Extra. Exclusivo de
-          Supervisor de Área (y Admin): Encargado de Área solo tiene acceso a registrar
-          producción en su área, no a gestionar jornada/horas extra de su personal. */}
-      {canManageJornada && (
+      {/* Tablero de Control: Personal del Área y Solicitud de Horas Extras */}
+      {(canManageJornada || user?.roleType === ROLE_TYPES.ENCARGADO_AREA) && (
       <motion.div variants={itemVariants} style={{ marginTop: 'var(--space-6)' }}>
         <Card variant="default">
-          <h3 className={styles.sectionTitle} style={{ marginBottom: 'var(--space-4)' }}>
-            👥 Personal del Área
-          </h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)', gap: '12px' }}>
+            <h3 className={styles.sectionTitle} style={{ margin: 0 }}>
+              👥 Personal del Área
+            </h3>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={handleOpenRequestOvertimeModal}
+            >
+              ⏰ Solicitar Horas Extras
+            </Button>
+          </div>
 
           {operadoresDisponibles.length === 0 ? (
             <EmptyState
@@ -1520,6 +1622,57 @@ const ProduccionPage = () => {
               })}
             </div>
           )}
+
+          {/* Solicitudes de Horas Extras de esta Área */}
+          {(() => {
+            const areaSolicitudes = solicitudesHorasExtra.filter((s) => s.areaId === areaId);
+            if (areaSolicitudes.length === 0) return null;
+
+            return (
+              <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--color-gray-200)' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-gray-700)', marginBottom: '8px' }}>
+                  📋 Solicitudes de Horas Extras del Área
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {areaSolicitudes.slice(0, 10).map((sol) => (
+                    <div
+                      key={sol.id}
+                      style={{
+                        display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
+                        gap: '8px', padding: '8px 12px', background: 'var(--color-gray-50)', borderRadius: '6px',
+                        border: '1px solid var(--color-gray-200)', fontSize: '13px',
+                      }}
+                    >
+                      <div>
+                        <strong>{sol.operarioName}</strong> — ⏱️ {sol.horas}h ({sol.bloque}) el {sol.fecha}
+                        {sol.motivo && <span style={{ color: 'var(--color-gray-500)', marginLeft: '6px' }}>({sol.motivo})</span>}
+                        <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                          Solicitado por: {sol.solicitadoPor} ({new Date(sol.createdAt).toLocaleDateString()})
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {sol.status === 'pendiente' && <Badge variant="warning">🟡 Pendiente de Autorización</Badge>}
+                        {sol.status === 'autorizada' && <Badge variant="success">🟢 Autorizada ({sol.revisadoPor})</Badge>}
+                        {sol.status === 'rechazada' && <Badge variant="danger">🔴 Rechazada</Badge>}
+                        {sol.status === 'cancelada' && <Badge variant="neutral">⚪ Cancelada</Badge>}
+
+                        {(sol.status === 'pendiente' || sol.status === 'autorizada') && (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <Button type="button" variant="ghost" size="sm" onClick={() => handleOpenEditOvertimeRequestModal(sol)}>
+                              ✏️ Modificar
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm" onClick={() => handleCancelOvertimeRequest(sol)} style={{ color: 'var(--color-alert)' }}>
+                              🚫 Cancelar
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </Card>
       </motion.div>
       )}
@@ -2180,6 +2333,224 @@ const ProduccionPage = () => {
                 </Button>
                 <Button type="submit" variant="primary">
                   Guardar Corrección
+                </Button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
+
+      {/* MODAL: SOLICITAR HORAS EXTRAS */}
+      {requestOvertimeModal.isOpen && (() => {
+        const selectedOpObj = operarios.find((o) => o.id === requestOvertimeModal.operarioId);
+        const eligibility = checkOvertimeEligibility(selectedOpObj, requestOvertimeModal.fecha);
+
+        return (
+          <Modal
+            isOpen={requestOvertimeModal.isOpen}
+            onClose={handleCloseRequestOvertimeModal}
+            title="⏰ Solicitar Horas Extras para Colaborador"
+          >
+            <form onSubmit={handleSubmitOvertimeRequest}>
+              <div className={styles.formGroup}>
+                <Select
+                  label="Colaborador"
+                  value={requestOvertimeModal.operarioId}
+                  onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, operarioId: e.target.value }))}
+                  required
+                  options={operadoresDisponibles.map((op) => ({
+                    value: op.id,
+                    label: `${op.name} (${op.puesto || 'operario'})`,
+                  }))}
+                />
+              </div>
+
+              <div className={styles.formGroup}>
+                <Input
+                  type="date"
+                  label="Fecha de las Horas Extras"
+                  value={requestOvertimeModal.fecha}
+                  onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, fecha: e.target.value }))}
+                  required
+                />
+              </div>
+
+              {/* AVISO DE ELEGIBILIDAD / BLOQUEO POR FALTA U OTRA AUSENCIA */}
+              {!eligibility.isEligible ? (
+                <div
+                  style={{
+                    padding: '12px',
+                    backgroundColor: '#fee2e2',
+                    color: '#991b1b',
+                    borderRadius: '8px',
+                    border: '1px solid #fca5a5',
+                    fontSize: '13px',
+                    lineHeight: '1.4',
+                    marginBottom: '16px',
+                    fontWeight: 600,
+                  }}
+                >
+                  {eligibility.reason}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    backgroundColor: '#f0fdf4',
+                    color: '#166534',
+                    borderRadius: '8px',
+                    border: '1px solid #bbf7d0',
+                    fontSize: '12px',
+                    marginBottom: '16px',
+                  }}
+                >
+                  ✅ Colaborador habilitado para solicitar tiempo extra el {requestOvertimeModal.fecha}.
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Cantidad de Horas"
+                    value={requestOvertimeModal.horas}
+                    onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, horas: e.target.value }))}
+                    required
+                    options={[
+                      { value: '1', label: '1 hora extra' },
+                      { value: '2', label: '2 horas extras' },
+                      { value: '3', label: '3 horas extras' },
+                      { value: '4', label: '4 horas extras' },
+                    ]}
+                  />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Bloque de Tiempo"
+                    value={requestOvertimeModal.bloque}
+                    onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, bloque: e.target.value }))}
+                    required
+                    options={[
+                      { value: 'vespertino', label: '🌆 Vespertino (Extensión de Salida)' },
+                      { value: 'matutino', label: '🌅 Matutino (Entrada Anticipada)' },
+                    ]}
+                  />
+                </div>
+              </div>
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Motivo / Tareas Asignadas</label>
+                <textarea
+                  className={styles.textarea}
+                  rows="3"
+                  required
+                  placeholder="Especifica detalladamente las tareas que realizará en el tiempo extra..."
+                  value={requestOvertimeModal.motivo}
+                  onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, motivo: e.target.value }))}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
+                <Button type="button" variant="secondary" onClick={handleCloseRequestOvertimeModal}>
+                  Cancelar
+                </Button>
+                <Button type="submit" variant="primary" disabled={!eligibility.isEligible}>
+                  Enviar a Revisión de Supervisor
+                </Button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
+
+      {/* MODAL: MODIFICAR SOLICITUD DE HORAS EXTRAS */}
+      {editOvertimeRequestModal.isOpen && editOvertimeRequestModal.solicitud && (() => {
+        const sol = editOvertimeRequestModal.solicitud;
+        const op = operarios.find((o) => o.id === sol.operarioId);
+        const eligibility = checkOvertimeEligibility(op, editOvertimeRequestModal.fecha);
+
+        return (
+          <Modal
+            isOpen={editOvertimeRequestModal.isOpen}
+            onClose={handleCloseEditOvertimeRequestModal}
+            title={`✏️ Modificar Solicitud de Horas Extras — ${sol.operarioName}`}
+          >
+            <form onSubmit={handleSaveEditOvertimeRequest}>
+              <div className={styles.formGroup}>
+                <Input
+                  type="date"
+                  label="Fecha de las Horas Extras"
+                  value={editOvertimeRequestModal.fecha}
+                  onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, fecha: e.target.value }))}
+                  required
+                />
+              </div>
+
+              {!eligibility.isEligible && (
+                <div
+                  style={{
+                    padding: '12px',
+                    backgroundColor: '#fee2e2',
+                    color: '#991b1b',
+                    borderRadius: '8px',
+                    border: '1px solid #fca5a5',
+                    fontSize: '13px',
+                    lineHeight: '1.4',
+                    marginBottom: '16px',
+                    fontWeight: 600,
+                  }}
+                >
+                  {eligibility.reason}
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Cantidad de Horas"
+                    value={editOvertimeRequestModal.horas}
+                    onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, horas: e.target.value }))}
+                    required
+                    options={[
+                      { value: '1', label: '1 hora extra' },
+                      { value: '2', label: '2 horas extras' },
+                      { value: '3', label: '3 horas extras' },
+                      { value: '4', label: '4 horas extras' },
+                    ]}
+                  />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Bloque de Tiempo"
+                    value={editOvertimeRequestModal.bloque}
+                    onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, bloque: e.target.value }))}
+                    required
+                    options={[
+                      { value: 'vespertino', label: '🌆 Vespertino (Extensión de Salida)' },
+                      { value: 'matutino', label: '🌅 Matutino (Entrada Anticipada)' },
+                    ]}
+                  />
+                </div>
+              </div>
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Motivo / Tareas Asignadas</label>
+                <textarea
+                  className={styles.textarea}
+                  rows="3"
+                  required
+                  value={editOvertimeRequestModal.motivo}
+                  onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, motivo: e.target.value }))}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
+                <Button type="button" variant="secondary" onClick={handleCloseEditOvertimeRequestModal}>
+                  Cancelar
+                </Button>
+                <Button type="submit" variant="primary" disabled={!eligibility.isEligible}>
+                  Guardar Cambios
                 </Button>
               </div>
             </form>

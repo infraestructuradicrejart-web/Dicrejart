@@ -126,6 +126,11 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
+    // Reglas para solicitudes de horas extras por Encargados de Área
+    match /solicitudes_horas_extra/{solicitudId} {
+      allow read, write: if request.auth != null;
+    }
+
     // Reglas para el registro/auditoría de las notificaciones diarias de faltas a RH
     match /notificaciones_rh/{notifId} {
       allow read, write: if request.auth != null;
