@@ -1355,7 +1355,10 @@ const ProduccionPage = () => {
         </Card>
       </motion.div>
 
-      {/* Tablero de Control: Personal del Área — Jornada y Horas Extra */}
+      {/* Tablero de Control: Personal del Área — Jornada y Horas Extra. Exclusivo de
+          Supervisor de Área (y Admin): Encargado de Área solo tiene acceso a registrar
+          producción en su área, no a gestionar jornada/horas extra de su personal. */}
+      {canManageJornada && (
       <motion.div variants={itemVariants} style={{ marginTop: 'var(--space-6)' }}>
         <Card variant="default">
           <h3 className={styles.sectionTitle} style={{ marginBottom: 'var(--space-4)' }}>
@@ -1492,6 +1495,7 @@ const ProduccionPage = () => {
           )}
         </Card>
       </motion.div>
+      )}
 
       {/* ============================================
           MODAL: ÓRDENES DE TRABAJO A PROVEEDORES EXTERNOS
