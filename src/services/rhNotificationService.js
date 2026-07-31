@@ -40,6 +40,31 @@ const describeScheduleCorrection = (he) => {
   return `${parts.join(' / ')} — Motivo: ${correction.reason} — Corrigió: ${correction.correctedBy}`;
 };
 
+const VERIFICATION_LABELS = {
+  pendiente: '⏳ Pendiente de Verificar',
+  cumplido: '✅ Cumplido',
+  no_cumplido: '❌ No Cumplido',
+  cancelado: '🚫 Cancelado',
+};
+
+/**
+ * Describe el resultado de la verificación de cumplimiento (Cumplido/No Cumplido), o null
+ * si todavía está pendiente — la justificación (`verificationNotes`) es obligatoria en
+ * OperariosContext.jsx cuando se marca "No Cumplido", así que siempre queda registrada
+ * aquí junto con quién verificó.
+ */
+const describeVerification = (he) => {
+  if (!he.verificationStatus || he.verificationStatus === 'pendiente') return null;
+  const label = VERIFICATION_LABELS[he.verificationStatus] || he.verificationStatus;
+  if (he.verificationStatus === 'no_cumplido') {
+    return `${label} — Motivo: ${he.verificationNotes || 'Sin motivo registrado'} (Verificó: ${he.verifiedBy || 'N/A'})`;
+  }
+  if (he.verificationStatus === 'cumplido') {
+    return `${label} (Verificó: ${he.verifiedBy || 'N/A'})`;
+  }
+  return label;
+};
+
 export const ESTADO_AUSENCIA_TITULOS = {
   falta: 'Falta (Inasistencia Injustificada)',
   incapacidad: 'Incapacidad Médica',
@@ -52,7 +77,7 @@ export const ESTADO_AUSENCIA_TITULOS = {
 /**
  * Genera el cuerpo en texto y HTML del reporte diario para RH
  */
-export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExtraList = []) => {
+export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExtraList = [], verifiedPreviousDaysList = []) => {
   const formattedDate = new Date(`${dateStr}T00:00:00`).toLocaleDateString('es-MX', {
     weekday: 'long',
     year: 'numeric',
@@ -109,6 +134,42 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
       textLines.push(`   • Horas Extra Autorizadas: ${describeOvertimeBlocks(he)}`);
       textLines.push(`   • Tareas a Realizar: ${he.overtimeTasks || 'N/A'}`);
       textLines.push(`   • Autorizó: ${he.authorizedBy || 'N/A'}`);
+      const verificationText = describeVerification(he);
+      if (verificationText) {
+        textLines.push(`   • Verificación: ${verificationText}`);
+      }
+      const correctionText = describeScheduleCorrection(he);
+      if (correctionText) {
+        textLines.push(`   • ⚠️ Horario Corregido: ${correctionText}`);
+      }
+      textLines.push(`-------------------------------------------------------------`);
+    });
+  }
+
+  // La verificación de cumplimiento y la corrección de horario normalmente ocurren un día
+  // DESPUÉS de que se autorizó el tiempo extra (una vez que el turno ya pasó) — sin esta
+  // sección, esos comentarios/cambios nunca aparecerían en el reporte diario, porque para
+  // cuando se registran ya no caen dentro de "Horas Extra Autorizadas Hoy".
+  textLines.push(``);
+  textLines.push(`=============================================================`);
+  textLines.push(`VERIFICACIONES Y CORRECCIONES DE HORAS EXTRA DE DÍAS ANTERIORES`);
+  textLines.push(`=============================================================`);
+  textLines.push(`Total de registros: ${verifiedPreviousDaysList.length}`);
+  textLines.push(`-------------------------------------------------------------`);
+  textLines.push(``);
+
+  if (verifiedPreviousDaysList.length === 0) {
+    textLines.push(`No se registraron verificaciones ni correcciones de horas extra de días anteriores.`);
+  } else {
+    verifiedPreviousDaysList.forEach((he, index) => {
+      textLines.push(`${index + 1}. COLABORADOR: ${he.operarioName} (ID: ${he.operarioId})`);
+      textLines.push(`   • Área: ${he.areaId || 'N/A'}`);
+      textLines.push(`   • Fecha de Autorización Original: ${he.authorizedDate}`);
+      textLines.push(`   • Horas Extra Autorizadas: ${describeOvertimeBlocks(he)}`);
+      const verificationText = describeVerification(he);
+      if (verificationText) {
+        textLines.push(`   • Verificación: ${verificationText}`);
+      }
       const correctionText = describeScheduleCorrection(he);
       if (correctionText) {
         textLines.push(`   • ⚠️ Horario Corregido: ${correctionText}`);
@@ -141,9 +202,21 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
       <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #1f2937;">${he.operarioName} <br/><span style="font-size:11px; color:#6b7280; font-weight:normal;">ID: ${he.operarioId}</span></td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #374151;">${he.areaId || 'N/A'}</td>
-        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${describeOvertimeBlocks(he)}${describeScheduleCorrection(he) ? `<br/><span style="font-size:11px; color:#b91c1c; font-weight:600;">⚠️ ${describeScheduleCorrection(he)}</span>` : ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${describeOvertimeBlocks(he)}${describeVerification(he) ? `<br/><span style="font-size:11px; color:${he.verificationStatus === 'no_cumplido' ? '#b91c1c' : '#15803d'}; font-weight:600;">${describeVerification(he)}</span>` : ''}${describeScheduleCorrection(he) ? `<br/><span style="font-size:11px; color:#b91c1c; font-weight:600;">⚠️ ${describeScheduleCorrection(he)}</span>` : ''}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #4b5563;">${he.overtimeTasks || 'N/A'}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280;">${he.authorizedBy || 'N/A'}</td>
+      </tr>
+    `).join('');
+
+  const verifiedPreviousDaysRowsHtml = verifiedPreviousDaysList.length === 0
+    ? `<tr><td colspan="5" style="padding: 16px; text-align: center; color: #6b7280; background-color: #f9fafb;">No se registraron verificaciones ni correcciones de horas extra de días anteriores.</td></tr>`
+    : verifiedPreviousDaysList.map((he, i) => `
+      <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #1f2937;">${he.operarioName} <br/><span style="font-size:11px; color:#6b7280; font-weight:normal;">ID: ${he.operarioId}</span></td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #374151;">${he.areaId || 'N/A'}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #4b5563;">${he.authorizedDate} <br/><span style="font-size:11px; color:#6b7280;">${describeOvertimeBlocks(he)}</span></td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: ${he.verificationStatus === 'no_cumplido' ? '#b91c1c' : '#15803d'}; font-weight: 600;">${describeVerification(he) || 'N/A'}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #b91c1c;">${describeScheduleCorrection(he) || '—'}</td>
       </tr>
     `).join('');
 
@@ -191,6 +264,24 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
             ${horasExtraRowsHtml}
           </tbody>
         </table>
+
+        <h3 style="font-size: 15px; color: #1f2937; border-bottom: 2px solid #1e293b; padding-bottom: 6px; margin-top: 28px;">🔍 Verificaciones y Correcciones de Horas Extra (Días Anteriores)</h3>
+        <p style="font-size: 14px; color: #374151;"><strong>Total de Registros:</strong> <span style="background-color: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px; font-weight: bold;">${verifiedPreviousDaysList.length} registro(s)</span></p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+          <thead>
+            <tr style="background-color: #f3f4f6; color: #374151; font-size: 12px; text-transform: uppercase;">
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Colaborador</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Área</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Autorización Original</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Verificación</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Corrección de Horario</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${verifiedPreviousDaysRowsHtml}
+          </tbody>
+        </table>
       </div>
       <div style="background-color: #f9fafb; padding: 12px 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; text-align: center;">
         Generado automáticamente por el Sistema Dicrejart. Notificación diaria programada para Recursos Humanos a las 10:00 AM.
@@ -230,9 +321,19 @@ export const triggerDailyRHNotification = async ({
   // Horas extra autorizadas HOY (se excluyen las canceladas, ver cancelPendingHorasExtra
   // en OperariosContext.jsx — un registro cancelado ya no representa una autorización vigente)
   const horasExtraList = horasExtra.filter((he) => he.authorizedDate === todayStr && he.verificationStatus !== 'cancelado');
+  // Verificaciones (cumplido/no_cumplido) y correcciones de horario registradas HOY, pero
+  // de autorizaciones de un día ANTERIOR — la verificación normalmente ocurre después de
+  // que el turno ya pasó, así que sin esto esos comentarios/cambios (con su justificación
+  // obligatoria) nunca llegarían a aparecer en ningún reporte a RH.
+  const verifiedPreviousDaysList = horasExtra.filter((he) => {
+    if (he.authorizedDate === todayStr) return false;
+    const verifiedToday = he.verifiedAt && he.verifiedAt.startsWith(todayStr) && he.verificationStatus !== 'pendiente' && he.verificationStatus !== 'cancelado';
+    const correctedToday = he.scheduleCorrection?.correctedAt && he.scheduleCorrection.correctedAt.startsWith(todayStr);
+    return verifiedToday || correctedToday;
+  });
   const emailTarget = generalConfig.emailRH || 'recursoshumanos@dicrejart.com (Por definir)';
 
-  const { subject, bodyText, bodyHtml } = buildRHReportEmailContent(absentList, todayStr, emailTarget, horasExtraList);
+  const { subject, bodyText, bodyHtml } = buildRHReportEmailContent(absentList, todayStr, emailTarget, horasExtraList, verifiedPreviousDaysList);
 
   const notifId = `NOTIF-RH-${Date.now()}`;
   const notifRecord = {
@@ -263,6 +364,25 @@ export const triggerDailyRHNotification = async ({
       endHour: he.endHour,
       overtimeTasks: he.overtimeTasks || '',
       authorizedBy: he.authorizedBy || 'N/A',
+      verificationStatus: he.verificationStatus || 'pendiente',
+      verificationNotes: he.verificationNotes || '',
+      verifiedBy: he.verifiedBy || null,
+      scheduleCorrection: he.scheduleCorrection || null,
+    })),
+    verifiedPreviousDaysCount: verifiedPreviousDaysList.length,
+    verifiedPreviousDaysList: verifiedPreviousDaysList.map((he) => ({
+      operarioId: he.operarioId,
+      operarioName: he.operarioName,
+      operarioPuesto: he.operarioPuesto || 'N/A',
+      areaId: he.areaId || 'N/A',
+      authorizedDate: he.authorizedDate,
+      overtimeHours: he.overtimeHours,
+      startHour: he.startHour,
+      endHour: he.endHour,
+      authorizedBy: he.authorizedBy || 'N/A',
+      verificationStatus: he.verificationStatus || 'pendiente',
+      verificationNotes: he.verificationNotes || '',
+      verifiedBy: he.verifiedBy || null,
       scheduleCorrection: he.scheduleCorrection || null,
     })),
     status: 'enviado',

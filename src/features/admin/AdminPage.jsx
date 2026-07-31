@@ -1195,7 +1195,8 @@ const AdminPage = () => {
               <p style={{ margin: '0 0 4px 0' }}><strong>Destinatario RH:</strong> <span style={{ color: '#2563eb', fontWeight: 'bold' }}>{rhPreviewModal.notifRecord.emailRH}</span></p>
               <p style={{ margin: '0 0 4px 0' }}><strong>Horario del corte:</strong> 10:00 AM ({rhPreviewModal.notifRecord.date})</p>
               <p style={{ margin: '0 0 4px 0' }}><strong>Total Personal Ausente:</strong> <Badge variant={rhPreviewModal.notifRecord.absentCount > 0 ? 'danger' : 'success'}>{rhPreviewModal.notifRecord.absentCount} colaborador(es)</Badge></p>
-              <p style={{ margin: 0 }}><strong>Total Horas Extra Autorizadas:</strong> <Badge variant={rhPreviewModal.notifRecord.horasExtraCount > 0 ? 'warning' : 'neutral'}>{rhPreviewModal.notifRecord.horasExtraCount || 0} autorización(es)</Badge></p>
+              <p style={{ margin: '0 0 4px 0' }}><strong>Total Horas Extra Autorizadas:</strong> <Badge variant={rhPreviewModal.notifRecord.horasExtraCount > 0 ? 'warning' : 'neutral'}>{rhPreviewModal.notifRecord.horasExtraCount || 0} autorización(es)</Badge></p>
+              <p style={{ margin: 0 }}><strong>Verificaciones/Correcciones de Días Anteriores:</strong> <Badge variant={rhPreviewModal.notifRecord.verifiedPreviousDaysCount > 0 ? 'danger' : 'neutral'}>{rhPreviewModal.notifRecord.verifiedPreviousDaysCount || 0} registro(s)</Badge></p>
             </div>
 
             <div style={{ border: '1px solid #cbd5e1', borderRadius: '8px', overflow: 'hidden', maxHeight: '420px', overflowY: 'auto' }}>
