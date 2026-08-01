@@ -1900,15 +1900,23 @@ const CalidadPage = () => {
                                       🕒 Tareas del tiempo extra ({h.overtimeHours}h):
                                     </div>
                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                                      {earlyHours > 0 && (
-                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
-                                          🌅 Matutino: {earlyHours}h ({earlyRange})
+                                      {Boolean(h.authorizedDate) && new Date(`${h.authorizedDate}T00:00:00`).getDay() === 0 ? (
+                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fdf2f8', color: '#9d174d', border: '1px solid #fbcfe8' }}>
+                                          📅 Domingo Completo: {h.overtimeHours}h ({String(h.startHour).padStart(2, '0')}:00-{String(h.endHour).padStart(2, '0')}:00)
                                         </span>
-                                      )}
-                                      {lateHours > 0 && (
-                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa' }}>
-                                          🌆 Vespertino: {lateHours}h ({lateRange})
-                                        </span>
+                                      ) : (
+                                        <>
+                                          {earlyHours > 0 && (
+                                            <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                                              🌅 Matutino: {earlyHours}h ({earlyRange})
+                                            </span>
+                                          )}
+                                          {lateHours > 0 && (
+                                            <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa' }}>
+                                              🌆 Vespertino: {lateHours}h ({lateRange})
+                                            </span>
+                                          )}
+                                        </>
                                       )}
                                     </div>
                                     <div style={{ color: 'var(--color-gray-700)', marginBottom: '4px' }}>{h.overtimeTasks}</div>

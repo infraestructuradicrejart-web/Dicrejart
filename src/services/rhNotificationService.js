@@ -12,8 +12,11 @@ import { getTodayLocalDateStr } from '../utils/dateUtils';
 import { getOvertimeBlocks } from '../utils/overtimeUtils';
 import { logAudit } from '../utils/auditLog';
 
-/** Describe en texto el/los bloque(s) de tiempo extra de una autorización (matutino y/o vespertino). */
+/** Describe en texto el/los bloque(s) de tiempo extra de una autorización (matutino y/o vespertino, o domingo completo). */
 const describeOvertimeBlocks = (he) => {
+  if (he.authorizedDate && new Date(`${he.authorizedDate}T00:00:00`).getDay() === 0) {
+    return `Domingo Completo ${he.overtimeHours}h (${String(he.startHour).padStart(2, '0')}:00-${String(he.endHour).padStart(2, '0')}:00)`;
+  }
   const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(he.startHour, he.endHour, he.authorizedDate);
   const parts = [];
   if (earlyHours > 0) parts.push(`Matutino ${earlyHours}h (${earlyRange})`);

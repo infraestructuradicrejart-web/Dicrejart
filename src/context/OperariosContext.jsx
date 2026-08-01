@@ -844,7 +844,7 @@ export const OperariosProvider = ({ children }) => {
    * Ejecuta la validación de elegibilidad (bloqueo por falta en los últimos 7 días).
    */
   const solicitarHorasExtra = useCallback(
-    async ({ operarioId, fecha, horas, bloque, motivo }) => {
+    async ({ operarioId, fecha, horas, bloque, motivo, startHour, endHour }) => {
       if (!db) return { ok: false, error: 'Firestore no inicializado' };
       const op = operarios.find((o) => o.id === operarioId);
       if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
@@ -867,6 +867,11 @@ export const OperariosProvider = ({ children }) => {
         fecha: targetFecha,
         horas: Number(horas) || 1,
         bloque: bloque || 'vespertino',
+        // Solo se usan cuando bloque === 'domingo': un domingo es un turno completo desde
+        // cero (no una extensión de jornada base), así que se necesita la hora de entrada
+        // y salida REAL en vez de solo la cantidad de horas.
+        startHour: bloque === 'domingo' ? Number(startHour) : null,
+        endHour: bloque === 'domingo' ? Number(endHour) : null,
         motivo: motivo || '',
         solicitadoPor: user?.name || 'Encargado de Área',
         solicitadoPorUid: user?.id || null,
@@ -915,7 +920,11 @@ export const OperariosProvider = ({ children }) => {
       const isSaturday = new Date(`${sol.fecha}T00:00:00`).getDay() === 6;
       const baseEnd = isSaturday ? 13 : 18;
 
-      const scheduleCalc = calculateScheduleFromOvertime(8, baseEnd, sol.horas, sol.bloque);
+      // Domingo es un turno completo desde cero: se usa la hora de entrada/salida REAL
+      // que ya viene en la solicitud, no la jornada base 8-18/8-13 de los demás días.
+      const scheduleCalc = sol.bloque === 'domingo'
+        ? calculateScheduleFromOvertime(sol.startHour, sol.endHour, sol.horas, 'domingo')
+        : calculateScheduleFromOvertime(8, baseEnd, sol.horas, sol.bloque);
 
       try {
         await updateDoc(doc(db, 'solicitudes_horas_extra', solicitudId), {
@@ -1056,7 +1065,7 @@ export const OperariosProvider = ({ children }) => {
    * Modifica una solicitud de horas extras.
    */
   const modificarSolicitudHoraExtra = useCallback(
-    async (solicitudId, { horas, bloque, motivo, fecha }) => {
+    async (solicitudId, { horas, bloque, motivo, fecha, startHour, endHour }) => {
       if (!db) return { ok: false, error: 'Firestore no inicializado' };
       const sol = solicitudesHorasExtra.find((s) => s.id === solicitudId);
       if (!sol) return { ok: false, error: 'Solicitud no encontrada.' };
@@ -1065,6 +1074,8 @@ export const OperariosProvider = ({ children }) => {
       const newFecha = fecha || sol.fecha;
       const newHoras = Number(horas) || sol.horas;
       const newBloque = bloque || sol.bloque;
+      const newStartHour = newBloque === 'domingo' ? Number(startHour) : null;
+      const newEndHour = newBloque === 'domingo' ? Number(endHour) : null;
 
       if (op && newFecha !== sol.fecha) {
         const eligibility = checkOvertimeEligibility(op, newFecha);
@@ -1078,6 +1089,8 @@ export const OperariosProvider = ({ children }) => {
           fecha: newFecha,
           horas: newHoras,
           bloque: newBloque,
+          startHour: newStartHour,
+          endHour: newEndHour,
           motivo: motivo || sol.motivo,
           modificadoPor: user?.name || 'Usuario',
           modificadoAt: new Date().toISOString(),
@@ -1087,7 +1100,9 @@ export const OperariosProvider = ({ children }) => {
         if (sol.status === 'autorizada' && newFecha === todayStr && op) {
           const isSaturday = new Date().getDay() === 6;
           const baseEnd = isSaturday ? 13 : 18;
-          const scheduleCalc = calculateScheduleFromOvertime(8, baseEnd, newHoras, newBloque);
+          const scheduleCalc = newBloque === 'domingo'
+            ? calculateScheduleFromOvertime(newStartHour, newEndHour, newHoras, 'domingo')
+            : calculateScheduleFromOvertime(8, baseEnd, newHoras, newBloque);
 
           await updateDoc(doc(db, 'operarios', op.id), {
             schedule: {

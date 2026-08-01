@@ -90,13 +90,23 @@ export const checkOvertimeEligibility = (operario, targetDateStr = getTodayLocal
 /**
  * Calcula los horarios de inicio y fin ajustados sumando las horas extras al bloque Matutino o Vespertino.
  *
- * @param {number} baseStart - Hora de inicio base (ej. 8)
- * @param {number} baseEnd - Hora de fin base (ej. 18 o 13 los sábados)
- * @param {number} overtimeHours - Cantidad de horas extras (ej. 2)
- * @param {'matutino'|'vespertino'} bloque - Bloque de tiempo extra
+ * @param {number} baseStart - Hora de inicio base (ej. 8); en bloque 'domingo' es la hora
+ *   de entrada REAL de ese turno (no hay jornada base que extender un domingo)
+ * @param {number} baseEnd - Hora de fin base (ej. 18 o 13 los sábados); en bloque
+ *   'domingo' es la hora de salida REAL de ese turno
+ * @param {number} overtimeHours - Cantidad de horas extras (ej. 2); ignorado en bloque
+ *   'domingo', se recalcula directo de baseStart/baseEnd
+ * @param {'matutino'|'vespertino'|'domingo'} bloque - Bloque de tiempo extra
  * @returns {{ startHour: number, endHour: number, overtimeHours: number, bloque: string }}
  */
 export const calculateScheduleFromOvertime = (baseStart = 8, baseEnd = 18, overtimeHours = 0, bloque = 'vespertino') => {
+  // Domingo es un turno completo desde cero, no una extensión de una jornada base — se
+  // usan las horas de entrada/salida tal cual, sin los topes de 6:00/22:00 que sí aplican
+  // a matutino/vespertino (esos topes asumen que ya existe una jornada 8-18 de por medio).
+  if (bloque === 'domingo') {
+    return { startHour: baseStart, endHour: baseEnd, overtimeHours: Math.max(0, baseEnd - baseStart), bloque: 'domingo' };
+  }
+
   const hours = Number(overtimeHours) || 0;
   if (hours <= 0) {
     return { startHour: baseStart, endHour: baseEnd, overtimeHours: 0, bloque };

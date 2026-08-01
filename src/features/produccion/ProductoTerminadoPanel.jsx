@@ -110,6 +110,8 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     horas: '2',
     bloque: 'vespertino',
     motivo: '',
+    startHour: '8',
+    endHour: '18',
   });
 
   const [editOvertimeRequestModal, setEditOvertimeRequestModal] = useState({
@@ -119,7 +121,13 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     bloque: 'vespertino',
     motivo: '',
     fecha: '',
+    startHour: '8',
+    endHour: '18',
   });
+
+  // Un domingo no es una extensión de la jornada base (8-18) — es un turno completo desde
+  // cero, normalmente igual de largo que un día laboral normal.
+  const esFechaDomingo = (fechaStr) => Boolean(fechaStr) && new Date(`${fechaStr}T00:00:00`).getDay() === 0;
 
   const [scheduleModal, setScheduleModal] = useState({
     isOpen: false,
@@ -143,13 +151,16 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
 
   const handleOpenRequestOvertimeModal = () => {
     const firstOp = ptOperarios[0]?.id || '';
+    const esDomingo = esFechaDomingo(todayStr);
     setRequestOvertimeModal({
       isOpen: true,
       operarioId: firstOp,
       fecha: todayStr,
-      horas: '2',
-      bloque: 'vespertino',
+      horas: esDomingo ? '10' : '2',
+      bloque: esDomingo ? 'domingo' : 'vespertino',
       motivo: '',
+      startHour: '8',
+      endHour: '18',
     });
   };
 
@@ -157,14 +168,38 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     setRequestOvertimeModal((prev) => ({ ...prev, isOpen: false }));
   };
 
+  const handleRequestFechaChange = (e) => {
+    const newFecha = e.target.value;
+    const esDomingo = esFechaDomingo(newFecha);
+    setRequestOvertimeModal((prev) => ({
+      ...prev,
+      fecha: newFecha,
+      bloque: esDomingo ? 'domingo' : (prev.bloque === 'domingo' ? 'vespertino' : prev.bloque),
+      horas: esDomingo ? String(Math.max(0, Number(prev.endHour) - Number(prev.startHour))) : prev.horas,
+    }));
+  };
+
+  const handleRequestDomingoHourChange = (field) => (e) => {
+    const value = e.target.value;
+    setRequestOvertimeModal((prev) => {
+      const next = { ...prev, [field]: value };
+      next.horas = String(Math.max(0, Number(next.endHour) - Number(next.startHour)));
+      return next;
+    });
+  };
+
   const handleSubmitOvertimeRequest = async (e) => {
     e.preventDefault();
-    const { operarioId, fecha, horas, bloque, motivo } = requestOvertimeModal;
+    const { operarioId, fecha, horas, bloque, motivo, startHour, endHour } = requestOvertimeModal;
     if (!operarioId) {
       toast.warning('Selecciona un colaborador.');
       return;
     }
-    const res = await solicitarHorasExtra({ operarioId, fecha, horas: Number(horas), bloque, motivo });
+    if (bloque === 'domingo' && Number(endHour) <= Number(startHour)) {
+      toast.danger('La hora de salida debe ser posterior a la hora de entrada.');
+      return;
+    }
+    const res = await solicitarHorasExtra({ operarioId, fecha, horas: Number(horas), bloque, motivo, startHour, endHour });
     if (res.ok) {
       toast.success('✅ Solicitud de horas extras enviada a revisión del supervisor.');
       handleCloseRequestOvertimeModal();
@@ -181,6 +216,8 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
       bloque: sol.bloque || 'vespertino',
       motivo: sol.motivo || '',
       fecha: sol.fecha || todayStr,
+      startHour: sol.bloque === 'domingo' ? String(sol.startHour ?? 8) : '8',
+      endHour: sol.bloque === 'domingo' ? String(sol.endHour ?? 18) : '18',
     });
   };
 
@@ -188,11 +225,35 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     setEditOvertimeRequestModal((prev) => ({ ...prev, isOpen: false, solicitud: null }));
   };
 
+  const handleEditRequestFechaChange = (e) => {
+    const newFecha = e.target.value;
+    const esDomingo = esFechaDomingo(newFecha);
+    setEditOvertimeRequestModal((prev) => ({
+      ...prev,
+      fecha: newFecha,
+      bloque: esDomingo ? 'domingo' : (prev.bloque === 'domingo' ? 'vespertino' : prev.bloque),
+      horas: esDomingo ? String(Math.max(0, Number(prev.endHour) - Number(prev.startHour))) : prev.horas,
+    }));
+  };
+
+  const handleEditRequestDomingoHourChange = (field) => (e) => {
+    const value = e.target.value;
+    setEditOvertimeRequestModal((prev) => {
+      const next = { ...prev, [field]: value };
+      next.horas = String(Math.max(0, Number(next.endHour) - Number(next.startHour)));
+      return next;
+    });
+  };
+
   const handleSaveEditOvertimeRequest = async (e) => {
     e.preventDefault();
-    const { solicitud, horas, bloque, motivo, fecha } = editOvertimeRequestModal;
+    const { solicitud, horas, bloque, motivo, fecha, startHour, endHour } = editOvertimeRequestModal;
     if (!solicitud) return;
-    const res = await modificarSolicitudHoraExtra(solicitud.id, { horas: Number(horas), bloque, motivo, fecha });
+    if (bloque === 'domingo' && Number(endHour) <= Number(startHour)) {
+      toast.danger('La hora de salida debe ser posterior a la hora de entrada.');
+      return;
+    }
+    const res = await modificarSolicitudHoraExtra(solicitud.id, { horas: Number(horas), bloque, motivo, fecha, startHour, endHour });
     if (res.ok) {
       toast.success('✅ Solicitud de horas extras actualizada.');
       handleCloseEditOvertimeRequestModal();
@@ -220,6 +281,13 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     // horario visible (exige que la fecha sea exactamente hoy) — el guardado "funcionaba"
     // (toast de éxito) pero nada cambiaba en la tabla. Mismo criterio que overtimeTasks,
     // que también arranca vacío en vez de heredar el valor de la autorización anterior.
+    if (esFechaDomingo(todayStr)) {
+      setScheduleModal({
+        isOpen: true, collaborator: op, startHour: '8', endHour: '18',
+        overtimeHours: '10', authorizedDate: todayStr, overtimeTasks: '',
+      });
+      return;
+    }
     const prefilledStart = Number(op.schedule?.startHour || 8);
     const prefilledEnd = Number(op.schedule?.endHour || (isSat ? 13 : 18));
     const { earlyHours, lateHours } = getOvertimeBlocks(prefilledStart, prefilledEnd, todayStr);
@@ -243,6 +311,10 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
 
   const handleDateChange = (e) => {
     const dateStr = e.target.value;
+    if (esFechaDomingo(dateStr)) {
+      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: '18', overtimeHours: '10' }));
+      return;
+    }
     const startVal = Number(scheduleModal.startHour);
     const endVal = Number(scheduleModal.endHour);
     const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, dateStr);
@@ -252,6 +324,10 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
   const handleStartHourChange = (e) => {
     const startVal = Number(e.target.value);
     const endVal = Number(scheduleModal.endHour);
+    if (esFechaDomingo(scheduleModal.authorizedDate)) {
+      setScheduleModal((prev) => ({ ...prev, startHour: String(startVal), overtimeHours: String(Math.max(0, endVal - startVal)) }));
+      return;
+    }
     const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, scheduleModal.authorizedDate);
     setScheduleModal((prev) => ({ ...prev, startHour: String(startVal), overtimeHours: String(earlyHours + lateHours) }));
   };
@@ -259,6 +335,10 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
   const handleEndHourChange = (e) => {
     const startVal = Number(scheduleModal.startHour);
     const endVal = Number(e.target.value);
+    if (esFechaDomingo(scheduleModal.authorizedDate)) {
+      setScheduleModal((prev) => ({ ...prev, endHour: String(endVal), overtimeHours: String(Math.max(0, endVal - startVal)) }));
+      return;
+    }
     const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, scheduleModal.authorizedDate);
     setScheduleModal((prev) => ({ ...prev, endHour: String(endVal), overtimeHours: String(earlyHours + lateHours) }));
   };
@@ -1522,15 +1602,23 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                                   🕒 {h.authorizedDate} — Tareas ({h.overtimeHours}h):
                                 </div>
                                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                                  {earlyHours > 0 && (
-                                    <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
-                                      🌅 Matutino: {earlyHours}h ({earlyRange})
+                                  {esFechaDomingo(h.authorizedDate) ? (
+                                    <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fdf2f8', color: '#9d174d', border: '1px solid #fbcfe8' }}>
+                                      📅 Domingo Completo: {h.overtimeHours}h ({String(h.startHour).padStart(2, '0')}:00-{String(h.endHour).padStart(2, '0')}:00)
                                     </span>
-                                  )}
-                                  {lateHours > 0 && (
-                                    <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa' }}>
-                                      🌆 Vespertino: {lateHours}h ({lateRange})
-                                    </span>
+                                  ) : (
+                                    <>
+                                      {earlyHours > 0 && (
+                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                                          🌅 Matutino: {earlyHours}h ({earlyRange})
+                                        </span>
+                                      )}
+                                      {lateHours > 0 && (
+                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa' }}>
+                                          🌆 Vespertino: {lateHours}h ({lateRange})
+                                        </span>
+                                      )}
+                                    </>
                                   )}
                                 </div>
                                 <div style={{ color: 'var(--color-gray-700)', marginBottom: '4px' }}>{h.overtimeTasks}</div>
@@ -1638,7 +1726,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                       </span>
                     </div>
                     <div style={{ fontSize: '13px', color: 'var(--color-gray-800)' }}>
-                      ⏱️ <strong>{sol.horas}h</strong> extra ({sol.bloque === 'matutino' ? '🌅 Matutino' : '🌆 Vespertino'}) para el 📅 <strong>{sol.fecha}</strong>
+                      ⏱️ <strong>{sol.horas}h</strong> {sol.bloque === 'domingo' ? '(📅 Domingo Completo)' : `extra (${sol.bloque === 'matutino' ? '🌅 Matutino' : '🌆 Vespertino'})`} para el 📅 <strong>{sol.fecha}</strong>
                     </div>
                     {sol.motivo && (
                       <div style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>
@@ -2353,7 +2441,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                   type="date"
                   label="Fecha de las Horas Extras"
                   value={requestOvertimeModal.fecha}
-                  onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, fecha: e.target.value }))}
+                  onChange={handleRequestFechaChange}
                   required
                 />
               </div>
@@ -2386,55 +2474,87 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                     marginBottom: '16px',
                   }}
                 >
-                  ✅ Colaborador habilitado para solicitar tiempo extra el {requestOvertimeModal.fecha}.
+                  ✅ Colaborador habilitado para solicitar {requestOvertimeModal.bloque === 'domingo' ? 'trabajo en domingo' : 'tiempo extra'} el {requestOvertimeModal.fecha}.
                 </div>
               )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div className={styles.formGroup}>
-                  <Select
-                    label="Bloque de Tiempo"
-                    value={requestOvertimeModal.bloque}
-                    onChange={(e) => {
-                      const newBloque = e.target.value;
-                      setRequestOvertimeModal((prev) => {
-                        let newHoras = prev.horas;
-                        if (newBloque === 'matutino' && Number(newHoras) > 2) {
-                          newHoras = '2';
-                        }
-                        return { ...prev, bloque: newBloque, horas: newHoras };
-                      });
-                    }}
-                    required
-                    options={[
-                      { value: 'vespertino', label: '🌆 Vespertino (Extensión hasta 22:00 max)' },
-                      { value: 'matutino', label: '🌅 Matutino (Entrada desde 6:00 AM max)' },
-                    ]}
-                  />
-                </div>
+              {requestOvertimeModal.bloque === 'domingo' ? (
+                <>
+                  <div className={styles.bannerInfo} style={{ marginBottom: '12px' }}>
+                    <strong>📅 Domingo — Turno Completo:</strong>
+                    <span> Esta fecha cae en domingo, un día que normalmente no es laboral. Indica la hora de entrada y salida del turno completo (por default, un turno normal de 08:00 a 18:00).</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div className={styles.formGroup}>
+                      <Select
+                        label="Hora de Entrada"
+                        value={requestOvertimeModal.startHour}
+                        onChange={handleRequestDomingoHourChange('startHour')}
+                        required
+                        options={['6', '7', '8', '9', '10'].map((h) => ({ value: h, label: `${h.padStart(2, '0')}:00` }))}
+                      />
+                    </div>
+                    <div className={styles.formGroup}>
+                      <Select
+                        label="Hora de Salida"
+                        value={requestOvertimeModal.endHour}
+                        onChange={handleRequestDomingoHourChange('endHour')}
+                        required
+                        options={['13', '14', '15', '16', '17', '18', '19', '20'].map((h) => ({ value: h, label: `${h.padStart(2, '0')}:00` }))}
+                      />
+                    </div>
+                  </div>
+                  <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: '-4px', marginBottom: '12px' }}>
+                    Total del turno: {requestOvertimeModal.horas} hora(s).
+                  </p>
+                </>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className={styles.formGroup}>
+                    <Select
+                      label="Bloque de Tiempo"
+                      value={requestOvertimeModal.bloque}
+                      onChange={(e) => {
+                        const newBloque = e.target.value;
+                        setRequestOvertimeModal((prev) => {
+                          let newHoras = prev.horas;
+                          if (newBloque === 'matutino' && Number(newHoras) > 2) {
+                            newHoras = '2';
+                          }
+                          return { ...prev, bloque: newBloque, horas: newHoras };
+                        });
+                      }}
+                      required
+                      options={[
+                        { value: 'vespertino', label: '🌆 Vespertino (Extensión hasta 22:00 max)' },
+                        { value: 'matutino', label: '🌅 Matutino (Entrada desde 6:00 AM max)' },
+                      ]}
+                    />
+                  </div>
 
-                <div className={styles.formGroup}>
-                  <Select
-                    label="Cantidad de Horas"
-                    value={requestOvertimeModal.horas}
-                    onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, horas: e.target.value }))}
-                    required
-                    options={
-                      requestOvertimeModal.bloque === 'matutino'
-                        ? [
-                            { value: '1', label: '1 hora extra (Entrada 7:00 AM)' },
-                            { value: '2', label: '2 horas extras (Entrada 6:00 AM — Máx)' },
-                          ]
-                        : [
-                            { value: '1', label: '1 hora extra (Salida 19:00 / 7:00 PM)' },
-                            { value: '2', label: '2 horas extras (Salida 20:00 / 8:00 PM)' },
-                            { value: '3', label: '3 horas extras (Salida 21:00 / 9:00 PM)' },
-                            { value: '4', label: '4 horas extras (Salida 22:00 / 10:00 PM — Máx)' },
-                          ]
-                    }
-                  />
+                  <div className={styles.formGroup}>
+                    <Select
+                      label="Cantidad de Horas"
+                      value={requestOvertimeModal.horas}
+                      onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, horas: e.target.value }))}
+                      required
+                      options={
+                        requestOvertimeModal.bloque === 'matutino'
+                          ? [
+                              { value: '1', label: '1 hora extra (Entrada 7:00 AM)' },
+                              { value: '2', label: '2 horas extras (Entrada 6:00 AM — Máx)' },
+                            ]
+                          : [
+                              { value: '1', label: '1 hora extra (Salida 19:00 / 7:00 PM)' },
+                              { value: '2', label: '2 horas extras (Salida 20:00 / 8:00 PM)' },
+                              { value: '3', label: '3 horas extras (Salida 21:00 / 9:00 PM)' },
+                              { value: '4', label: '4 horas extras (Salida 22:00 / 10:00 PM — Máx)' },
+                            ]
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className={styles.formGroup}>
                 <label className={styles.label}>Motivo / Tareas Asignadas</label>
@@ -2479,7 +2599,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                   type="date"
                   label="Fecha de las Horas Extras"
                   value={editOvertimeRequestModal.fecha}
-                  onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, fecha: e.target.value }))}
+                  onChange={handleEditRequestFechaChange}
                   required
                 />
               </div>
@@ -2516,51 +2636,83 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                 </div>
               )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div className={styles.formGroup}>
-                  <Select
-                    label="Bloque de Tiempo"
-                    value={editOvertimeRequestModal.bloque}
-                    onChange={(e) => {
-                      const newBloque = e.target.value;
-                      setEditOvertimeRequestModal((prev) => {
-                        let newHoras = prev.horas;
-                        if (newBloque === 'matutino' && Number(newHoras) > 2) {
-                          newHoras = '2';
-                        }
-                        return { ...prev, bloque: newBloque, horas: newHoras };
-                      });
-                    }}
-                    required
-                    options={[
-                      { value: 'vespertino', label: '🌆 Vespertino (Extensión hasta 22:00 max)' },
-                      { value: 'matutino', label: '🌅 Matutino (Entrada desde 6:00 AM max)' },
-                    ]}
-                  />
-                </div>
+              {editOvertimeRequestModal.bloque === 'domingo' ? (
+                <>
+                  <div className={styles.bannerInfo} style={{ marginBottom: '12px' }}>
+                    <strong>📅 Domingo — Turno Completo:</strong>
+                    <span> Indica la hora de entrada y salida del turno completo de ese domingo.</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div className={styles.formGroup}>
+                      <Select
+                        label="Hora de Entrada"
+                        value={editOvertimeRequestModal.startHour}
+                        onChange={handleEditRequestDomingoHourChange('startHour')}
+                        required
+                        options={['6', '7', '8', '9', '10'].map((h) => ({ value: h, label: `${h.padStart(2, '0')}:00` }))}
+                      />
+                    </div>
+                    <div className={styles.formGroup}>
+                      <Select
+                        label="Hora de Salida"
+                        value={editOvertimeRequestModal.endHour}
+                        onChange={handleEditRequestDomingoHourChange('endHour')}
+                        required
+                        options={['13', '14', '15', '16', '17', '18', '19', '20'].map((h) => ({ value: h, label: `${h.padStart(2, '0')}:00` }))}
+                      />
+                    </div>
+                  </div>
+                  <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: '-4px', marginBottom: '12px' }}>
+                    Total del turno: {editOvertimeRequestModal.horas} hora(s).
+                  </p>
+                </>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className={styles.formGroup}>
+                    <Select
+                      label="Bloque de Tiempo"
+                      value={editOvertimeRequestModal.bloque}
+                      onChange={(e) => {
+                        const newBloque = e.target.value;
+                        setEditOvertimeRequestModal((prev) => {
+                          let newHoras = prev.horas;
+                          if (newBloque === 'matutino' && Number(newHoras) > 2) {
+                            newHoras = '2';
+                          }
+                          return { ...prev, bloque: newBloque, horas: newHoras };
+                        });
+                      }}
+                      required
+                      options={[
+                        { value: 'vespertino', label: '🌆 Vespertino (Extensión hasta 22:00 max)' },
+                        { value: 'matutino', label: '🌅 Matutino (Entrada desde 6:00 AM max)' },
+                      ]}
+                    />
+                  </div>
 
-                <div className={styles.formGroup}>
-                  <Select
-                    label="Cantidad de Horas"
-                    value={editOvertimeRequestModal.horas}
-                    onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, horas: e.target.value }))}
-                    required
-                    options={
-                      editOvertimeRequestModal.bloque === 'matutino'
-                        ? [
-                            { value: '1', label: '1 hora extra (Entrada 7:00 AM)' },
-                            { value: '2', label: '2 horas extras (Entrada 6:00 AM — Máx)' },
-                          ]
-                        : [
-                            { value: '1', label: '1 hora extra (Salida 19:00 / 7:00 PM)' },
-                            { value: '2', label: '2 horas extras (Salida 20:00 / 8:00 PM)' },
-                            { value: '3', label: '3 horas extras (Salida 21:00 / 9:00 PM)' },
-                            { value: '4', label: '4 horas extras (Salida 22:00 / 10:00 PM — Máx)' },
-                          ]
-                    }
-                  />
+                  <div className={styles.formGroup}>
+                    <Select
+                      label="Cantidad de Horas"
+                      value={editOvertimeRequestModal.horas}
+                      onChange={(e) => setEditOvertimeRequestModal((prev) => ({ ...prev, horas: e.target.value }))}
+                      required
+                      options={
+                        editOvertimeRequestModal.bloque === 'matutino'
+                          ? [
+                              { value: '1', label: '1 hora extra (Entrada 7:00 AM)' },
+                              { value: '2', label: '2 horas extras (Entrada 6:00 AM — Máx)' },
+                            ]
+                          : [
+                              { value: '1', label: '1 hora extra (Salida 19:00 / 7:00 PM)' },
+                              { value: '2', label: '2 horas extras (Salida 20:00 / 8:00 PM)' },
+                              { value: '3', label: '3 horas extras (Salida 21:00 / 9:00 PM)' },
+                              { value: '4', label: '4 horas extras (Salida 22:00 / 10:00 PM — Máx)' },
+                            ]
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className={styles.formGroup}>
                 <label className={styles.label}>Motivo / Tareas Asignadas</label>
@@ -2614,17 +2766,26 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
               />
             </div>
 
+            {esFechaDomingo(scheduleModal.authorizedDate) && (
+              <div className={styles.bannerInfo}>
+                <strong>📅 Domingo — Turno Completo:</strong>
+                <span> Esta fecha cae en domingo, un día que normalmente no es laboral. Indica la hora de entrada y salida del turno completo.</span>
+              </div>
+            )}
+
             <div className={styles.formGroup}>
               <Select
                 label="Hora de Entrada del Colaborador"
                 value={scheduleModal.startHour}
                 onChange={handleStartHourChange}
                 required
-                options={[
-                  { value: '6', label: '06:00 AM (Tiempo Extra Temprano)' },
-                  { value: '7', label: '07:00 AM (Tiempo Extra Temprano)' },
-                  { value: '8', label: '08:00 AM (Entrada Normal)' },
-                ]}
+                options={esFechaDomingo(scheduleModal.authorizedDate)
+                  ? ['6', '7', '8', '9', '10'].map((h) => ({ value: h, label: `${h.padStart(2, '0')}:00` }))
+                  : [
+                      { value: '6', label: '06:00 AM (Tiempo Extra Temprano)' },
+                      { value: '7', label: '07:00 AM (Tiempo Extra Temprano)' },
+                      { value: '8', label: '08:00 AM (Entrada Normal)' },
+                    ]}
               />
             </div>
 
@@ -2634,24 +2795,30 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                 value={scheduleModal.endHour}
                 onChange={handleEndHourChange}
                 required
-                options={[
-                  { value: '13', label: '13:00 (Salida Normal Sábado)' },
-                  { value: '14', label: '14:00' },
-                  { value: '15', label: '15:00' },
-                  { value: '16', label: '16:00' },
-                  { value: '17', label: '17:00' },
-                  { value: '18', label: '18:00 (Salida Normal Lunes-Viernes)' },
-                  { value: '19', label: '19:00 (Tiempo Extra)' },
-                  { value: '20', label: '20:00 (Tiempo Extra)' },
-                  { value: '21', label: '21:00 (Tiempo Extra)' },
-                  { value: '22', label: '22:00 (Tiempo Extra)' },
-                ]}
+                options={esFechaDomingo(scheduleModal.authorizedDate)
+                  ? ['13', '14', '15', '16', '17', '18', '19', '20'].map((h) => ({ value: h, label: `${h.padStart(2, '0')}:00` }))
+                  : [
+                      { value: '13', label: '13:00 (Salida Normal Sábado)' },
+                      { value: '14', label: '14:00' },
+                      { value: '15', label: '15:00' },
+                      { value: '16', label: '16:00' },
+                      { value: '17', label: '17:00' },
+                      { value: '18', label: '18:00 (Salida Normal Lunes-Viernes)' },
+                      { value: '19', label: '19:00 (Tiempo Extra)' },
+                      { value: '20', label: '20:00 (Tiempo Extra)' },
+                      { value: '21', label: '21:00 (Tiempo Extra)' },
+                      { value: '22', label: '22:00 (Tiempo Extra)' },
+                    ]}
               />
             </div>
 
             <div className={styles.formGroup}>
-              <label className={styles.label}>Horas Extras Autorizadas</label>
-              {(() => {
+              <label className={styles.label}>{esFechaDomingo(scheduleModal.authorizedDate) ? 'Horas del Turno de Domingo' : 'Horas Extras Autorizadas'}</label>
+              {esFechaDomingo(scheduleModal.authorizedDate) ? (
+                <div style={{ fontSize: '13px', padding: '8px 10px', backgroundColor: '#fdf2f8', borderRadius: '6px', border: '1px solid #fbcfe8' }}>
+                  📅 <strong>Domingo Completo:</strong> {scheduleModal.overtimeHours}h ({String(scheduleModal.startHour).padStart(2, '0')}:00-{String(scheduleModal.endHour).padStart(2, '0')}:00)
+                </div>
+              ) : (() => {
                 const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(
                   Number(scheduleModal.startHour),
                   Number(scheduleModal.endHour),
