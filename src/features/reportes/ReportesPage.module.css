@@ -102,6 +102,43 @@
   width: 100%;
 }
 
+/* Tabla de detalle de Interferencia (misma estructura que la de Dashboard.module.css) */
+.tableResponsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: var(--body-size);
+}
+
+.table th {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-gray-500);
+  font-weight: 500;
+  border-bottom: 2px solid var(--color-gray-100);
+  font-size: var(--small-size);
+  text-transform: uppercase;
+}
+
+.table td {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-gray-100);
+  color: var(--color-dark);
+}
+
+.boldText {
+  font-weight: 600;
+}
+
+.textMuted {
+  color: var(--color-gray-500);
+  font-size: var(--small-size);
+}
+
 /* ============================================
    RESPONSIVE DESIGN
    ============================================ */
@@ -109,7 +146,7 @@
   .chartsGrid {
     grid-template-columns: 1fr;
   }
-  
+
   .filtersGrid {
     grid-template-columns: 1fr;
     gap: var(--space-4);
@@ -120,5 +157,44 @@
   .header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table, .table tbody, .table tr, .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--color-gray-100);
+    text-align: right;
+  }
+
+  .table td:last-child {
+    border-bottom: none;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: var(--small-size);
+    font-weight: 600;
+    color: var(--color-gray-500);
+    text-align: left;
   }
 }

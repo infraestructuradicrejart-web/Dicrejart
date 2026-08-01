@@ -197,6 +197,37 @@ const ReportesPage = () => {
     diasPromedio: Number((tiempoResolucionRaw[key].sumaDias / tiempoResolucionRaw[key].total).toFixed(1)),
   }));
 
+  // 5. Interferencia: actividades del área SIN vínculo a ningún proyecto/juego — por
+  // definición, trabajo ajeno al proyecto que se esté produciendo ahí en ese momento
+  // (ej. una actividad de mantenimiento le quita gente a Herrería mientras produce).
+  const actividadesSinVincular = actividadesFiltradas.filter((a) => !a.projectId && !a.gameId);
+  const interferenciaRaw = actividadesSinVincular.reduce((acc, curr) => {
+    if (!acc[curr.areaId]) acc[curr.areaId] = { dias: 0, completadas: 0, enCurso: 0 };
+    if (curr.status === 'completado' && curr.createdAt && curr.completedAt) {
+      acc[curr.areaId].dias += (new Date(curr.completedAt) - new Date(curr.createdAt)) / 86400000;
+      acc[curr.areaId].completadas += 1;
+    } else if (curr.status !== 'completado') {
+      acc[curr.areaId].enCurso += 1;
+    }
+    return acc;
+  }, {});
+  const dataInterferencia = Object.keys(interferenciaRaw).map((key) => ({
+    area: key.toUpperCase().replace('-', ' '),
+    dias: Number(interferenciaRaw[key].dias.toFixed(1)),
+    enCurso: interferenciaRaw[key].enCurso,
+  }));
+
+  // Detalle de las actividades que sí terminaron, para mostrar cuáles concretamente
+  // interfirieron (no solo el total) — top 10 por días de duración.
+  const detalleInterferencia = actividadesSinVincular
+    .filter((a) => a.status === 'completado' && a.createdAt && a.completedAt)
+    .map((a) => ({
+      ...a,
+      diasDuracion: Number(((new Date(a.completedAt) - new Date(a.createdAt)) / 86400000).toFixed(1)),
+    }))
+    .sort((a, b) => b.diasDuracion - a.diasDuracion)
+    .slice(0, 10);
+
   // ============================================
   // HANDLERS DE EXPORTACIÓN
   // ============================================
@@ -292,6 +323,22 @@ const ReportesPage = () => {
         }))),
         'Detalle Actividades'
       );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(dataInterferencia.map((d) => ({ Área: d.area, 'Días de Interferencia': d.dias, 'En Curso': d.enCurso }))),
+        'Interferencia por Área'
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(detalleInterferencia.map((a) => ({
+          Área: a.areaId,
+          Actividad: a.title,
+          Creada: a.createdAt ? new Date(a.createdAt).toLocaleString('es-MX') : '',
+          Completada: a.completedAt ? new Date(a.completedAt).toLocaleString('es-MX') : '',
+          'Días de Duración': a.diasDuracion,
+        }))),
+        'Detalle Interferencia'
+      );
 
       XLSX.writeFile(wb, `Reporte-Dicrejart-${fechaArchivo}.xlsx`);
       toast.success('📊 Excel generado correctamente y descargado.');
@@ -359,6 +406,12 @@ const ReportesPage = () => {
         rows: dataActividadesTiempoResolucion.map((d) => [d.area, d.diasPromedio]),
         startY: y,
       });
+      y = addPdfTable(doc, {
+        title: 'Interferencia de Actividades por Área',
+        headers: ['Área', 'Días de Interferencia', 'En Curso'],
+        rows: dataInterferencia.map((d) => [d.area, d.dias, d.enCurso]),
+        startY: y,
+      });
 
       doc.addPage();
       addPdfTable(doc, {
@@ -390,6 +443,19 @@ const ReportesPage = () => {
           PRIORITY_LABELS[a.priority] || a.priority, a.status,
           a.dueDate && a.dueDate < todayStr && a.status !== 'completado' ? 'Sí' : 'No',
           a.dueDate || '-',
+        ]),
+        startY: 20,
+      });
+
+      doc.addPage();
+      addPdfTable(doc, {
+        title: 'Detalle de Interferencia',
+        headers: ['Área', 'Actividad', 'Creada', 'Completada', 'Días'],
+        rows: detalleInterferencia.map((a) => [
+          a.areaId, a.title,
+          a.createdAt ? new Date(a.createdAt).toLocaleDateString('es-MX') : '-',
+          a.completedAt ? new Date(a.completedAt).toLocaleDateString('es-MX') : '-',
+          a.diasDuracion,
         ]),
         startY: 20,
       });
@@ -494,7 +560,10 @@ const ReportesPage = () => {
           GRÁFICAS ESTADÍSTICAS
           ============================================ */}
       <div className={styles.chartsGrid}>
-        
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)' }}>📦 Producción</h3>
+        </div>
+
         {/* Gráfica 1: Producción por Área */}
         <motion.div variants={itemVariants}>
           <Card variant="default">
@@ -519,6 +588,10 @@ const ReportesPage = () => {
             </div>
           </Card>
         </motion.div>
+
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>✨ Calidad</h3>
+        </div>
 
         {/* Gráfica 2: Calidad Promedio */}
         <motion.div variants={itemVariants}>
@@ -582,6 +655,10 @@ const ReportesPage = () => {
             </div>
           </Card>
         </motion.div>
+
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>📌 Actividades</h3>
+        </div>
 
         {/* Gráfica 4: Cumplimiento de Actividades por Área */}
         <motion.div variants={itemVariants}>
@@ -685,6 +762,69 @@ const ReportesPage = () => {
                 </BarChart>
               </ResponsiveContainer>
             </div>
+          </Card>
+        </motion.div>
+
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>⏱️ Interferencia en Producción</h3>
+          <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: '-8px', marginBottom: 'var(--space-4)' }}>
+            Actividades operativas SIN vínculo a ningún proyecto/juego — tiempo que le quitaron a cada área mientras estaba produciendo.
+          </p>
+        </div>
+
+        {/* Gráfica 8: Días de Interferencia por Área */}
+        <motion.div variants={itemVariants} style={{ gridColumn: '1 / -1' }}>
+          <Card variant="default">
+            <h3 className={styles.chartTitle}>Días de Interferencia por Área</h3>
+            <div className={styles.chartContainer}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dataInterferencia} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                  <XAxis dataKey="area" tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      borderRadius: '8px',
+                      border: '1px solid #E5E7EB',
+                      boxShadow: 'var(--shadow-md)',
+                    }}
+                    formatter={(value, name, props) => [
+                      `${value} día(s)${props.payload.enCurso > 0 ? ` (+${props.payload.enCurso} en curso, aún no contabilizados)` : ''}`,
+                      'Interferencia',
+                    ]}
+                  />
+                  <Bar dataKey="dias" name="Días de Interferencia" fill="var(--color-alert)" radius={[4, 4, 0, 0]} barSize={30} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {detalleInterferencia.length > 0 && (
+              <div className={styles.tableResponsive} style={{ marginTop: 'var(--space-5)' }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Área</th>
+                      <th>Actividad</th>
+                      <th>Creada</th>
+                      <th>Completada</th>
+                      <th>Días</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalleInterferencia.map((a) => (
+                      <tr key={a.id}>
+                        <td data-label="Área">{a.areaId?.toUpperCase().replace('-', ' ')}</td>
+                        <td data-label="Actividad" className={styles.boldText}>{a.title}</td>
+                        <td data-label="Creada" className={styles.textMuted}>{new Date(a.createdAt).toLocaleDateString('es-MX')}</td>
+                        <td data-label="Completada" className={styles.textMuted}>{new Date(a.completedAt).toLocaleDateString('es-MX')}</td>
+                        <td data-label="Días">{a.diasDuracion}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Card>
         </motion.div>
       </div>

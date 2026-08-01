@@ -28,6 +28,7 @@ import PageHeader from '../../components/ui/PageHeader';
 import useProduccion from '../../hooks/useProduccion';
 import useConfig from '../../hooks/useConfig';
 import useActividades from '../../hooks/useActividades';
+import useOperarios from '../../hooks/useOperarios';
 import { CalidadContext } from '../../context/CalidadContext';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import styles from './Dashboard.module.css';
@@ -61,6 +62,7 @@ const Dashboard = () => {
   const { inspecciones } = useContext(CalidadContext) || { inspecciones: [] };
   const { generalConfig } = useConfig();
   const { actividades } = useActividades();
+  const { operarios, horasExtra } = useOperarios();
 
   // Vista de evidencia fotográfica de un registro de producción reciente
   const [previewLog, setPreviewLog] = useState(null);
@@ -89,6 +91,11 @@ const Dashboard = () => {
   const actividadesVencidas = actividades.filter(
     (a) => a.dueDate && a.dueDate < todayStr && a.status !== 'completado'
   ).length;
+
+  // Personal: ausencias activas hoy (mismo criterio que rhNotificationService.js) y
+  // horas extra que aún no verifica nadie (cumplido/no cumplido)
+  const ausenciasHoy = operarios.filter((op) => op.estado && op.estado.tipo !== 'activo').length;
+  const horasExtraPendientes = horasExtra.filter((h) => h.verificationStatus === 'pendiente').length;
 
   // Compara el Índice de Calidad contra la Tolerancia de Calidad Exigida configurada
   // por el Admin (config/general.qualityTolerance, ver AdminPage) — solo tiene sentido
@@ -150,8 +157,12 @@ const Dashboard = () => {
         accentColor="var(--color-primary)"
       />
 
-      {/* KPI WIDGETS */}
+      {/* KPI WIDGETS — agrupados por dominio (un solo .kpiGrid, con encabezados de ancho
+          completo entre grupos, para no tener que tocar el CSS del grid existente) */}
       <div className={styles.kpiGrid}>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)' }}>📁 General</h3>
+        </div>
         {/* KPI 1: Proyectos */}
         <motion.div variants={itemVariants}>
           <Card variant="highlight" className={styles.kpiCard} shape="anillo" shapeColor="var(--color-primary)">
@@ -176,6 +187,9 @@ const Dashboard = () => {
           </Card>
         </motion.div>
 
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>✨ Calidad</h3>
+        </div>
         {/* KPI 3: Calidad */}
         <motion.div variants={itemVariants}>
           <Card
@@ -209,6 +223,9 @@ const Dashboard = () => {
           </Card>
         </motion.div>
 
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>📌 Actividades</h3>
+        </div>
         {/* KPI 5: Actividades Activas */}
         <motion.div variants={itemVariants}>
           <Card variant="default" className={styles.kpiCard} shape="cacahuate" shapeColor="var(--color-golden-yellow)">
@@ -234,6 +251,43 @@ const Dashboard = () => {
               <span className={styles.kpiLabel}>Actividades Vencidas</span>
               <h3 className={styles.kpiValue}>{actividadesVencidas}</h3>
               <p className={styles.kpiFooter}>{actividadesVencidas > 0 ? 'Requieren atención' : 'Sin pendientes vencidos'}</p>
+            </div>
+          </Card>
+        </motion.div>
+
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>👥 Personal</h3>
+        </div>
+        {/* KPI 7: Ausencias Hoy */}
+        <motion.div variants={itemVariants}>
+          <Card
+            variant={ausenciasHoy > 0 ? 'danger' : 'success'}
+            className={styles.kpiCard}
+            shape="mancha"
+            shapeColor={ausenciasHoy > 0 ? 'var(--color-alert)' : 'var(--color-success)'}
+          >
+            <div className={styles.kpiIcon}>🧑‍🤝‍🧑</div>
+            <div className={styles.kpiContent}>
+              <span className={styles.kpiLabel}>Ausencias Hoy</span>
+              <h3 className={styles.kpiValue}>{ausenciasHoy}</h3>
+              <p className={styles.kpiFooter}>{ausenciasHoy > 0 ? 'Personal no activo hoy' : 'Todos en planta'}</p>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* KPI 8: Horas Extra Pendientes de Verificar */}
+        <motion.div variants={itemVariants}>
+          <Card
+            variant={horasExtraPendientes > 0 ? 'default' : 'success'}
+            className={styles.kpiCard}
+            shape="anillo"
+            shapeColor={horasExtraPendientes > 0 ? 'var(--color-golden-yellow)' : 'var(--color-success)'}
+          >
+            <div className={styles.kpiIcon}>🕒</div>
+            <div className={styles.kpiContent}>
+              <span className={styles.kpiLabel}>Horas Extra Pendientes de Verificar</span>
+              <h3 className={styles.kpiValue}>{horasExtraPendientes}</h3>
+              <p className={styles.kpiFooter}>{horasExtraPendientes > 0 ? 'Esperando confirmar cumplimiento' : 'Al día'}</p>
             </div>
           </Card>
         </motion.div>
