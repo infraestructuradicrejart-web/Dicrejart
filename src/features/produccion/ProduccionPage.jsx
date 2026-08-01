@@ -387,14 +387,29 @@ const ProduccionPage = () => {
   };
 
   const handleOpenScheduleModal = (op) => {
-    const todayStr2 = getTodayLocalDateStr();
+    // La fecha SIEMPRE arranca en hoy, nunca en op.schedule.authorizedDate (la última
+    // fecha ya autorizada, que puede ser de días atrás) — si se dejara ese valor por
+    // default, el supervisor podía guardar sin darse cuenta de que seguía apuntando a una
+    // fecha vieja: authorizeOvertimeTasks sí crearía el registro (pero en esa fecha vieja,
+    // invisible en "Tiempo Extra" de hoy) y updateOperarioSchedule se negaría a tocar el
+    // horario visible (exige que la fecha sea exactamente hoy) — el guardado "funcionaba"
+    // (toast de éxito) pero nada cambiaba en la tabla. Mismo criterio que overtimeTasks,
+    // que también arranca vacío en vez de heredar el valor de la autorización anterior.
+    const todayForModal = getTodayLocalDateStr();
+    const prefilledStart = Number(op.schedule?.startHour || 8);
+    const prefilledEnd = Number(op.schedule?.endHour || 18);
+    // Recalcula las horas extra para HOY (no reutiliza op.schedule.overtimeHours tal
+    // cual): si hoy es sábado y la última autorización fue un día de semana (o viceversa),
+    // el bloque vespertino máximo cambia, así que el número heredado podía ya no ser
+    // válido para la fecha con la que en realidad se va a guardar.
+    const { earlyHours, lateHours } = getOvertimeBlocks(prefilledStart, prefilledEnd, todayForModal);
     setScheduleModal({
       isOpen: true,
       collaborator: op,
-      startHour: String(op.schedule?.startHour || 8),
-      endHour: String(op.schedule?.endHour || 18),
-      overtimeHours: String(op.schedule?.overtimeHours || 0),
-      authorizedDate: op.schedule?.authorizedDate || todayStr2,
+      startHour: String(prefilledStart),
+      endHour: String(prefilledEnd),
+      overtimeHours: String(earlyHours + lateHours),
+      authorizedDate: todayForModal,
       overtimeTasks: '',
     });
   };

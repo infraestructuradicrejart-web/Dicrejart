@@ -212,13 +212,24 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
   };
 
   const handleOpenScheduleModal = (op) => {
+    // La fecha SIEMPRE arranca en hoy, nunca en op.schedule.authorizedDate (la última
+    // fecha ya autorizada, que puede ser de días atrás) — si se dejara ese valor por
+    // default, el supervisor podía guardar sin darse cuenta de que seguía apuntando a una
+    // fecha vieja: authorizeOvertimeTasks sí crearía el registro (pero en esa fecha vieja,
+    // invisible en "Tiempo Extra" de hoy) y updateOperarioSchedule se negaría a tocar el
+    // horario visible (exige que la fecha sea exactamente hoy) — el guardado "funcionaba"
+    // (toast de éxito) pero nada cambiaba en la tabla. Mismo criterio que overtimeTasks,
+    // que también arranca vacío en vez de heredar el valor de la autorización anterior.
+    const prefilledStart = Number(op.schedule?.startHour || 8);
+    const prefilledEnd = Number(op.schedule?.endHour || (isSat ? 13 : 18));
+    const { earlyHours, lateHours } = getOvertimeBlocks(prefilledStart, prefilledEnd, todayStr);
     setScheduleModal({
       isOpen: true,
       collaborator: op,
-      startHour: String(op.schedule?.startHour || 8),
-      endHour: String(op.schedule?.endHour || (isSat ? 13 : 18)),
-      overtimeHours: String(op.schedule?.overtimeHours || 0),
-      authorizedDate: op.schedule?.authorizedDate || todayStr,
+      startHour: String(prefilledStart),
+      endHour: String(prefilledEnd),
+      overtimeHours: String(earlyHours + lateHours),
+      authorizedDate: todayStr,
       overtimeTasks: '',
     });
   };
