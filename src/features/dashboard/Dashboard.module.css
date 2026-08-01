@@ -37,9 +37,28 @@
 /* ============================================
    KPI WIDGETS
    ============================================ */
+/* Contenedor exterior: cada dominio (General/Calidad/Actividades/Personal) es una
+   sección independiente que fluye por su cuenta — antes un solo grid de 4 columnas con
+   encabezados de ancho completo forzaba un salto de fila por grupo, y como cada grupo
+   solo tiene 2 tarjetas, la mitad de esa fila quedaba vacía. Con flex-wrap, dos (o más)
+   secciones caben lado a lado cuando hay espacio, sin dejar huecos. */
 .kpiGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+
+.kpiSection {
+  flex: 1 1 320px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.kpiSectionGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: var(--space-4);
 }
 
@@ -350,10 +369,6 @@
    RESPONSIVE DESIGN
    ============================================ */
 @media (max-width: 1200px) {
-  .kpiGrid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  
   .chartsGrid {
     grid-template-columns: 1fr;
   }
@@ -370,7 +385,11 @@
     gap: var(--space-3);
   }
 
-  .kpiGrid {
+  .kpiSection {
+    flex-basis: 100%;
+  }
+
+  .kpiSectionGrid {
     grid-template-columns: 1fr;
   }
 

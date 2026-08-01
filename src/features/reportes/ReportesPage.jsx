@@ -564,8 +564,9 @@ const ReportesPage = () => {
           <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)' }}>📦 Producción</h3>
         </div>
 
-        {/* Gráfica 1: Producción por Área */}
-        <motion.div variants={itemVariants}>
+        {/* Gráfica 1: Producción por Área — a todo el ancho, es la única gráfica de esta
+            sección (en un grid de 2 columnas, dejaba la mitad de la fila vacía) */}
+        <motion.div variants={itemVariants} style={{ gridColumn: '1 / -1' }}>
           <Card variant="default">
             <h3 className={styles.chartTitle}>Volumen de Piezas Producidas</h3>
             <div className={styles.chartContainer}>

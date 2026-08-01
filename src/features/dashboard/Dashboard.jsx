@@ -157,140 +157,150 @@ const Dashboard = () => {
         accentColor="var(--color-primary)"
       />
 
-      {/* KPI WIDGETS — agrupados por dominio (un solo .kpiGrid, con encabezados de ancho
-          completo entre grupos, para no tener que tocar el CSS del grid existente) */}
+      {/* KPI WIDGETS — 4 secciones de dominio, cada una con su propia mini-grid de 2
+          columnas; el contenedor exterior las acomoda lado a lado según el espacio
+          disponible (flex-wrap), en vez de forzar un salto de fila por grupo que dejaba
+          la mitad de cada fila vacía. */}
       <div className={styles.kpiGrid}>
-        <div style={{ gridColumn: '1 / -1' }}>
-          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)' }}>📁 General</h3>
+        <div className={styles.kpiSection}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 0 }}>📁 General</h3>
+          <div className={styles.kpiSectionGrid}>
+            {/* KPI 1: Proyectos */}
+            <motion.div variants={itemVariants}>
+              <Card variant="highlight" className={styles.kpiCard} shape="anillo" shapeColor="var(--color-primary)">
+                <div className={styles.kpiIcon}>📋</div>
+                <div className={styles.kpiContent}>
+                  <span className={styles.kpiLabel}>Proyectos Activos</span>
+                  <h3 className={styles.kpiValue}>{proyectosEnProgreso} / {totalProyectos}</h3>
+                  <p className={styles.kpiFooter}>En progreso o diseño</p>
+                </div>
+              </Card>
+            </motion.div>
+
+            {/* KPI 2: Juegos en Producción */}
+            <motion.div variants={itemVariants}>
+              <Card variant="default" className={styles.kpiCard} shape="cacahuate" shapeColor="var(--color-purple-x11)">
+                <div className={styles.kpiIcon} style={{ color: 'var(--color-primary)' }}>🎮</div>
+                <div className={styles.kpiContent}>
+                  <span className={styles.kpiLabel}>Juegos en Línea</span>
+                  <h3 className={styles.kpiValue}>{juegosEnProceso}</h3>
+                  <p className={styles.kpiFooter}>En etapas de manufactura</p>
+                </div>
+              </Card>
+            </motion.div>
+          </div>
         </div>
-        {/* KPI 1: Proyectos */}
-        <motion.div variants={itemVariants}>
-          <Card variant="highlight" className={styles.kpiCard} shape="anillo" shapeColor="var(--color-primary)">
-            <div className={styles.kpiIcon}>📋</div>
-            <div className={styles.kpiContent}>
-              <span className={styles.kpiLabel}>Proyectos Activos</span>
-              <h3 className={styles.kpiValue}>{proyectosEnProgreso} / {totalProyectos}</h3>
-              <p className={styles.kpiFooter}>En progreso o diseño</p>
-            </div>
-          </Card>
-        </motion.div>
 
-        {/* KPI 2: Juegos en Producción */}
-        <motion.div variants={itemVariants}>
-          <Card variant="default" className={styles.kpiCard} shape="cacahuate" shapeColor="var(--color-purple-x11)">
-            <div className={styles.kpiIcon} style={{ color: 'var(--color-primary)' }}>🎮</div>
-            <div className={styles.kpiContent}>
-              <span className={styles.kpiLabel}>Juegos en Línea</span>
-              <h3 className={styles.kpiValue}>{juegosEnProceso}</h3>
-              <p className={styles.kpiFooter}>En etapas de manufactura</p>
-            </div>
-          </Card>
-        </motion.div>
+        <div className={styles.kpiSection}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 0 }}>✨ Calidad</h3>
+          <div className={styles.kpiSectionGrid}>
+            {/* KPI 3: Calidad */}
+            <motion.div variants={itemVariants}>
+              <Card
+                variant={totalInspecciones > 0 && !meetsTolerance ? 'danger' : 'success'}
+                className={styles.kpiCard}
+                shape="trebol"
+                shapeColor={totalInspecciones > 0 && !meetsTolerance ? 'var(--color-alert)' : 'var(--color-success)'}
+              >
+                <div className={styles.kpiIcon}>✨</div>
+                <div className={styles.kpiContent}>
+                  <span className={styles.kpiLabel}>Índice de Calidad</span>
+                  <h3 className={styles.kpiValue}>{qualityIndex}%</h3>
+                  <p className={styles.kpiFooter}>
+                    {totalInspecciones > 0
+                      ? `Meta: ${qualityTolerance}% — ${meetsTolerance ? '✓ Cumple' : '✗ Por debajo de la meta'}`
+                      : `Meta de tolerancia: ${qualityTolerance}%`}
+                  </p>
+                </div>
+              </Card>
+            </motion.div>
 
-        <div style={{ gridColumn: '1 / -1' }}>
-          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>✨ Calidad</h3>
+            {/* KPI 4: Defectos */}
+            <motion.div variants={itemVariants}>
+              <Card variant="danger" className={styles.kpiCard} shape="mancha" shapeColor="var(--color-alert)">
+                <div className={styles.kpiIcon}>⚠️</div>
+                <div className={styles.kpiContent}>
+                  <span className={styles.kpiLabel}>Tasa de Defectos</span>
+                  <h3 className={styles.kpiValue}>{defectRate}%</h3>
+                  <p className={styles.kpiFooter}>Objetivo: &lt;10%</p>
+                </div>
+              </Card>
+            </motion.div>
+          </div>
         </div>
-        {/* KPI 3: Calidad */}
-        <motion.div variants={itemVariants}>
-          <Card
-            variant={totalInspecciones > 0 && !meetsTolerance ? 'danger' : 'success'}
-            className={styles.kpiCard}
-            shape="trebol"
-            shapeColor={totalInspecciones > 0 && !meetsTolerance ? 'var(--color-alert)' : 'var(--color-success)'}
-          >
-            <div className={styles.kpiIcon}>✨</div>
-            <div className={styles.kpiContent}>
-              <span className={styles.kpiLabel}>Índice de Calidad</span>
-              <h3 className={styles.kpiValue}>{qualityIndex}%</h3>
-              <p className={styles.kpiFooter}>
-                {totalInspecciones > 0
-                  ? `Meta: ${qualityTolerance}% — ${meetsTolerance ? '✓ Cumple' : '✗ Por debajo de la meta'}`
-                  : `Meta de tolerancia: ${qualityTolerance}%`}
-              </p>
-            </div>
-          </Card>
-        </motion.div>
 
-        {/* KPI 4: Defectos */}
-        <motion.div variants={itemVariants}>
-          <Card variant="danger" className={styles.kpiCard} shape="mancha" shapeColor="var(--color-alert)">
-            <div className={styles.kpiIcon}>⚠️</div>
-            <div className={styles.kpiContent}>
-              <span className={styles.kpiLabel}>Tasa de Defectos</span>
-              <h3 className={styles.kpiValue}>{defectRate}%</h3>
-              <p className={styles.kpiFooter}>Objetivo: &lt;10%</p>
-            </div>
-          </Card>
-        </motion.div>
+        <div className={styles.kpiSection}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 0 }}>📌 Actividades</h3>
+          <div className={styles.kpiSectionGrid}>
+            {/* KPI 5: Actividades Activas */}
+            <motion.div variants={itemVariants}>
+              <Card variant="default" className={styles.kpiCard} shape="cacahuate" shapeColor="var(--color-golden-yellow)">
+                <div className={styles.kpiIcon}>📌</div>
+                <div className={styles.kpiContent}>
+                  <span className={styles.kpiLabel}>Actividades Activas</span>
+                  <h3 className={styles.kpiValue}>{actividadesActivas}</h3>
+                  <p className={styles.kpiFooter}>Pendientes o en proceso</p>
+                </div>
+              </Card>
+            </motion.div>
 
-        <div style={{ gridColumn: '1 / -1' }}>
-          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>📌 Actividades</h3>
+            {/* KPI 6: Actividades Vencidas */}
+            <motion.div variants={itemVariants}>
+              <Card
+                variant={actividadesVencidas > 0 ? 'danger' : 'success'}
+                className={styles.kpiCard}
+                shape="trebol"
+                shapeColor={actividadesVencidas > 0 ? 'var(--color-alert)' : 'var(--color-success)'}
+              >
+                <div className={styles.kpiIcon}>⏰</div>
+                <div className={styles.kpiContent}>
+                  <span className={styles.kpiLabel}>Actividades Vencidas</span>
+                  <h3 className={styles.kpiValue}>{actividadesVencidas}</h3>
+                  <p className={styles.kpiFooter}>{actividadesVencidas > 0 ? 'Requieren atención' : 'Sin pendientes vencidos'}</p>
+                </div>
+              </Card>
+            </motion.div>
+          </div>
         </div>
-        {/* KPI 5: Actividades Activas */}
-        <motion.div variants={itemVariants}>
-          <Card variant="default" className={styles.kpiCard} shape="cacahuate" shapeColor="var(--color-golden-yellow)">
-            <div className={styles.kpiIcon}>📌</div>
-            <div className={styles.kpiContent}>
-              <span className={styles.kpiLabel}>Actividades Activas</span>
-              <h3 className={styles.kpiValue}>{actividadesActivas}</h3>
-              <p className={styles.kpiFooter}>Pendientes o en proceso</p>
-            </div>
-          </Card>
-        </motion.div>
 
-        {/* KPI 6: Actividades Vencidas */}
-        <motion.div variants={itemVariants}>
-          <Card
-            variant={actividadesVencidas > 0 ? 'danger' : 'success'}
-            className={styles.kpiCard}
-            shape="trebol"
-            shapeColor={actividadesVencidas > 0 ? 'var(--color-alert)' : 'var(--color-success)'}
-          >
-            <div className={styles.kpiIcon}>⏰</div>
-            <div className={styles.kpiContent}>
-              <span className={styles.kpiLabel}>Actividades Vencidas</span>
-              <h3 className={styles.kpiValue}>{actividadesVencidas}</h3>
-              <p className={styles.kpiFooter}>{actividadesVencidas > 0 ? 'Requieren atención' : 'Sin pendientes vencidos'}</p>
-            </div>
-          </Card>
-        </motion.div>
+        <div className={styles.kpiSection}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 0 }}>👥 Personal</h3>
+          <div className={styles.kpiSectionGrid}>
+            {/* KPI 7: Ausencias Hoy */}
+            <motion.div variants={itemVariants}>
+              <Card
+                variant={ausenciasHoy > 0 ? 'danger' : 'success'}
+                className={styles.kpiCard}
+                shape="mancha"
+                shapeColor={ausenciasHoy > 0 ? 'var(--color-alert)' : 'var(--color-success)'}
+              >
+                <div className={styles.kpiIcon}>🧑‍🤝‍🧑</div>
+                <div className={styles.kpiContent}>
+                  <span className={styles.kpiLabel}>Ausencias Hoy</span>
+                  <h3 className={styles.kpiValue}>{ausenciasHoy}</h3>
+                  <p className={styles.kpiFooter}>{ausenciasHoy > 0 ? 'Personal no activo hoy' : 'Todos en planta'}</p>
+                </div>
+              </Card>
+            </motion.div>
 
-        <div style={{ gridColumn: '1 / -1' }}>
-          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>👥 Personal</h3>
+            {/* KPI 8: Horas Extra Pendientes de Verificar */}
+            <motion.div variants={itemVariants}>
+              <Card
+                variant={horasExtraPendientes > 0 ? 'default' : 'success'}
+                className={styles.kpiCard}
+                shape="anillo"
+                shapeColor={horasExtraPendientes > 0 ? 'var(--color-golden-yellow)' : 'var(--color-success)'}
+              >
+                <div className={styles.kpiIcon}>🕒</div>
+                <div className={styles.kpiContent}>
+                  <span className={styles.kpiLabel}>Horas Extra Pendientes de Verificar</span>
+                  <h3 className={styles.kpiValue}>{horasExtraPendientes}</h3>
+                  <p className={styles.kpiFooter}>{horasExtraPendientes > 0 ? 'Esperando confirmar cumplimiento' : 'Al día'}</p>
+                </div>
+              </Card>
+            </motion.div>
+          </div>
         </div>
-        {/* KPI 7: Ausencias Hoy */}
-        <motion.div variants={itemVariants}>
-          <Card
-            variant={ausenciasHoy > 0 ? 'danger' : 'success'}
-            className={styles.kpiCard}
-            shape="mancha"
-            shapeColor={ausenciasHoy > 0 ? 'var(--color-alert)' : 'var(--color-success)'}
-          >
-            <div className={styles.kpiIcon}>🧑‍🤝‍🧑</div>
-            <div className={styles.kpiContent}>
-              <span className={styles.kpiLabel}>Ausencias Hoy</span>
-              <h3 className={styles.kpiValue}>{ausenciasHoy}</h3>
-              <p className={styles.kpiFooter}>{ausenciasHoy > 0 ? 'Personal no activo hoy' : 'Todos en planta'}</p>
-            </div>
-          </Card>
-        </motion.div>
-
-        {/* KPI 8: Horas Extra Pendientes de Verificar */}
-        <motion.div variants={itemVariants}>
-          <Card
-            variant={horasExtraPendientes > 0 ? 'default' : 'success'}
-            className={styles.kpiCard}
-            shape="anillo"
-            shapeColor={horasExtraPendientes > 0 ? 'var(--color-golden-yellow)' : 'var(--color-success)'}
-          >
-            <div className={styles.kpiIcon}>🕒</div>
-            <div className={styles.kpiContent}>
-              <span className={styles.kpiLabel}>Horas Extra Pendientes de Verificar</span>
-              <h3 className={styles.kpiValue}>{horasExtraPendientes}</h3>
-              <p className={styles.kpiFooter}>{horasExtraPendientes > 0 ? 'Esperando confirmar cumplimiento' : 'Al día'}</p>
-            </div>
-          </Card>
-        </motion.div>
       </div>
 
       {/* CHARTS SECTION */}
