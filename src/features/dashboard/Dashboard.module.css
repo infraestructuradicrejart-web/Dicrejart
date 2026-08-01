@@ -50,7 +50,12 @@
 
 .kpiSection {
   flex: 1 1 320px;
-  min-width: 280px;
+  /* min-width: 0 (no 280px) a propósito: dentro de un flex container, un valor de
+     min-width mayor a 0 sigue dejando que el CONTENIDO (texto largo como "Horas Extra
+     Pendientes de Verificar") empuje la sección más ancha de lo asignado — eso es lo que
+     causaba el desbordamiento visual sobre la sección vecina. Con 0, la sección si puede
+     encogerse hasta su flex-basis y el texto envuelve en vez de desbordar. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -58,7 +63,10 @@
 
 .kpiSectionGrid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  /* minmax(0, 1fr), no solo 1fr: mismo motivo que arriba — sin el mínimo en 0, cada
+     columna del grid se resiste a encogerse por debajo del ancho natural de su
+     contenido ("grid blowout"), desbordándose sobre la tarjeta/sección de al lado. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
 }
 
@@ -68,6 +76,7 @@
   gap: var(--space-4);
   padding: var(--space-5);
   height: 100%;
+  min-width: 0;
   transition: transform var(--transition-fast) var(--ease-out), box-shadow var(--transition-fast) var(--ease-out);
 }
 
@@ -92,6 +101,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-width: 0;
 }
 
 .kpiLabel {
