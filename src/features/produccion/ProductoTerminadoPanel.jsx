@@ -1455,9 +1455,15 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               {ptOperarios.map((op) => {
-                const startStr = String(op.schedule?.startHour ?? 8).padStart(2, '0');
-                const endStr = String(op.schedule?.endHour ?? (isSat ? 13 : 18)).padStart(2, '0');
+                // op.schedule NO se limpia al pasar el día — sigue trayendo lo último que
+                // se autorizó aunque haya sido hace una semana. Por eso el horario propio
+                // (startHour/endHour) solo se muestra si esa autorización es de HOY
+                // (hasOvertimeToday); si no, se muestra el horario base, igual que ya hace
+                // OperariosPage.jsx — antes se mostraba el valor guardado sin importar su
+                // fecha, dejando un horario viejo pegado como si fuera el de hoy.
                 const hasOvertimeToday = op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStr;
+                const startStr = String(hasOvertimeToday ? op.schedule.startHour : 8).padStart(2, '0');
+                const endStr = String(hasOvertimeToday ? op.schedule.endHour : (isSat ? 13 : 18)).padStart(2, '0');
                 const opRecentHEs = horasExtra.filter(
                   (h) => h.operarioId === op.id && h.authorizedDate === todayStr && h.verificationStatus !== 'cancelado'
                 );
