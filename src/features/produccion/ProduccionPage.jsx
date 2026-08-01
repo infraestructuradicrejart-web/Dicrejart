@@ -899,105 +899,108 @@ const ProduccionPage = () => {
       initial="initial"
       animate="animate"
     >
-      {/* Cabecera del área */}
-      <div className={styles.areaViewHeader} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {canViewAreaSelector && (
-            <Button variant="secondary" size="md" onClick={handleBackToSelector}>
-              ⬅ Volver a Áreas
-            </Button>
-          )}
-          <div className={styles.areaViewTitleBlock}>
-            <div
-              className={styles.areaColorIndicator}
-              style={{ backgroundColor: activeArea?.color }}
-            />
-            <h2 className={styles.areaViewTitle}>
-              {activeArea?.icon} Panel de {activeArea?.name}
-            </h2>
-          </div>
-        </div>
-
-        {/* Botón de Solicitar Horas Extras visible para Encargados, Supervisores y Admin */}
-        <Button
-          type="button"
-          variant="secondary"
-          size="md"
-          onClick={handleOpenRequestOvertimeModal}
-          style={{ backgroundColor: 'var(--color-secondary)', color: '#ffffff', fontWeight: 'bold' }}
-        >
-          ⏰ Solicitar Horas Extras
-        </Button>
-      </div>
-
-      {isReadOnly && (
-        <div className={styles.bannerInfo} style={{ marginBottom: 'var(--space-4)' }}>
-          <strong>👁️ Modo de Solo Lectura:</strong>
-          <span> Como Supervisor de Área, puedes consultar el avance y el historial de esta área, pero no registrar producción.</span>
-        </div>
-      )}
-
-      <div className={styles.layoutColumns}>
-        {/* Columna 1: Formulario (oculto en modo solo lectura) */}
-        {!isReadOnly && (
-        <motion.div variants={itemVariants} className={styles.formCol}>
-          <Card variant="default">
-            <h3 className={styles.sectionTitle}>Registrar Salida de Producción</h3>
-            <form onSubmit={handleSubmit} className={styles.form}>
-              
-              {/* Selector de Juego */}
-              <div className={styles.formGroup}>
-                <Select
-                  label="Juego / Módulo en Proceso"
-                  name="gameName"
-                  value={newLog.gameName}
-                  onChange={handleInputChange}
-                  required
-                  placeholder={
-                    filteredJuegos.length === 0
-                      ? 'No hay juegos activos que requieran esta área'
-                      : '-- Selecciona el Juego --'
-                  }
-                  options={gameOptions}
+          {/* Cabecera del área */}
+          <div className={styles.areaViewHeader} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {canViewAreaSelector && (
+                <Button variant="secondary" size="md" onClick={handleBackToSelector}>
+                  ⬅ Volver a Áreas
+                </Button>
+              )}
+              <div className={styles.areaViewTitleBlock}>
+                <div
+                  className={styles.areaColorIndicator}
+                  style={{ backgroundColor: activeArea?.color }}
                 />
-                
-                {/* Banners de estado dinámicos */}
-                {selectedGameObj && (
-                  <>
-                    {selectedGameObj.activeDefects?.[areaId] && (
-                      <div className={styles.bannerDanger} style={{ borderLeft: '4px solid var(--color-danger)', marginBottom: '8px' }}>
-                        <strong>⚠️ Defecto de Calidad Reportado:</strong>
-                        <span>Calidad detectó una pieza defectuosa en esta área. Retrabájala y solicita una nueva inspección; esto es solo informativo y no bloquea el registro de producción ni la entrega a PT.</span>
-                      </div>
-                    )}
-                    {sequenceBlocked ? (
-                      <div className={styles.bannerDanger} style={{ borderLeft: '4px solid var(--color-alert)' }}>
-                        <strong>🔒 Bloqueado por Secuencia:</strong>
-                        <span>
-                          {requiredAreaName} todavía no completa su meta para este juego
-                          (<strong>{requiredAreaProduced}/{requiredAreaTarget}</strong> pzas). {activeArea?.name} no
-                          puede iniciar hasta que el material esté listo.
-                        </span>
-                      </div>
-                    ) : isCompleted ? (
-                      <div className={styles.bannerSuccess}>
-                        <strong>✓ Producción Finalizada:</strong>
-                        <span>La meta de <strong>{targetPiecesForArea}</strong> piezas para este juego en esta área ha sido completada al 100%. Registro de piezas cerrado. Usa la tabla de abajo para notificar la entrega a Producto Terminado.</span>
-                      </div>
-                    ) : producedPiecesForArea > 0 ? (
-                      <div className={styles.bannerWarning}>
-                        <strong>⏳ Producción en Proceso:</strong>
-                        <span>Se han registrado <strong>{producedPiecesForArea}</strong> de <strong>{targetPiecesForArea}</strong> piezas. Faltan <strong>{remainingPiecesForArea}</strong> para completar.</span>
-                      </div>
-                    ) : (
-                      <div className={styles.bannerInfo}>
-                        <strong>💤 Sin Iniciar:</strong>
-                        <span>Aún no se han registrado piezas de la meta de <strong>{targetPiecesForArea}</strong>.</span>
-                      </div>
-                    )}
-                  </>
-                )}
+                <h2 className={styles.areaViewTitle}>
+                  {activeArea?.icon} Panel de {activeArea?.name}
+                </h2>
               </div>
+            </div>
+
+            {/* Botón de Solicitar Horas Extras visible para Encargados, Supervisores y Admin */}
+            <Button
+              type="button"
+              variant="secondary"
+              size="md"
+              onClick={handleOpenRequestOvertimeModal}
+              style={{ backgroundColor: 'var(--color-secondary)', color: '#ffffff', fontWeight: 'bold' }}
+            >
+              ⏰ Solicitar Horas Extras
+            </Button>
+          </div>
+
+          {isReadOnly && (
+            <div className={styles.bannerInfo} style={{ marginBottom: 'var(--space-4)' }}>
+              <strong>👁️ Modo de Solo Lectura:</strong>
+              <span> Como Supervisor de Área, puedes consultar el avance y el historial de esta área, pero no registrar producción.</span>
+            </div>
+          )}
+
+          <div className={styles.layoutColumns}>
+            {/* Columna 1: Formulario (oculto en modo solo lectura) */}
+            {!isReadOnly && (
+            <motion.div variants={itemVariants} className={styles.formCol}>
+              <Card variant="default">
+                <h3 className={styles.sectionTitle}>Registrar Salida de Producción</h3>
+                <form onSubmit={handleSubmit} className={styles.form}>
+                  
+                  {/* Selector de Juego */}
+                  <div className={styles.formGroup}>
+                    <Select
+                      label="Juego / Módulo en Proceso"
+                      name="gameName"
+                      value={newLog.gameName}
+                      onChange={handleInputChange}
+                      required
+                      placeholder={
+                        filteredJuegos.length === 0
+                          ? 'No hay juegos activos que requieran esta área'
+                          : '-- Selecciona el Juego --'
+                      }
+                      options={filteredJuegos.map((g) => ({
+                        value: g.name,
+                        label: `${g.name} (${g.projectName})`,
+                      }))}
+                    />
+                    
+                    {/* Banners de estado dinámicos */}
+                    {selectedGameObj && (
+                      <>
+                        {selectedGameObj.activeDefects?.[areaId] && (
+                          <div className={styles.bannerDanger} style={{ borderLeft: '4px solid var(--color-danger)', marginBottom: '8px' }}>
+                            <strong>⚠️ Defecto de Calidad Reportado:</strong>
+                            <span>Calidad detectó una pieza defectuosa en esta área. Retrabájala y solicita una nueva inspección; esto es solo informativo y no bloquea el registro de producción ni la entrega a PT.</span>
+                          </div>
+                        )}
+                        {sequenceBlocked ? (
+                          <div className={styles.bannerDanger} style={{ borderLeft: '4px solid var(--color-alert)' }}>
+                            <strong>🔒 Bloqueado por Secuencia:</strong>
+                            <span>
+                              {requiredAreaName} todavía no completa su meta para este juego
+                              (<strong>{requiredAreaProduced}/{requiredAreaTarget}</strong> pzas). {activeArea?.name} no
+                              puede iniciar hasta que el material esté listo.
+                            </span>
+                          </div>
+                        ) : isCompleted ? (
+                          <div className={styles.bannerSuccess}>
+                            <strong>✓ Producción Finalizada:</strong>
+                            <span>La meta de <strong>{targetPiecesForArea}</strong> piezas para este juego en esta área ha sido completada al 100%. Registro de piezas cerrado. Usa la tabla de abajo para notificar la entrega a Producto Terminado.</span>
+                          </div>
+                        ) : producedPiecesForArea > 0 ? (
+                          <div className={styles.bannerWarning}>
+                            <strong>⏳ Producción en Proceso:</strong>
+                            <span>Se han registrado <strong>{producedPiecesForArea}</strong> de <strong>{targetPiecesForArea}</strong> piezas. Faltan <strong>{remainingPiecesForArea}</strong> para completar.</span>
+                          </div>
+                        ) : (
+                          <div className={styles.bannerInfo}>
+                            <strong>💤 Sin Iniciar:</strong>
+                            <span>Aún no se han registrado piezas de la meta de <strong>{targetPiecesForArea}</strong>.</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
 
               {/* Selector de Operador */}
               <div className={styles.formGroup}>
@@ -1470,14 +1473,6 @@ const ProduccionPage = () => {
             <h3 className={styles.sectionTitle} style={{ margin: 0 }}>
               👥 Personal del Área
             </h3>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={handleOpenRequestOvertimeModal}
-            >
-              ⏰ Solicitar Horas Extras
-            </Button>
           </div>
 
           {operadoresDisponibles.length === 0 ? (
@@ -1649,15 +1644,6 @@ const ProduccionPage = () => {
                 <h3 className={styles.sectionTitle} style={{ margin: 0 }}>
                   📋 Solicitudes de Horas Extras — {activeArea?.name}
                 </h3>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleOpenRequestOvertimeModal}
-                  style={{ backgroundColor: 'var(--color-secondary)', color: '#ffffff', fontWeight: 'bold' }}
-                >
-                  ⏰ Solicitar Horas Extras
-                </Button>
               </div>
 
               {areaSolicitudes.length === 0 ? (

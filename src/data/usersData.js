@@ -135,6 +135,17 @@ export const MOCK_USERS = [
     areaId: null,
     status: 'activo',
   },
+  {
+    id: 'USR-09',
+    name: 'Carlos Mendoza',
+    email: 'carlos.mendoza@dicrejart.com',
+    password: 'supervisor123',
+    role: 'Supervisor de Costura y Producto Terminado',
+    roleType: ROLE_TYPES.SUPERVISOR_AREA,
+    areaId: null,
+    areaIds: ['costura-colch', 'costura-acc', 'producto-terminado'],
+    status: 'activo',
+  },
 ];
 
 /**
