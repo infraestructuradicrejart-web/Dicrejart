@@ -38,27 +38,26 @@
    KPI WIDGETS
    ============================================ */
 /* Contenedor exterior: cada dominio (General/Calidad/Actividades/Personal) es una
-   sección independiente que fluye por su cuenta — antes un solo grid de 4 columnas con
-   encabezados de ancho completo forzaba un salto de fila por grupo, y como cada grupo
-   solo tiene 2 tarjetas, la mitad de esa fila quedaba vacía. Con flex-wrap, dos (o más)
-   secciones caben lado a lado cuando hay espacio, sin dejar huecos. */
+   sección independiente. Se usa CSS Grid (no flexbox) a propósito: con
+   `repeat(auto-fit, minmax(340px, 1fr))`, cada sección tiene un piso DURO de 340px que
+   el navegador respeta sin importar el contenido (a diferencia de flexbox, donde un
+   min-width en el propio ítem no evita que el contenido lo empuje más ancho de lo
+   asignado — eso fue lo que causó primero el desbordamiento entre secciones, y después,
+   al forzar min-width:0 para arreglarlo, que las secciones se encogieran demasiado en
+   vez de saltar de línea). Grid decide solo cuántas secciones caben por fila (340px cada
+   una) y las estira parejo (1fr) para llenar el ancho disponible sin dejar huecos; si no
+   caben todas, las que sobran bajan a la siguiente fila en vez de aplastarse. */
 .kpiGrid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: var(--space-6);
 }
 
 .kpiSection {
-  flex: 1 1 320px;
-  /* min-width: 0 (no 280px) a propósito: dentro de un flex container, un valor de
-     min-width mayor a 0 sigue dejando que el CONTENIDO (texto largo como "Horas Extra
-     Pendientes de Verificar") empuje la sección más ancha de lo asignado — eso es lo que
-     causaba el desbordamiento visual sobre la sección vecina. Con 0, la sección si puede
-     encogerse hasta su flex-basis y el texto envuelve en vez de desbordar. */
-  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  min-width: 0;
 }
 
 .kpiSectionGrid {
@@ -393,10 +392,6 @@
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-3);
-  }
-
-  .kpiSection {
-    flex-basis: 100%;
   }
 
   .kpiSectionGrid {
