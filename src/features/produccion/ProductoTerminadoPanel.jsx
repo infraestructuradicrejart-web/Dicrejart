@@ -18,6 +18,7 @@ import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { checkOvertimeEligibility } from '../../utils/overtimeRules';
 import { getOvertimeBlocks } from '../../utils/overtimeUtils';
 import { PUESTO_LABELS, PUESTO_ICONS, PUESTO_BADGE_VARIANT } from '../../data/puestoConfig';
+import { ROLE_TYPES } from '../../data/usersData';
 import styles from './ProductoTerminadoPanel.module.css';
 
 const getCellValue = (row, pattern) => {
@@ -46,7 +47,7 @@ const AREAS_MAP = {
   'producto-terminado': { name: 'Producto Terminado', icon: '📦', color: '#20C4A8' },
 };
 
-export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, onRequestOvertime }) {
+export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly }) {
   const {
     juegos,
     proyectos,
@@ -72,11 +73,13 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
     solicitudesHorasExtra,
     horasExtra,
     solicitarHorasExtra,
-    autorizarSolicitudHoraExtra,
-    rechazarSolicitudHoraExtra,
     cancelarSolicitudHoraExtra,
     modificarSolicitudHoraExtra,
     updateOperarioSchedule,
+    authorizeOvertimeTasks,
+    cancelPendingHorasExtra,
+    verifyHorasExtra,
+    correctHorasExtraSchedule,
   } = useOperarios();
 
   const todayStr = getTodayLocalDateStr();
@@ -85,11 +88,6 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
   const ptOperarios = useMemo(
     () => operarios.filter((op) => op.currentArea === 'producto-terminado'),
     [operarios]
-  );
-
-  const availableOperarios = useMemo(
-    () => (ptOperarios.length > 0 ? ptOperarios : operarios),
-    [ptOperarios, operarios]
   );
 
   const ptSolicitudes = useMemo(
@@ -102,7 +100,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
     [ptSolicitudes]
   );
 
-  const canManageJornada = user?.roleType === 'admin' || user?.roleType === 'supervisor-area';
+  const canManageJornada = user?.roleType === ROLE_TYPES.ADMIN || user?.roleType === ROLE_TYPES.SUPERVISOR_AREA;
 
   // Modales para horas extras y jornada del personal de PT
   const [requestOvertimeModal, setRequestOvertimeModal] = useState({
@@ -134,9 +132,17 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
   });
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [expandedOvertimeOperarios, setExpandedOvertimeOperarios] = useState(() => new Set());
+  const [horasExtraRejectModal, setHorasExtraRejectModal] = useState({ isOpen: false, horasExtraId: null, notes: '' });
+  const [scheduleCorrectionModal, setScheduleCorrectionModal] = useState({
+    isOpen: false,
+    horasExtraId: null,
+    actualStartHour: '',
+    actualEndHour: '',
+    reason: '',
+  });
 
   const handleOpenRequestOvertimeModal = () => {
-    const firstOp = availableOperarios[0]?.id || '';
+    const firstOp = ptOperarios[0]?.id || '';
     setRequestOvertimeModal({
       isOpen: true,
       operarioId: firstOp,
@@ -209,46 +215,76 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
     setScheduleModal({
       isOpen: true,
       collaborator: op,
-      startHour: String(op.schedule?.startHour ?? 8),
-      endHour: String(op.schedule?.endHour ?? (isSat ? 13 : 18)),
-      overtimeHours: String(op.schedule?.overtimeHours ?? 0),
+      startHour: String(op.schedule?.startHour || 8),
+      endHour: String(op.schedule?.endHour || (isSat ? 13 : 18)),
+      overtimeHours: String(op.schedule?.overtimeHours || 0),
       authorizedDate: op.schedule?.authorizedDate || todayStr,
-      overtimeTasks: op.schedule?.overtimeTasks || '',
+      overtimeTasks: '',
     });
   };
 
   const handleCloseScheduleModal = () => {
     setScheduleModal({
-      isOpen: false,
-      collaborator: null,
-      startHour: '8',
-      endHour: '18',
-      overtimeHours: '0',
-      authorizedDate: '',
-      overtimeTasks: '',
+      isOpen: false, collaborator: null, startHour: '8', endHour: '18',
+      overtimeHours: '0', authorizedDate: '', overtimeTasks: '',
     });
+  };
+
+  const handleDateChange = (e) => {
+    const dateStr = e.target.value;
+    const startVal = Number(scheduleModal.startHour);
+    const endVal = Number(scheduleModal.endHour);
+    const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, dateStr);
+    setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, overtimeHours: String(earlyHours + lateHours) }));
+  };
+
+  const handleStartHourChange = (e) => {
+    const startVal = Number(e.target.value);
+    const endVal = Number(scheduleModal.endHour);
+    const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, scheduleModal.authorizedDate);
+    setScheduleModal((prev) => ({ ...prev, startHour: String(startVal), overtimeHours: String(earlyHours + lateHours) }));
+  };
+
+  const handleEndHourChange = (e) => {
+    const startVal = Number(scheduleModal.startHour);
+    const endVal = Number(e.target.value);
+    const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, scheduleModal.authorizedDate);
+    setScheduleModal((prev) => ({ ...prev, endHour: String(endVal), overtimeHours: String(earlyHours + lateHours) }));
   };
 
   const handleSaveSchedule = async (e) => {
     e.preventDefault();
     const { collaborator, startHour, endHour, overtimeHours, authorizedDate, overtimeTasks } = scheduleModal;
     if (!collaborator) return;
+    if (Number(overtimeHours) > 0 && !overtimeTasks.trim()) {
+      toast.danger('Debes indicar las tareas a realizar durante el tiempo extra.');
+      return;
+    }
     setIsSavingSchedule(true);
-    const res = await updateOperarioSchedule(collaborator.id, {
-      startHour: Number(startHour),
-      endHour: Number(endHour),
-      overtimeHours: Number(overtimeHours),
-      authorizedBy: user?.name || 'Supervisor',
-      authorizedDate: authorizedDate || todayStr,
-      overtimeTasks,
+    await cancelPendingHorasExtra(collaborator.id, authorizedDate);
+    if (Number(overtimeHours) > 0) {
+      const res = await authorizeOvertimeTasks(collaborator.id, {
+        startHour: Number(startHour), endHour: Number(endHour), overtimeHours: Number(overtimeHours),
+        overtimeTasks, authorizedDate,
+      });
+      if (!res.ok) {
+        setIsSavingSchedule(false);
+        toast.danger(res.error || 'No se pudo registrar la autorización de horas extra.');
+        return;
+      }
+    }
+    await updateOperarioSchedule(collaborator.id, {
+      startHour: Number(startHour), endHour: Number(endHour), overtimeHours: Number(overtimeHours),
+      authorizedBy: user?.name || 'Supervisor', authorizedDate,
     });
     setIsSavingSchedule(false);
-    if (res.ok) {
-      toast.success(`✅ Horario de ${collaborator.name} actualizado.`);
-      handleCloseScheduleModal();
-    } else {
-      toast.danger(res.error || 'No se pudo actualizar el horario.');
-    }
+    const isToday = authorizedDate === todayStr;
+    toast.success(
+      isToday
+        ? `⏱️ Horario actualizado para ${collaborator.name} para hoy (${authorizedDate}). Horas extras: ${overtimeHours}h.`
+        : `📅 Horas extra programadas para ${collaborator.name} el ${authorizedDate} (${overtimeHours}h). El horario de hoy no se modificó.`
+    );
+    handleCloseScheduleModal();
   };
 
   const toggleOvertimeExpanded = (opId) => {
@@ -260,10 +296,59 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
     });
   };
 
+  const handleVerifyHorasExtraCumplido = async (horasExtraId) => {
+    const res = await verifyHorasExtra(horasExtraId, { verificationStatus: 'cumplido', verificationNotes: '' });
+    if (!res.ok) { toast.danger(res.error || 'No se pudo registrar la verificación.'); return; }
+    toast.success('✅ Tareas de tiempo extra marcadas como cumplidas.');
+  };
+
+  const handleOpenHorasExtraRejectModal = (horasExtraId) => {
+    setHorasExtraRejectModal({ isOpen: true, horasExtraId, notes: '' });
+  };
+
+  const handleCloseHorasExtraRejectModal = () => {
+    setHorasExtraRejectModal({ isOpen: false, horasExtraId: null, notes: '' });
+  };
+
+  const handleSubmitHorasExtraReject = async (e) => {
+    e.preventDefault();
+    const res = await verifyHorasExtra(horasExtraRejectModal.horasExtraId, {
+      verificationStatus: 'no_cumplido',
+      verificationNotes: horasExtraRejectModal.notes,
+    });
+    if (!res.ok) { toast.danger(res.error || 'No se pudo registrar la verificación.'); return; }
+    toast.warning('❌ Tareas de tiempo extra marcadas como no cumplidas.');
+    handleCloseHorasExtraRejectModal();
+  };
+
+  const handleOpenScheduleCorrectionModal = (h) => {
+    setScheduleCorrectionModal({
+      isOpen: true,
+      horasExtraId: h.id,
+      actualStartHour: String(h.startHour),
+      actualEndHour: String(h.endHour),
+      reason: '',
+    });
+  };
+
+  const handleCloseScheduleCorrectionModal = () => {
+    setScheduleCorrectionModal({ isOpen: false, horasExtraId: null, actualStartHour: '', actualEndHour: '', reason: '' });
+  };
+
+  const handleSubmitScheduleCorrection = async (e) => {
+    e.preventDefault();
+    const { horasExtraId, actualStartHour, actualEndHour, reason } = scheduleCorrectionModal;
+    const res = await correctHorasExtraSchedule(horasExtraId, { actualStartHour, actualEndHour, reason });
+    if (!res.ok) { toast.danger(res.error || 'No se pudo guardar la corrección de horario.'); return; }
+    toast.success('⚠️ Horario de tiempo extra corregido correctamente.');
+    handleCloseScheduleCorrectionModal();
+  };
+
   // Regresar una entrega notificada al área de origen (error detectado antes de recibirla)
   const [returnModal, setReturnModal] = useState({ isOpen: false, item: null, notes: '' });
 
-  // Gestión de pestañas: 'recepcion' | 'envios' | 'personal'
+  // Gestión de pestañas: 'recepcion' | 'envios' (Personal del Área y Solicitudes de Horas
+  // Extras se muestran siempre debajo, fuera de las pestañas — ver más abajo).
   const [activeTab, setActiveTab] = useState('recepcion');
 
   // Estados para Recepción con Checklist
@@ -961,17 +1046,15 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
         shape="anillo"
         accentColor="var(--color-blue-magenta-violet)"
       >
-        {onRequestOvertime && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="md"
-            onClick={onRequestOvertime}
-            style={{ backgroundColor: 'var(--color-secondary)', color: '#ffffff', fontWeight: 'bold' }}
-          >
-            ⏰ Solicitar Horas Extras
-          </Button>
-        )}
+        <Button
+          type="button"
+          variant="secondary"
+          size="md"
+          onClick={handleOpenRequestOvertimeModal}
+          style={{ backgroundColor: 'var(--color-secondary)', color: '#ffffff', fontWeight: 'bold' }}
+        >
+          ⏰ Solicitar Horas Extras
+        </Button>
         {onBack && (
           <Button variant="secondary" size="md" onClick={onBack}>
             ⬅ Volver a Manufactura
@@ -1342,7 +1425,9 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
           TABLERO DE CONTROL: PERSONAL Y HORAS EXTRAS DE PRODUCTO TERMINADO
           ============================================ */}
       <div style={{ marginTop: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-        {/* Panel de Personal de Producto Terminado */}
+        {/* Panel de Personal de Producto Terminado — mismo gate que "Personal del Área"
+            en ProduccionPage.jsx: Supervisor de Área/Admin o Encargado de Área. */}
+        {(canManageJornada || user?.roleType === ROLE_TYPES.ENCARGADO_AREA) && (
         <Card variant="default">
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)', gap: '12px' }}>
             <h3 className={styles.columnTitle} style={{ margin: 0 }}>
@@ -1351,14 +1436,11 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
           </div>
 
           {ptOperarios.length === 0 ? (
-            <div style={{ padding: '16px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', color: 'var(--color-gray-700)', fontSize: '13px', lineHeight: '1.5' }}>
-              <p style={{ margin: '0 0 6px 0', fontWeight: '600', color: 'var(--color-secondary)' }}>
-                ℹ️ No hay colaboradores asignados permanentemente a Producto Terminado actualmente.
-              </p>
-              <p style={{ margin: 0 }}>
-                Para programar o solicitar horas extras a cualquier colaborador de la planta en Producto Terminado, usa el botón <strong>"⏰ Solicitar Horas Extras"</strong> ubicado arriba en la cabecera principal.
-              </p>
-            </div>
+            <EmptyState
+              message="No hay personal asignado a esta área actualmente."
+              shape="cacahuate"
+              color={activeArea?.color || 'var(--color-gray-300)'}
+            />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               {ptOperarios.map((op) => {
@@ -1435,6 +1517,59 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                                   )}
                                 </div>
                                 <div style={{ color: 'var(--color-gray-700)', marginBottom: '4px' }}>{h.overtimeTasks}</div>
+                                {h.verificationStatus === 'pendiente' ? (
+                                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                                      style={{ fontSize: '10.5px', fontWeight: 700, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                    >
+                                      ✅ Cumplió
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                                      style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                    >
+                                      ❌ No Cumplió
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div style={{ marginBottom: '4px' }}>
+                                    <span
+                                      title={h.verificationNotes ? `${h.verificationNotes} — ${h.verifiedBy}` : h.verifiedBy}
+                                      style={{
+                                        fontSize: '10.5px', fontWeight: 700,
+                                        color: h.verificationStatus === 'cumplido' ? '#15803d' : 'var(--color-alert)',
+                                      }}
+                                    >
+                                      {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
+                                    </span>
+                                    {h.verificationStatus === 'no_cumplido' && h.verificationNotes && (
+                                      <div style={{ marginTop: '2px', fontSize: '10.5px', color: 'var(--color-gray-700)' }}>
+                                        Comentario: {h.verificationNotes}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenScheduleCorrectionModal(h)}
+                                  style={{ fontSize: '10.5px', fontWeight: 700, color: '#374151', background: 'none', border: '1px solid var(--color-gray-400)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                                >
+                                  ✏️ Corregir Horario
+                                </button>
+                                {h.scheduleCorrection && (
+                                  <div style={{ marginTop: '4px', fontSize: '10.5px', color: '#b91c1c' }}>
+                                    {h.scheduleCorrection.actualStartHour !== h.startHour && (
+                                      <div>⚠️ Entrada real: {String(h.scheduleCorrection.actualStartHour).padStart(2, '0')}:00 (autorizado {String(h.startHour).padStart(2, '0')}:00)</div>
+                                    )}
+                                    {h.scheduleCorrection.actualEndHour !== h.endHour && (
+                                      <div>⚠️ Salida real: {String(h.scheduleCorrection.actualEndHour).padStart(2, '0')}:00 (autorizado {String(h.endHour).padStart(2, '0')}:00)</div>
+                                    )}
+                                    <div>Motivo: {h.scheduleCorrection.reason} — Corrigió: {h.scheduleCorrection.correctedBy}</div>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -1444,7 +1579,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
 
                     {canManageJornada && (
                       <Button variant="ghost" size="sm" onClick={() => handleOpenScheduleModal(op)}>
-                        🕒 Ajustar Jornada
+                        🕒 Jornada
                       </Button>
                     )}
                   </div>
@@ -1453,6 +1588,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
             </div>
           )}
         </Card>
+        )}
 
         {/* Solicitudes de Horas Extras de Producto Terminado */}
         <Card variant="default">
@@ -1503,40 +1639,6 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                     {sol.status === 'rechazada' && <Badge variant="danger">🔴 Rechazada por {sol.revisadoPor}</Badge>}
                     {sol.status === 'cancelada' && <Badge variant="neutral">⚪ Cancelada</Badge>}
 
-                    {sol.status === 'pendiente' && canManageJornada && (
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        <Button
-                          type="button"
-                          variant="primary"
-                          size="sm"
-                          onClick={async () => {
-                            const res = await autorizarSolicitudHoraExtra(sol.id, 'Autorizada desde Producto Terminado');
-                            if (res.ok) {
-                              toast.success(`✅ Solicitud autorizada para ${sol.operarioName}.`);
-                            } else {
-                              toast.danger(res.error || 'Error al autorizar.');
-                            }
-                          }}
-                        >
-                          ✅ Autorizar
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          style={{ color: 'var(--color-alert)' }}
-                          onClick={async () => {
-                            const notes = window.prompt(`Indica el motivo de rechazo para ${sol.operarioName}:`);
-                            if (notes === null) return;
-                            const res = await rechazarSolicitudHoraExtra(sol.id, notes);
-                            if (res.ok) toast.success(`Solicitud rechazada.`);
-                          }}
-                        >
-                          ❌ Rechazar
-                        </Button>
-                      </div>
-                    )}
-
                     {(sol.status === 'pendiente' || sol.status === 'autorizada') && (
                       <div style={{ display: 'flex', gap: '4px' }}>
                         <Button
@@ -1545,13 +1647,14 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                           size="sm"
                           onClick={() => handleOpenEditOvertimeRequestModal(sol)}
                         >
-                          ✏️ Edit
+                          ✏️ Modificar
                         </Button>
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           onClick={() => handleCancelOvertimeRequest(sol)}
+                          style={{ color: 'var(--color-alert)' }}
                         >
                           🚫 Cancelar
                         </Button>
@@ -2202,7 +2305,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
 
       {/* MODAL: SOLICITAR HORAS EXTRAS */}
       {requestOvertimeModal.isOpen && (() => {
-        const selectedOp = availableOperarios.find((o) => o.id === requestOvertimeModal.operarioId);
+        const selectedOp = ptOperarios.find((o) => o.id === requestOvertimeModal.operarioId);
         const eligibility = selectedOp
           ? checkOvertimeEligibility(selectedOp, requestOvertimeModal.fecha)
           : { isEligible: true, reason: '' };
@@ -2221,9 +2324,9 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                   onChange={(e) => setRequestOvertimeModal((prev) => ({ ...prev, operarioId: e.target.value }))}
                   required
                   placeholder="-- Selecciona el colaborador --"
-                  options={availableOperarios.map((op) => ({
+                  options={ptOperarios.map((op) => ({
                     value: op.id,
-                    label: `${op.name}${op.currentArea ? ` (${AREAS_MAP[op.currentArea]?.name || op.currentArea})` : ''}`,
+                    label: `${op.name} (${op.puesto || 'operario'})`,
                   }))}
                 />
               </div>
@@ -2238,7 +2341,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                 />
               </div>
 
-              {!eligibility.isEligible && (
+              {!eligibility.isEligible ? (
                 <div
                   style={{
                     padding: '12px',
@@ -2253,6 +2356,20 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                   }}
                 >
                   {eligibility.reason}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    backgroundColor: '#f0fdf4',
+                    color: '#166534',
+                    borderRadius: '8px',
+                    border: '1px solid #bbf7d0',
+                    fontSize: '12px',
+                    marginBottom: '16px',
+                  }}
+                >
+                  ✅ Colaborador habilitado para solicitar tiempo extra el {requestOvertimeModal.fecha}.
                 </div>
               )}
 
@@ -2305,7 +2422,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
               <div className={styles.formGroup}>
                 <label className={styles.label}>Motivo / Tareas Asignadas</label>
                 <textarea
-                  className={styles.textInput}
+                  className={styles.textarea}
                   rows="3"
                   required
                   placeholder="Especifica detalladamente las tareas de empaque / tarimas / despacho..."
@@ -2314,7 +2431,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                 />
               </div>
 
-              <div className={styles.row} style={{ marginTop: '12px' }}>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
                 <Button type="button" variant="secondary" onClick={handleCloseRequestOvertimeModal}>
                   Cancelar
                 </Button>
@@ -2350,7 +2467,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                 />
               </div>
 
-              {!eligibility.isEligible && (
+              {!eligibility.isEligible ? (
                 <div
                   style={{
                     padding: '12px',
@@ -2365,6 +2482,20 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                   }}
                 >
                   {eligibility.reason}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    backgroundColor: '#f0fdf4',
+                    color: '#166534',
+                    borderRadius: '8px',
+                    border: '1px solid #bbf7d0',
+                    fontSize: '12px',
+                    marginBottom: '16px',
+                  }}
+                >
+                  ✅ Colaborador habilitado para solicitar tiempo extra el {editOvertimeRequestModal.fecha}.
                 </div>
               )}
 
@@ -2417,7 +2548,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
               <div className={styles.formGroup}>
                 <label className={styles.label}>Motivo / Tareas Asignadas</label>
                 <textarea
-                  className={styles.textInput}
+                  className={styles.textarea}
                   rows="3"
                   required
                   value={editOvertimeRequestModal.motivo}
@@ -2425,7 +2556,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
                 />
               </div>
 
-              <div className={styles.row} style={{ marginTop: '12px' }}>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
                 <Button type="button" variant="secondary" onClick={handleCloseEditOvertimeRequestModal}>
                   Cancelar
                 </Button>
@@ -2438,58 +2569,247 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly, o
         );
       })()}
 
-      {/* MODAL: AJUSTAR JORNADA Y HORARIO */}
+      {/* MODAL: GESTIÓN DE JORNADA / AUTORIZAR TIEMPO EXTRA */}
       {scheduleModal.isOpen && scheduleModal.collaborator && (
         <Modal
           isOpen={scheduleModal.isOpen}
           onClose={handleCloseScheduleModal}
-          title={`🕒 Jornada del Colaborador: ${scheduleModal.collaborator.name}`}
+          title={`Gestión de Jornada: ${scheduleModal.collaborator.name}`}
         >
-          <form onSubmit={handleSaveSchedule}>
-            <div className={styles.formGroup}>
-              <Input
-                label="Hora de Entrada (0-23)"
-                type="number"
-                min="0"
-                max="23"
-                value={scheduleModal.startHour}
-                onChange={(e) => setScheduleModal((prev) => ({ ...prev, startHour: e.target.value }))}
-                required
-              />
+          <form onSubmit={handleSaveSchedule} className={styles.form}>
+            <div style={{ display: 'flex', gap: 'var(--space-5)', padding: 'var(--space-3) var(--space-4)', backgroundColor: 'var(--color-gray-50)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-gray-200)', fontSize: 'var(--body-size)' }}>
+              <div>
+                <strong>Colaborador:</strong> {scheduleModal.collaborator.name}
+              </div>
+              <div>
+                <strong>Área Actual:</strong> Producto Terminado
+              </div>
             </div>
+
             <div className={styles.formGroup}>
-              <Input
-                label="Hora de Salida (0-23)"
-                type="number"
-                min="0"
-                max="23"
-                value={scheduleModal.endHour}
-                onChange={(e) => setScheduleModal((prev) => ({ ...prev, endHour: e.target.value }))}
+              <label className={styles.label}>Fecha de la Jornada</label>
+              <input
+                type="date"
                 required
-              />
-            </div>
-            <div className={styles.formGroup}>
-              <Input
-                label="Horas Extras Autorizadas Hoy"
-                type="number"
-                min="0"
-                max="8"
-                value={scheduleModal.overtimeHours}
-                onChange={(e) => setScheduleModal((prev) => ({ ...prev, overtimeHours: e.target.value }))}
+                className={styles.textarea}
+                value={scheduleModal.authorizedDate}
+                onChange={handleDateChange}
               />
             </div>
 
-            <div className={styles.row} style={{ marginTop: '12px' }}>
+            <div className={styles.formGroup}>
+              <Select
+                label="Hora de Entrada del Colaborador"
+                value={scheduleModal.startHour}
+                onChange={handleStartHourChange}
+                required
+                options={[
+                  { value: '6', label: '06:00 AM (Tiempo Extra Temprano)' },
+                  { value: '7', label: '07:00 AM (Tiempo Extra Temprano)' },
+                  { value: '8', label: '08:00 AM (Entrada Normal)' },
+                ]}
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <Select
+                label="Hora de Salida del Colaborador"
+                value={scheduleModal.endHour}
+                onChange={handleEndHourChange}
+                required
+                options={[
+                  { value: '13', label: '13:00 (Salida Normal Sábado)' },
+                  { value: '14', label: '14:00' },
+                  { value: '15', label: '15:00' },
+                  { value: '16', label: '16:00' },
+                  { value: '17', label: '17:00' },
+                  { value: '18', label: '18:00 (Salida Normal Lunes-Viernes)' },
+                  { value: '19', label: '19:00 (Tiempo Extra)' },
+                  { value: '20', label: '20:00 (Tiempo Extra)' },
+                  { value: '21', label: '21:00 (Tiempo Extra)' },
+                  { value: '22', label: '22:00 (Tiempo Extra)' },
+                ]}
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Horas Extras Autorizadas</label>
+              {(() => {
+                const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(
+                  Number(scheduleModal.startHour),
+                  Number(scheduleModal.endHour),
+                  scheduleModal.authorizedDate
+                );
+                if (earlyHours === 0 && lateHours === 0) {
+                  return (
+                    <input type="text" className={styles.textarea} style={{ backgroundColor: 'var(--color-gray-100)', cursor: 'not-allowed' }} value="0 hora(s) — sin tiempo extra" disabled />
+                  );
+                }
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {earlyHours > 0 && (
+                      <div style={{ fontSize: '13px', padding: '8px 10px', backgroundColor: '#eff6ff', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                        🌅 <strong>Bloque Matutino:</strong> {earlyHours}h ({earlyRange})
+                      </div>
+                    )}
+                    {lateHours > 0 && (
+                      <div style={{ fontSize: '13px', padding: '8px 10px', backgroundColor: '#fff7ed', borderRadius: '6px', border: '1px solid #fed7aa' }}>
+                        🌆 <strong>Bloque Vespertino:</strong> {lateHours}h ({lateRange})
+                      </div>
+                    )}
+                    <div style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
+                      Total: {scheduleModal.overtimeHours} hora(s)
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {Number(scheduleModal.overtimeHours) > 0 && (
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Tareas a Realizar en el Tiempo Extra *</label>
+                <textarea
+                  className={styles.textarea}
+                  rows="3"
+                  required
+                  placeholder="Ej: Terminar empaque de 20 piezas del pedido X, consolidar tarima para despacho..."
+                  value={scheduleModal.overtimeTasks}
+                  onChange={(e) => setScheduleModal((prev) => ({ ...prev, overtimeTasks: e.target.value }))}
+                />
+                <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: 'var(--space-1)' }}>
+                  Calidad revisará después que estas tareas realmente se hayan cumplido.
+                </p>
+              </div>
+            )}
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Supervisor que Autoriza</label>
+              <input
+                type="text"
+                className={styles.textarea}
+                style={{ backgroundColor: 'var(--color-gray-100)', cursor: 'not-allowed' }}
+                value={user?.name || 'Administrador'}
+                disabled
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
               <Button type="button" variant="secondary" onClick={handleCloseScheduleModal} disabled={isSavingSchedule}>
                 Cancelar
               </Button>
-              <Button type="submit" variant="primary" disabled={isSavingSchedule}>
-                {isSavingSchedule ? 'Guardando...' : 'Guardar Jornada'}
+              <Button type="submit" variant="primary" isLoading={isSavingSchedule}>
+                Guardar y Autorizar
               </Button>
             </div>
           </form>
         </Modal>
       )}
+
+      {/* Modal: Marcar tareas de tiempo extra como "No Cumplido" (requiere motivo) */}
+      {horasExtraRejectModal.isOpen && (
+        <Modal
+          isOpen={horasExtraRejectModal.isOpen}
+          onClose={handleCloseHorasExtraRejectModal}
+          title="❌ Tareas de Tiempo Extra No Cumplidas"
+        >
+          <form onSubmit={handleSubmitHorasExtraReject} className={styles.form}>
+            <div className={styles.formGroup}>
+              <label className={styles.label}>¿Qué no se cumplió?</label>
+              <textarea
+                rows="3"
+                required
+                className={styles.textarea}
+                placeholder="Ej: Solo terminó la mitad del empaque, no se consolidó la tarima..."
+                value={horasExtraRejectModal.notes}
+                onChange={(e) => setHorasExtraRejectModal((prev) => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
+              <Button type="button" variant="secondary" onClick={handleCloseHorasExtraRejectModal}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="danger">
+                Confirmar No Cumplido
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Corregir horario real de tiempo extra */}
+      {scheduleCorrectionModal.isOpen && (() => {
+        const targetHE = horasExtra.find((h) => h.id === scheduleCorrectionModal.horasExtraId);
+        if (!targetHE) return null;
+        const { earlyHours, lateHours, baseStartHour, baseEndHour } = getOvertimeBlocks(targetHE.startHour, targetHE.endHour, targetHE.authorizedDate);
+
+        const startOptions = [];
+        for (let hVal = targetHE.startHour; hVal <= baseStartHour; hVal += 1) {
+          startOptions.push({ value: String(hVal), label: `${String(hVal).padStart(2, '0')}:00` });
+        }
+        const endOptions = [];
+        for (let hVal = baseEndHour; hVal <= targetHE.endHour; hVal += 1) {
+          endOptions.push({ value: String(hVal), label: `${String(hVal).padStart(2, '0')}:00` });
+        }
+
+        return (
+          <Modal
+            isOpen={scheduleCorrectionModal.isOpen}
+            onClose={handleCloseScheduleCorrectionModal}
+            title="✏️ Corregir Horario de Tiempo Extra"
+          >
+            <form onSubmit={handleSubmitScheduleCorrection} className={styles.form}>
+              <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 0 }}>
+                Autorizado: {String(targetHE.startHour).padStart(2, '0')}:00 - {String(targetHE.endHour).padStart(2, '0')}:00 el {targetHE.authorizedDate}. Ajusta solo la hora del bloque que en realidad no se cumplió como se autorizó.
+              </p>
+
+              {earlyHours > 0 && (
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Hora Real de Entrada (bloque matutino)"
+                    value={scheduleCorrectionModal.actualStartHour}
+                    onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, actualStartHour: e.target.value }))}
+                    required
+                    options={startOptions}
+                  />
+                </div>
+              )}
+
+              {lateHours > 0 && (
+                <div className={styles.formGroup}>
+                  <Select
+                    label="Hora Real de Salida (bloque vespertino)"
+                    value={scheduleCorrectionModal.actualEndHour}
+                    onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, actualEndHour: e.target.value }))}
+                    required
+                    options={endOptions}
+                  />
+                </div>
+              )}
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Motivo de la Corrección</label>
+                <textarea
+                  className={styles.textarea}
+                  rows="3"
+                  required
+                  placeholder="Ej: Llegó a las 8:00 en vez de las 6:00 autorizadas, no se realizó el bloque matutino completo..."
+                  value={scheduleCorrectionModal.reason}
+                  onChange={(e) => setScheduleCorrectionModal((prev) => ({ ...prev, reason: e.target.value }))}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
+                <Button type="button" variant="secondary" onClick={handleCloseScheduleCorrectionModal}>
+                  Cancelar
+                </Button>
+                <Button type="submit" variant="primary">
+                  Guardar Corrección
+                </Button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
     </motion.div>
   );
 }
@@ -2501,7 +2821,6 @@ ProductoTerminadoPanel.propTypes = {
   // "volver" — el botón simplemente no se muestra (ver ProduccionPage.jsx).
   onBack: PropTypes.func,
   readOnly: PropTypes.bool,
-  onRequestOvertime: PropTypes.func,
 };
 
 ProductoTerminadoPanel.defaultProps = {
