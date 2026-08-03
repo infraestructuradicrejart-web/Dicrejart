@@ -11,8 +11,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'wheel'];
 const CHECK_INTERVAL_MS = 5000;
-const LAST_ACTIVITY_KEY = 'dicrejart_last_activity';
-const LOCKED_STATE_KEY = 'dicrejart_is_locked';
+
+// Exportadas para que AuthContext pueda limpiarlas al cerrar sesión — de lo contrario
+// quedan en localStorage (sobreviven a un logout/login e incluso al cierre automático
+// de sesión de 12h) y el próximo login arranca ya bloqueado.
+export const LAST_ACTIVITY_KEY = 'dicrejart_last_activity';
+export const LOCKED_STATE_KEY = 'dicrejart_is_locked';
 
 /**
  * @param {number} timeoutMs - Milisegundos de inactividad antes de considerar bloqueada la sesión

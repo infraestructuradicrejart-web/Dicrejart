@@ -38,6 +38,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions, useEmulator } from '../config/firebase';
 import { logAudit } from '../utils/auditLog';
+import { LAST_ACTIVITY_KEY, LOCKED_STATE_KEY } from '../hooks/useInactivityLock';
 
 export const AuthContext = createContext(null);
 
@@ -267,6 +268,11 @@ export const AuthProvider = ({ children }) => {
       setUser(null);
       setAuthError('');
       localStorage.removeItem(SESSION_STARTED_AT_KEY);
+      // Sin esto, el bloqueo por inactividad sobrevive al logout (localStorage no se
+      // limpia solo) y el siguiente login —o el auto-logout de las 12h— arranca
+      // mostrando la pantalla de bloqueo de inmediato.
+      localStorage.removeItem(LAST_ACTIVITY_KEY);
+      localStorage.removeItem(LOCKED_STATE_KEY);
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
     }
