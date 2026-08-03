@@ -8,15 +8,9 @@
 .container {
   position: fixed;
   bottom: var(--space-5);
-  left: var(--space-5);
-  /* El sidebar flotante (Sidebar.module.css) también vive pegado a la izquierda
-     con z-index 90 y ocupa casi toda la altura — un z-index igual o menor dejaría
-     a GIDI tapado detrás de su esquina inferior. Un punto arriba (91) lo deja
-     siempre visible por encima; pointer-events:none evita que le robe clics a los
-     botones del sidebar donde se le monta encima visualmente. */
+  right: var(--space-5);
   z-index: 91;
   pointer-events: none;
-  animation: float 5s ease-in-out infinite;
 }
 
 .mascot {
@@ -24,15 +18,6 @@
   width: 90px;
   height: auto;
   filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.2));
-}
-
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
 }
 
 @media (max-width: 480px) {

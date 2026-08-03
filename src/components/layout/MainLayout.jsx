@@ -176,7 +176,7 @@ const MainLayout = ({
         onNavigate={handleNavigate}
       />
 
-      {/* GIDI, la mascota de Dicrejart, flotando fija en la esquina inferior izquierda. */}
+      {/* GIDI, la mascota de Dicrejart, estática en la esquina inferior derecha. */}
       <CornerMascot />
 
       {/* ============================================

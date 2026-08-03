@@ -1,8 +1,9 @@
 /**
  * @file CornerMascot.jsx
- * @description GIDI, la mascota de Dicrejart, flotando fija en la esquina inferior
- * izquierda de todas las páginas internas de la app (dentro de MainLayout). Por ahora
- * es solo decorativa; sirve de base para agregarle funciones más adelante.
+ * @description GIDI, la mascota de Dicrejart, fija (estática, sin animación) en la
+ * esquina inferior derecha de todas las páginas internas de la app (dentro de
+ * MainLayout). Por ahora es solo decorativa; sirve de base para agregarle
+ * funciones más adelante.
  * @author Dicrejart Dev Team
  * @requires react
  */
