@@ -17,6 +17,7 @@ import useIsMobile from '../../hooks/useIsMobile';
 import UserMenu from './UserMenu';
 import Sidebar from './Sidebar';
 import BrandBackdrop from '../ui/BrandBackdrop';
+import CornerMascot from '../ui/CornerMascot';
 
 // Importar estilos
 import styles from './MainLayout.module.css';
@@ -174,6 +175,10 @@ const MainLayout = ({
         onLogout={handleLogout}
         onNavigate={handleNavigate}
       />
+
+      {/* GIDI, la mascota de Dicrejart, flotando fija en la esquina opuesta al
+          círculo de sesión. */}
+      <CornerMascot />
 
       {/* ============================================
           CONTENEDOR PRINCIPAL (Sidebar + Content)

@@ -1,0 +1,39 @@
+/**
+ * @file CornerMascot.module.css
+ * @description Estilos para GIDI, la mascota flotando fija en la esquina inferior
+ * derecha de la app.
+ * @author Dicrejart Dev Team
+ */
+
+.container {
+  position: fixed;
+  bottom: var(--space-5);
+  right: var(--space-5);
+  /* Por encima del contenido (1) y del overlay del sidebar en mobile (80), pero
+     debajo del círculo de sesión UserMenu (100), que es la esquina opuesta. */
+  z-index: 90;
+  pointer-events: none;
+  animation: float 5s ease-in-out infinite;
+}
+
+.mascot {
+  display: block;
+  width: 90px;
+  height: auto;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.2));
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@media (max-width: 480px) {
+  .mascot {
+    width: 60px;
+  }
+}
