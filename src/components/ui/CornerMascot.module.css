@@ -8,10 +8,13 @@
 .container {
   position: fixed;
   bottom: var(--space-5);
-  right: var(--space-5);
-  /* Por encima del contenido (1) y del overlay del sidebar en mobile (80), pero
-     debajo del círculo de sesión UserMenu (100), que es la esquina opuesta. */
-  z-index: 90;
+  left: var(--space-5);
+  /* El sidebar flotante (Sidebar.module.css) también vive pegado a la izquierda
+     con z-index 90 y ocupa casi toda la altura — un z-index igual o menor dejaría
+     a GIDI tapado detrás de su esquina inferior. Un punto arriba (91) lo deja
+     siempre visible por encima; pointer-events:none evita que le robe clics a los
+     botones del sidebar donde se le monta encima visualmente. */
+  z-index: 91;
   pointer-events: none;
   animation: float 5s ease-in-out infinite;
 }
