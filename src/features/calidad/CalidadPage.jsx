@@ -254,6 +254,12 @@ const CalidadPage = () => {
   const [selectedDate, setSelectedDate] = useState(() => getTodayLocalDateStr());
   const tableContainerRef = useRef(null);
 
+  // Pestaña "🕒 Horas Extra": junta TODAS las autorizaciones pendientes de verificar (de
+  // cualquier fecha, no solo hoy) en un solo lugar, con un filtro opcional por fecha —
+  // antes solo se podían revisar de una en una, día por día, desde la fecha seleccionada
+  // arriba o desde el desplegable de "hoy" en Producción/Producto Terminado.
+  const [pendingHEDateFilter, setPendingHEDateFilter] = useState('');
+
   useEffect(() => {
     const interval = setInterval(() => {
       setTick((t) => t + 1);
@@ -467,6 +473,16 @@ const CalidadPage = () => {
         pendingReason: (p.isReady && (!p.review || p.review.status !== 'aprobado')) ? 'checklist' : 'recepcion',
       })),
     [allReviewPairs]
+  );
+
+  // Todas las autorizaciones de tiempo extra pendientes de verificar, de cualquier fecha
+  // (o de una fecha específica si pendingHEDateFilter está puesto) — ordenadas de más
+  // antigua a más reciente, para que lo que lleva más tiempo esperando salga primero.
+  const pendingHEList = useMemo(
+    () => horasExtra
+      .filter((h) => h.verificationStatus === 'pendiente' && (!pendingHEDateFilter || h.authorizedDate === pendingHEDateFilter))
+      .sort((a, b) => (a.authorizedDate < b.authorizedDate ? -1 : a.authorizedDate > b.authorizedDate ? 1 : 0)),
+    [horasExtra, pendingHEDateFilter]
   );
 
   const reviewGamesForArea = useMemo(
@@ -926,6 +942,8 @@ const CalidadPage = () => {
             ? 'Inspecciona productos y garantiza los estándares de Dicrejart.'
             : activeTab === 'revision'
             ? 'Aprueba el checklist de calidad antes de que un área notifique su entrega a Producto Terminado.'
+            : activeTab === 'horasExtra'
+            ? 'Verifica si las tareas asignadas durante el tiempo extra realmente se cumplieron, de cualquier fecha.'
             : 'Evalúa y califica el desempeño en tiempo real de los colaboradores en taller.'
         }
         shape="mancha"
@@ -951,6 +969,12 @@ const CalidadPage = () => {
           onClick={() => setActiveTab('evaluaciones')}
         >
           👥 Desempeño de Colaboradores
+        </button>
+        <button
+          className={`${styles.tabBtn} ${activeTab === 'horasExtra' ? styles.tabBtnActive : ''}`}
+          onClick={() => setActiveTab('horasExtra')}
+        >
+          🕒 Horas Extra Pendientes ({horasExtra.filter((h) => h.verificationStatus === 'pendiente').length})
         </button>
       </div>
 
@@ -2161,6 +2185,112 @@ const CalidadPage = () => {
             </Card>
           </motion.div>
         </div>
+      )}
+
+      {/* 4. HORAS EXTRA PENDIENTES DE VERIFICAR (de cualquier fecha, con filtro opcional) */}
+      {activeTab === 'horasExtra' && (
+        <motion.div variants={itemVariants}>
+          <Card variant="default">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end', marginBottom: '16px' }}>
+              <div className={styles.formGroup} style={{ marginBottom: 0 }}>
+                <label className={styles.label}>Filtrar por Fecha</label>
+                <input
+                  type="date"
+                  className={styles.textInput}
+                  value={pendingHEDateFilter}
+                  onChange={(e) => setPendingHEDateFilter(e.target.value)}
+                />
+              </div>
+              {pendingHEDateFilter && (
+                <Button type="button" variant="secondary" size="sm" onClick={() => setPendingHEDateFilter('')}>
+                  ✕ Quitar Filtro
+                </Button>
+              )}
+              <span style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>
+                Mostrando {pendingHEList.length} pendiente{pendingHEList.length === 1 ? '' : 's'}
+                {pendingHEDateFilter ? ` del ${pendingHEDateFilter}` : ' (todas las fechas)'}
+              </span>
+            </div>
+
+            {pendingHEList.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '24px' }}>
+                {pendingHEDateFilter
+                  ? 'No hay horas extra pendientes de verificar en esa fecha.'
+                  : '✅ No hay horas extra pendientes de verificar.'}
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {pendingHEList.map((h) => {
+                  const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(h.startHour, h.endHour, h.authorizedDate);
+                  const esDomingo = Boolean(h.authorizedDate) && new Date(`${h.authorizedDate}T00:00:00`).getDay() === 0;
+                  return (
+                    <div
+                      key={h.id}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        background: 'rgba(255, 153, 51, 0.08)',
+                        border: '1px solid rgba(255, 153, 51, 0.25)',
+                        fontSize: '12px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
+                        <strong style={{ color: 'var(--color-secondary)' }}>
+                          📅 {h.authorizedDate} — {h.operarioName} <span style={{ fontWeight: 400, color: 'var(--color-gray-600)' }}>({AREAS.find((a) => a.id === h.areaId)?.name || h.areaId})</span>
+                        </strong>
+                        <span style={{ fontWeight: 700 }}>{h.overtimeHours}h</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                        {esDomingo ? (
+                          <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fdf2f8', color: '#9d174d', border: '1px solid #fbcfe8' }}>
+                            📅 Domingo Completo: {h.overtimeHours}h ({String(h.startHour).padStart(2, '0')}:00-{String(h.endHour).padStart(2, '0')}:00)
+                          </span>
+                        ) : (
+                          <>
+                            {earlyHours > 0 && (
+                              <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                                🌅 Matutino: {earlyHours}h ({earlyRange})
+                              </span>
+                            )}
+                            {lateHours > 0 && (
+                              <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa' }}>
+                                🌆 Vespertino: {lateHours}h ({lateRange})
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      <div style={{ color: 'var(--color-gray-700)', marginBottom: '6px' }}>{h.overtimeTasks}</div>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                          style={{ fontSize: '10.5px', fontWeight: 700, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                        >
+                          ✅ Cumplió
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                          style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                        >
+                          ❌ No Cumplió
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenScheduleCorrectionModal(h)}
+                          style={{ fontSize: '10.5px', fontWeight: 700, color: '#374151', background: 'none', border: '1px solid var(--color-gray-400)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                        >
+                          ✏️ Corregir Horario
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        </motion.div>
       )}
 
       {/* Modal para Registrar/Editar Evaluación de Colaborador */}
