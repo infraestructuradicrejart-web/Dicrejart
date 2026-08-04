@@ -8,6 +8,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -140,7 +141,10 @@ const CalidadPage = () => {
   // ============================================
   // ESTADO Y CONTEXTOS
   // ============================================
-  const [activeTab, setActiveTab] = useState('auditoria');
+  // Permite llegar directo a una pestaña específica (ej. desde la alerta de horas extra
+  // pendientes en PendingOvertimeAlert.jsx, que navega con state: { openTab: 'horasExtra' })
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState(() => location.state?.openTab || 'auditoria');
   const [evalAreaId, setEvalAreaId] = useState('corte-laser');
   
   // Auditoría de Juegos (Pestaña 1)

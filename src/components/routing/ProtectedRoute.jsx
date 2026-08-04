@@ -17,6 +17,7 @@ import useInactivityLock from '../../hooks/useInactivityLock';
 import { Logo } from '../ui/Logo';
 import Button from '../ui/Button';
 import LockScreen from '../ui/LockScreen';
+import PendingOvertimeAlert from '../ui/PendingOvertimeAlert';
 
 // Tiempo sin actividad (mouse, teclado, touch, scroll) antes de bloquear la sesión
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
@@ -87,6 +88,7 @@ const ProtectedRoute = ({ children }) => {
     <>
       {children}
       {locked && <LockScreen onUnlock={unlock} />}
+      <PendingOvertimeAlert locked={locked} />
     </>
   );
 };

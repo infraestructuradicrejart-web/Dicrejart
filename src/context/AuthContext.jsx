@@ -112,6 +112,9 @@ export const AuthProvider = ({ children }) => {
   const [authError, setAuthError] = useState('');
   const [users, setUsers] = useState([]);
   const [isSystemEmpty, setIsSystemEmpty] = useState(false);
+  // Contador que solo avanza en un login real con contraseña (ver `login`), nunca en una
+  // restauración silenciosa de sesión — permite distinguir ambos casos a quien lo necesite.
+  const [loginEventId, setLoginEventId] = useState(0);
 
   // ============================================
   // EFECTOS - ESCUCHAS EN TIEMPO REAL
@@ -238,6 +241,12 @@ export const AuthProvider = ({ children }) => {
       // Arranca el conteo de las 12 horas de duración máxima de la sesión (ver
       // SESSION_DURATION_MS) desde este login real, no desde una restauración de sesión.
       localStorage.setItem(SESSION_STARTED_AT_KEY, Date.now().toString());
+
+      // Señal para quien necesite reaccionar a un login real con contraseña (ej. la
+      // alerta de horas extra pendientes de verificar) — a diferencia de `user`, que
+      // también cambia al restaurarse una sesión existente en un refresco de página,
+      // este contador solo avanza aquí.
+      setLoginEventId((n) => n + 1);
 
       return true;
     } catch (error) {
@@ -585,8 +594,9 @@ export const AuthProvider = ({ children }) => {
       updateUser,
       deleteUser,
       resetUserPassword,
+      loginEventId,
     }),
-    [user, loading, authError, isSystemEmpty, login, logout, verifyPassword, verifyAreaAuthorizer, registerFirstAdmin, users, addUser, updateUser, deleteUser, resetUserPassword]
+    [user, loading, authError, isSystemEmpty, login, logout, verifyPassword, verifyAreaAuthorizer, registerFirstAdmin, users, addUser, updateUser, deleteUser, resetUserPassword, loginEventId]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

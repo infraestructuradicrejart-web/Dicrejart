@@ -99,6 +99,27 @@ export const checkOvertimeEligibility = (operario, targetDateStr = getTodayLocal
  * @param {'matutino'|'vespertino'|'domingo'} bloque - Bloque de tiempo extra
  * @returns {{ startHour: number, endHour: number, overtimeHours: number, bloque: string }}
  */
+/**
+ * Indica si una autorización de tiempo extra ya puede verificarse (¿de verdad se
+ * cumplieron las tareas asignadas?) — no tiene sentido preguntarlo antes de que el turno
+ * en cuestión haya ocurrido.
+ * - Fecha anterior a hoy: siempre verificable (el día ya pasó completo).
+ * - Fecha futura: nunca verificable todavía (no se ha trabajado ese tiempo extra).
+ * - Fecha de HOY: verificable solo si ya pasó la hora de salida del bloque (`endHour`).
+ *
+ * @param {{authorizedDate: string, endHour: number}} h - Registro de horas_extra
+ * @param {Date} [now] - Momento a evaluar (por defecto, ahora)
+ * @returns {boolean}
+ */
+export const isOvertimeVerifiable = (h, now = new Date()) => {
+  if (!h?.authorizedDate) return false;
+  const todayStr = getTodayLocalDateStr(now);
+  if (h.authorizedDate < todayStr) return true;
+  if (h.authorizedDate > todayStr) return false;
+  const currentDecimalHour = now.getHours() + now.getMinutes() / 60;
+  return currentDecimalHour >= Number(h.endHour);
+};
+
 export const calculateScheduleFromOvertime = (baseStart = 8, baseEnd = 18, overtimeHours = 0, bloque = 'vespertino') => {
   // Domingo es un turno completo desde cero, no una extensión de una jornada base — se
   // usan las horas de entrada/salida tal cual, sin los topes de 6:00/22:00 que sí aplican
