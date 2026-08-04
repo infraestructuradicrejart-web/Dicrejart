@@ -39,6 +39,13 @@ import { logAudit } from '../utils/auditLog';
 const uploadEvidencePhotos = (logId, files) => uploadEvidencePhotosShared('historial_produccion', logId, files);
 
 /**
+ * Comprime y sube a Firebase Storage la evidencia fotográfica que Producto Terminado
+ * adjunta al recibir la entrega de un área, bajo `recepcion_pt/{gameId}_{areaId}/`.
+ */
+const uploadReceptionEvidencePhotos = (gameId, areaId, files) =>
+  uploadEvidencePhotosShared('recepcion_pt', `${gameId}_${areaId}`, files);
+
+/**
  * Indica si todas las órdenes de trabajo a proveedores externos de un juego
  * (piezas de fibra de vidrio, letreros iluminados, etc.) ya fueron recibidas.
  */
@@ -1114,6 +1121,53 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, proyectos, user]);
 
   /**
+   * Sube y agrega evidencia fotográfica de lo recibido por Producto Terminado en la
+   * entrega de un área (independiente de `receiveAreaDelivery`, para poder adjuntarla
+   * antes o después de confirmar la recepción)
+   */
+  const addReceptionEvidence = useCallback(async (gameId, areaId, files) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    try {
+      const existingPhotos = j.receptionEvidence?.[areaId] || [];
+      const uploaded = await uploadReceptionEvidencePhotos(gameId, areaId, files);
+      const photos = [...existingPhotos, ...uploaded];
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`receptionEvidence.${areaId}`]: photos,
+      });
+      logAudit({ user, module: 'produccion', action: 'Agregó evidencia fotográfica de recepción en PT', details: `${j.name} (${areaId})` });
+      return { ok: true, photos };
+    } catch (error) {
+      console.error('Error al subir evidencia fotográfica de recepción:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
+   * Quita una foto de evidencia de recepción de PT (borra también el archivo en Storage)
+   */
+  const removeReceptionEvidence = useCallback(async (gameId, areaId, photoPath) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    try {
+      const existingPhotos = j.receptionEvidence?.[areaId] || [];
+      const target = existingPhotos.find((p) => p.path === photoPath);
+      const photos = existingPhotos.filter((p) => p.path !== photoPath);
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`receptionEvidence.${areaId}`]: photos,
+      });
+      if (target) await deleteEvidencePhotos([target]);
+      logAudit({ user, module: 'produccion', action: 'Quitó evidencia fotográfica de recepción en PT', details: `${j.name} (${areaId})` });
+      return { ok: true, photos };
+    } catch (error) {
+      console.error('Error al quitar evidencia fotográfica de recepción:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
    * Control de defectos activos por área
    */
   const updateGameQualityDefect = useCallback(async (gameName, areaId, hasDefect) => {
@@ -1555,6 +1609,8 @@ export const ProduccionProvider = ({ children }) => {
       notifyAreaDelivery,
       updateGameChecklist,
       receiveAreaDelivery,
+      addReceptionEvidence,
+      removeReceptionEvidence,
       updateGameQualityDefect,
       updateGameQualityDefectFromHistory,
       addExternalOrder,
@@ -1599,6 +1655,8 @@ export const ProduccionProvider = ({ children }) => {
       notifyAreaDelivery,
       updateGameChecklist,
       receiveAreaDelivery,
+      addReceptionEvidence,
+      removeReceptionEvidence,
       updateGameQualityDefect,
       updateGameQualityDefectFromHistory,
       addExternalOrder,

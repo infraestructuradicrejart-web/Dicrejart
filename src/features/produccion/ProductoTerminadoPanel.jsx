@@ -62,6 +62,8 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     palletizePieces,
     updateGameChecklist,
     receiveAreaDelivery,
+    addReceptionEvidence,
+    removeReceptionEvidence,
     returnDeliveryForReview,
   } = useProduccion();
 
@@ -448,6 +450,11 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
   const [isChecklistEditing, setIsChecklistEditing] = useState(false);
   const [newChecklistItem, setNewChecklistItem] = useState({ text: '', quantity: 1 });
 
+  // Evidencia fotográfica de lo recibido, adjunta desde el modal de Recepción y Checklist
+  const [receptionPhotos, setReceptionPhotos] = useState([]);
+  const [isUploadingReceptionPhotos, setIsUploadingReceptionPhotos] = useState(false);
+  const [receptionPhotoPreview, setReceptionPhotoPreview] = useState(null);
+
   // Control de Modales
   const [isPalletModalOpen, setIsPalletModalOpen] = useState(false);
   const [isShipmentModalOpen, setIsShipmentModalOpen] = useState(false);
@@ -537,6 +544,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
             // Visto bueno adicional de Calidad, independiente de la aprobación previa a
             // notificar — sin esto, PT no puede recibir (ver CalidadPage.jsx).
             receptionApproved: Boolean(j.receptionApproval?.[areaId]),
+            receptionEvidence: j.receptionEvidence?.[areaId] || [],
           });
         }
       });
@@ -1034,6 +1042,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     const existingChecklist = delivery.checklist || [];
     setChecklistItems(existingChecklist.map((item) => ({ ...item, checked: false }))); // Empezar desmarcados para verificar
     setIsChecklistEditing(existingChecklist.length === 0);
+    setReceptionPhotos(delivery.receptionEvidence || []);
   };
 
   const handleCloseReceptionModal = () => {
@@ -1041,6 +1050,38 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     setChecklistItems([]);
     setIsChecklistEditing(false);
     setNewChecklistItem({ text: '', quantity: 1 });
+    setReceptionPhotos([]);
+  };
+
+  /**
+   * Sube evidencia fotográfica de lo recibido directo al juego/área en edición
+   */
+  const handleAddReceptionPhotos = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0 || !selectedDelivery) return;
+    e.target.value = '';
+    setIsUploadingReceptionPhotos(true);
+    const result = await addReceptionEvidence(selectedDelivery.gameId, selectedDelivery.areaId, files);
+    setIsUploadingReceptionPhotos(false);
+    if (result.ok) {
+      setReceptionPhotos(result.photos);
+      toast.success('📷 Evidencia de recepción agregada.');
+    } else {
+      toast.danger(result.error || 'No se pudo subir la evidencia fotográfica.');
+    }
+  };
+
+  /**
+   * Quita una foto de evidencia de recepción ya guardada (borra también en Storage)
+   */
+  const handleRemoveReceptionPhoto = async (photo) => {
+    if (!selectedDelivery) return;
+    const result = await removeReceptionEvidence(selectedDelivery.gameId, selectedDelivery.areaId, photo.path);
+    if (result.ok) {
+      setReceptionPhotos(result.photos);
+    } else {
+      toast.danger(result.error || 'No se pudo quitar la evidencia fotográfica.');
+    }
   };
 
   // Regresar una entrega ya notificada al área de origen (error detectado antes de recibirla)
@@ -2389,6 +2430,83 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                 )}
               </div>
 
+              {/* EVIDENCIA FOTOGRÁFICA DE LO RECIBIDO */}
+              <div className={styles.formGroup} style={{ marginTop: '16px' }}>
+                <label className={styles.label}>Evidencia Fotográfica de lo Recibido</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  multiple
+                  style={{ display: 'none' }}
+                  id="pt-reception-photo-capture"
+                  onChange={handleAddReceptionPhotos}
+                  disabled={isUploadingReceptionPhotos}
+                />
+                <label
+                  htmlFor="pt-reception-photo-capture"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    cursor: isUploadingReceptionPhotos ? 'wait' : 'pointer',
+                    border: '1px dashed var(--color-primary)',
+                    backgroundColor: 'rgba(255, 51, 0, 0.03)',
+                    fontWeight: '600',
+                    color: 'var(--color-primary)',
+                    height: '42px',
+                    borderRadius: '8px',
+                    opacity: isUploadingReceptionPhotos ? 0.6 : 1,
+                  }}
+                >
+                  {isUploadingReceptionPhotos ? '⏳ Subiendo...' : '📷 Agregar Evidencia'}
+                </label>
+
+                {receptionPhotos.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '10px' }}>
+                    {receptionPhotos.map((photo, idx) => (
+                      <div key={photo.path || idx} style={{ position: 'relative' }}>
+                        <img
+                          src={photo.url}
+                          alt={`Evidencia de recepción ${idx + 1}`}
+                          style={{
+                            width: '64px',
+                            height: '64px',
+                            objectFit: 'cover',
+                            borderRadius: '8px',
+                            border: '1px solid var(--color-gray-200)',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => setReceptionPhotoPreview(photo.url)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveReceptionPhoto(photo)}
+                          title="Quitar evidencia"
+                          style={{
+                            position: 'absolute',
+                            top: '-6px',
+                            right: '-6px',
+                            width: '20px',
+                            height: '20px',
+                            borderRadius: '50%',
+                            background: 'var(--color-alert)',
+                            color: '#fff',
+                            border: 'none',
+                            fontSize: '11px',
+                            lineHeight: 1,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className={styles.row} style={{ marginTop: '16px' }}>
                 <Button type="button" variant="secondary" size="md" onClick={handleCloseReceptionModal}>
                   Cancelar
@@ -2407,6 +2525,13 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
           )}
         </div>
       </Modal>
+
+      {/* MODAL: VISTA AMPLIADA DE EVIDENCIA DE RECEPCIÓN */}
+      {receptionPhotoPreview && (
+        <Modal isOpen={Boolean(receptionPhotoPreview)} onClose={() => setReceptionPhotoPreview(null)} title="📷 Evidencia de Recepción">
+          <img src={receptionPhotoPreview} alt="Evidencia de recepción ampliada" style={{ width: '100%', borderRadius: '8px' }} />
+        </Modal>
+      )}
 
       {/* MODAL: SOLICITAR HORAS EXTRAS */}
       {requestOvertimeModal.isOpen && (() => {
