@@ -15,6 +15,7 @@ import Button from '../../components/ui/Button';
 import Select from '../../components/ui/Select';
 import Badge from '../../components/ui/Badge';
 import Modal from '../../components/ui/Modal';
+import Switch from '../../components/ui/Switch';
 import useToast from '../../hooks/useToast';
 import useOperarios from '../../hooks/useOperarios';
 import useCalidad from '../../hooks/useCalidad';
@@ -24,7 +25,32 @@ import { ROLE_TYPES, ROLE_TYPE_LABELS } from '../../data/usersData';
 import useAreas from '../../hooks/useAreas';
 import PageHeader from '../../components/ui/PageHeader';
 import { triggerDailyRHNotification } from '../../services/rhNotificationService';
+import { canAccessSection, isReadOnlySection } from '../../utils/roleAccess';
 import styles from './AdminPage.module.css';
+
+/**
+ * Catálogo de secciones para el panel de Permisos por usuario (🔐 Permisos) — mismo
+ * orden/íconos que la navegación principal (Sidebar.jsx), más 'admin' y 'produccion' que
+ * no viven en esa lista. `hasEdit: true` marca las secciones que ya tienen un concepto
+ * centralizado de solo-lectura vs edición (ver isReadOnlySection en roleAccess.js); las
+ * demás son "todo o nada" (solo un interruptor de Ver).
+ * @constant
+ */
+const PERMISSION_SECTIONS = [
+  { id: 'dashboard', label: 'Dashboard', icon: '📊', hasEdit: false },
+  { id: 'proyectos', label: 'Proyectos', icon: '📋', hasEdit: true },
+  { id: 'juegos', label: 'Juegos', icon: '🎮', hasEdit: true },
+  { id: 'produccion', label: 'Producción', icon: '🏭', hasEdit: true },
+  { id: 'operarios', label: 'Operarios', icon: '👷', hasEdit: false },
+  { id: 'actividades', label: 'Actividades', icon: '📌', hasEdit: true },
+  { id: 'calidad', label: 'Calidad', icon: '✅', hasEdit: true },
+  { id: 'reportes', label: 'Reportes', icon: '📈', hasEdit: false },
+  { id: 'compras', label: 'Compras', icon: '🛒', hasEdit: false },
+  { id: 'chat', label: 'Chat', icon: '💬', hasEdit: false },
+  { id: 'editor-visual', label: 'Editor Visual', icon: '🔗', hasEdit: false },
+  { id: 'diseno', label: 'Diseño', icon: '🎨', hasEdit: false },
+  { id: 'admin', label: 'Administración', icon: '⚙️', hasEdit: false },
+];
 
 /**
  * Formulario vacío por defecto para crear un usuario nuevo
@@ -103,7 +129,7 @@ const AdminPage = () => {
   // ============================================
   const { operarios, horasExtra, blockDuration, updateBlockDuration } = useOperarios();
   const { findOrphanedEvaluaciones, deleteOrphanedEvaluaciones } = useCalidad();
-  const { users, addUser, updateUser, deleteUser, resetUserPassword } = useAuth();
+  const { users, addUser, updateUser, deleteUser, resetUserPassword, updateUserPermission, resetUserPermission } = useAuth();
   const { limits, updateLimit, generalConfig, updateGeneralConfig, auditLog } = useConfig();
   const { areas: dynamicAreas, addArea, updateArea, deleteArea } = useAreas();
   const toast = useToast();
@@ -159,6 +185,13 @@ const AdminPage = () => {
   // Modal para restablecer la contraseña de un usuario
   const [resetPasswordModal, setResetPasswordModal] = useState({ isOpen: false, userId: null, userName: '' });
   const [resetPasswordForm, setResetPasswordForm] = useState({ newPassword: '', confirmPassword: '' });
+
+  // Modal de Permisos por usuario (🔐) — activar/desactivar por sección, sobrescribiendo
+  // lo que el rol del usuario daría por defecto. Guarda solo el id (no una copia del
+  // usuario): el usuario efectivo se resuelve en cada render contra `users` (en vivo vía
+  // onSnapshot), para que los interruptores reflejen el cambio de inmediato en vez de
+  // quedarse con el estado de cuando se abrió el modal.
+  const [permissionsModal, setPermissionsModal] = useState({ isOpen: false, userId: null });
 
   // Modales de Áreas
   const [areaModal, setAreaModal] = useState({ isOpen: false, mode: 'create', editingId: null });
@@ -288,6 +321,40 @@ const AdminPage = () => {
   const handleCloseResetPasswordModal = () => {
     setResetPasswordModal({ isOpen: false, userId: null, userName: '' });
     setResetPasswordForm({ newPassword: '', confirmPassword: '' });
+  };
+
+  const handleOpenPermissionsModal = (usr) => {
+    setPermissionsModal({ isOpen: true, userId: usr.id });
+  };
+
+  const handleClosePermissionsModal = () => {
+    setPermissionsModal({ isOpen: false, userId: null });
+  };
+
+  /**
+   * Prende/apaga el permiso de Ver (o de Editar) de una sección para el usuario del
+   * modal de Permisos abierto. "Editar" implica "Ver": activarlo fuerza Ver a true, y
+   * desactivar Ver también apaga Editar.
+   */
+  const handleTogglePermission = async (userId, section, field, value) => {
+    const hasEdit = PERMISSION_SECTIONS.find((s) => s.id === section)?.hasEdit;
+    if (field === 'edit' && value) {
+      await updateUserPermission(userId, section, 'view', true);
+    }
+    if (field === 'view' && !value && hasEdit) {
+      await updateUserPermission(userId, section, 'edit', false);
+    }
+    const res = await updateUserPermission(userId, section, field, value);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo actualizar el permiso.');
+    }
+  };
+
+  const handleResetPermission = async (userId, section) => {
+    const res = await resetUserPermission(userId, section);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo restablecer el permiso.');
+    }
   };
 
   /**
@@ -712,6 +779,9 @@ const AdminPage = () => {
                             <Button variant="ghost" size="sm" onClick={() => handleOpenResetPasswordModal(usr)}>
                               🔑 Restablecer
                             </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleOpenPermissionsModal(usr)}>
+                              🔐 Permisos
+                            </Button>
                             <Button
                               variant="ghost"
                               size="sm"
@@ -1075,6 +1145,95 @@ const AdminPage = () => {
           </form>
         </Modal>
       )}
+
+      {/* MODAL: PERMISOS POR USUARIO (🔐) */}
+      {permissionsModal.isOpen && users.find((u) => u.id === permissionsModal.userId) && (() => {
+        const usr = users.find((u) => u.id === permissionsModal.userId);
+        const overrides = usr.permissionOverrides || {};
+        return (
+          <Modal
+            isOpen={permissionsModal.isOpen}
+            onClose={handleClosePermissionsModal}
+            title={`🔐 Permisos de ${usr.name}`}
+          >
+            <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 0, marginBottom: 'var(--space-4)' }}>
+              Cada cambio se aplica de inmediato. Sin ningún interruptor tocado, este
+              colaborador se comporta según su rol (<strong>{usr.role}</strong>) — normal.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', maxHeight: '55vh', overflowY: 'auto' }}>
+              {PERMISSION_SECTIONS.map((section) => {
+                const sectionOverride = overrides[section.id];
+                const hasOverride = sectionOverride !== undefined;
+                // Solo informativo (aquí no hay un área específica de por medio): para
+                // Encargado/Supervisor de Área, el acceso real a Producción depende
+                // además del área asignada, ver canAccessSection en roleAccess.js.
+                const roleDefaultView = canAccessSection(usr, section.id);
+                const roleDefaultEdit = !isReadOnlySection(usr, section.id);
+                const effectiveView = sectionOverride?.view ?? roleDefaultView;
+                const effectiveEdit = sectionOverride?.edit ?? roleDefaultEdit;
+
+                return (
+                  <div
+                    key={section.id}
+                    style={{
+                      padding: 'var(--space-3)',
+                      borderRadius: '8px',
+                      border: '1px solid var(--color-gray-200)',
+                      background: hasOverride ? 'rgba(255, 51, 0, 0.03)' : 'transparent',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-3)' }}>
+                      <div>
+                        <strong style={{ fontSize: '14px' }}>{section.icon} {section.label}</strong>
+                        <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--color-gray-500)' }}>
+                          Por defecto (rol {usr.role}): {roleDefaultView ? 'Sí' : 'No'}
+                          {section.hasEdit ? ` ver / ${roleDefaultEdit ? 'Sí' : 'No'} editar` : ''}
+                          {hasOverride && ' — personalizado'}
+                        </p>
+                      </div>
+                      {hasOverride && (
+                        <button
+                          type="button"
+                          onClick={() => handleResetPermission(usr.id, section.id)}
+                          title="Restablecer al valor del rol"
+                          style={{ border: 'none', background: 'none', color: 'var(--color-gray-500)', cursor: 'pointer', fontSize: '16px' }}
+                        >
+                          ↺
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 'var(--space-5)', marginTop: 'var(--space-2)' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '12px', cursor: 'pointer' }}>
+                        <Switch
+                          checked={effectiveView}
+                          onChange={(value) => handleTogglePermission(usr.id, section.id, 'view', value)}
+                          ariaLabel={`Ver ${section.label}`}
+                        />
+                        Ver
+                      </label>
+                      {section.hasEdit && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '12px', cursor: 'pointer' }}>
+                          <Switch
+                            checked={effectiveEdit}
+                            onChange={(value) => handleTogglePermission(usr.id, section.id, 'edit', value)}
+                            ariaLabel={`Editar ${section.label}`}
+                          />
+                          Editar
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className={styles.formActions} style={{ marginTop: 'var(--space-4)' }}>
+              <Button type="button" variant="secondary" size="md" onClick={handleClosePermissionsModal}>
+                Cerrar
+              </Button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* MODAL: CONFIRMACIÓN DE ELIMINACIÓN DE USUARIO */}
       {deleteConfirmation.isOpen && (

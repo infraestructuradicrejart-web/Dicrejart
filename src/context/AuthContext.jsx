@@ -24,16 +24,17 @@ import {
   getAuth,
   connectAuthEmulator
 } from 'firebase/auth';
-import { 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
   deleteDoc,
+  deleteField,
   collection,
   query,
-  limit, 
-  onSnapshot 
+  limit,
+  onSnapshot
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions, useEmulator } from '../config/firebase';
@@ -558,6 +559,56 @@ export const AuthProvider = ({ children }) => {
   }, [user, users]);
 
   /**
+   * Prende/apaga un permiso puntual (ver/editar una sección) para un usuario —
+   * sobrescribe lo que su rol daría por defecto (ver canAccessSection/isReadOnlySection
+   * en roleAccess.js). Mismo patrón de escritura de un solo campo con merge que
+   * updateGeneralConfig en ConfigContext.jsx.
+   */
+  const updateUserPermission = useCallback(async (userId, section, field, value) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        [`permissionOverrides.${section}.${field}`]: value,
+      });
+      const target = users.find((u) => u.id === userId);
+      logAudit({
+        user,
+        module: 'admin',
+        action: 'Cambió un permiso de usuario',
+        details: `${target ? target.name : userId}: ${section}.${field} = ${value}`,
+      });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al actualizar permiso de usuario:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [user, users]);
+
+  /**
+   * Quita el override de una sección completa (vuelve a heredar el valor del rol,
+   * en vez de dejarlo fijo en true/false)
+   */
+  const resetUserPermission = useCallback(async (userId, section) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        [`permissionOverrides.${section}`]: deleteField(),
+      });
+      const target = users.find((u) => u.id === userId);
+      logAudit({
+        user,
+        module: 'admin',
+        action: 'Restableció un permiso de usuario al valor de su rol',
+        details: `${target ? target.name : userId}: ${section}`,
+      });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al restablecer permiso de usuario:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [user, users]);
+
+  /**
    * Restablece la contraseña de otro usuario mediante la Cloud Function
    * `resetUserPassword` (requiere el SDK de administrador, no se puede hacer desde el
    * navegador). La función verifica de nuevo, del lado del servidor, que quien llama
@@ -594,9 +645,11 @@ export const AuthProvider = ({ children }) => {
       updateUser,
       deleteUser,
       resetUserPassword,
+      updateUserPermission,
+      resetUserPermission,
       loginEventId,
     }),
-    [user, loading, authError, isSystemEmpty, login, logout, verifyPassword, verifyAreaAuthorizer, registerFirstAdmin, users, addUser, updateUser, deleteUser, resetUserPassword, loginEventId]
+    [user, loading, authError, isSystemEmpty, login, logout, verifyPassword, verifyAreaAuthorizer, registerFirstAdmin, users, addUser, updateUser, deleteUser, resetUserPassword, updateUserPermission, resetUserPermission, loginEventId]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

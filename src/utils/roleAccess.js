@@ -59,6 +59,14 @@ export const getHomeRoute = (user) => {
 export const canAccessSection = (user, section, areaId) => {
   if (!user) return false;
 
+  // Override explícito por usuario (Admin → 🔐 Permisos, ver AdminPage.jsx) — reemplaza
+  // por completo la lógica de rol/área de abajo para esta sección, incluida la
+  // restricción por areaId/areaIds de Encargado/Supervisor en Producción. Sin overrides
+  // (el caso normal, `permissionOverrides` vacío o inexistente) el comportamiento es
+  // exactamente el de siempre, 100% derivado del rol.
+  const accessOverride = user.permissionOverrides?.[section]?.view;
+  if (accessOverride !== undefined) return accessOverride;
+
   // El chat interno (global + privado 1 a 1) es visible para cualquier rol, sin excepción
   if (section === 'chat') return true;
 
@@ -123,6 +131,10 @@ export const canAccessSection = (user, section, areaId) => {
  */
 export const isReadOnlySection = (user, section, areaId) => {
   if (!user) return true;
+
+  // Override explícito por usuario — mismo mecanismo que canAccessSection arriba.
+  const editOverride = user.permissionOverrides?.[section]?.edit;
+  if (editOverride !== undefined) return !editOverride;
 
   if (user.roleType === ROLE_TYPES.SUPERVISOR_AREA) {
     // Producto Terminado se opera de verdad (crear tarimas, programar y despachar
