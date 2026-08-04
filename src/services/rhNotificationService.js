@@ -6,7 +6,7 @@
  * @author Dicrejart Dev Team
  */
 
-import { doc, setDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, addDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getTodayLocalDateStr } from '../utils/dateUtils';
 import { getOvertimeBlocks } from '../utils/overtimeUtils';
@@ -308,14 +308,40 @@ export const triggerDailyRHNotification = async ({
 }) => {
   const todayStr = getTodayLocalDateStr();
 
-  // Si no está forzado, verificar que notificarFaltasRH esté activo y no se haya enviado hoy
+  // Si no está forzado, verificar que notificarFaltasRH esté activo y reclamar el envío
+  // de HOY de forma atómica. Cada sesión abierta (cada dispositivo/pestaña con la app
+  // abierta) corre este mismo chequeo por su cuenta cada minuto, y además el useEffect que
+  // lo dispara en OperariosContext.jsx se vuelve a ejecutar cada vez que cambian los
+  // operarios/horasExtra (varias veces por minuto en horas pico) — sin una transacción, dos
+  // (o tres) de esas evaluaciones casi simultáneas leían `lastRHNotificationDate` ANTES de
+  // que la escritura de la primera terminara de propagarse por el listener en tiempo real,
+  // así que todas pasaban el chequeo y cada una creaba su propio documento en
+  // `notificaciones_rh` — y cada documento nuevo dispara un correo real por SMTP (ver
+  // functions/index.js → onNotificacionRHCreated). La transacción hace que solo la primera
+  // en llegar "gane" el día; el resto ve el candado ya tomado y se retira sin enviar nada.
   if (!force) {
     if (generalConfig.notificarFaltasRH === false) {
       return { ok: false, reason: 'Notificaciones a RH desactivadas en la configuración.' };
     }
 
-    if (generalConfig.lastRHNotificationDate === todayStr) {
-      return { ok: false, reason: 'El reporte de RH ya fue enviado el día de hoy.' };
+    if (!db) return { ok: false, reason: 'Firestore no está inicializado.' };
+
+    try {
+      await runTransaction(db, async (tx) => {
+        const configRef = doc(db, 'config', 'general');
+        const snap = await tx.get(configRef);
+        const currentLastDate = snap.exists() ? snap.data().lastRHNotificationDate : null;
+        if (currentLastDate === todayStr) {
+          throw new Error('ALREADY_SENT');
+        }
+        tx.set(configRef, { lastRHNotificationDate: todayStr }, { merge: true });
+      });
+    } catch (error) {
+      if (error.message === 'ALREADY_SENT') {
+        return { ok: false, reason: 'El reporte de RH ya fue enviado el día de hoy.' };
+      }
+      console.error('Error al reclamar el envío diario a RH:', error);
+      return { ok: false, error: error.message };
     }
   }
 

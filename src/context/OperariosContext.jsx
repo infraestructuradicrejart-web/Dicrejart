@@ -7,7 +7,7 @@
  * @requires firebase/firestore
  */
 
-import React, { createContext, useState, useEffect, useCallback, useMemo, useContext } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useMemo, useContext, useRef } from 'react';
 import PropTypes from 'prop-types';
 import {
   collection,
@@ -20,7 +20,8 @@ import {
   query,
   where,
   orderBy,
-  limit
+  limit,
+  runTransaction
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
@@ -61,49 +62,76 @@ const getDefaultEstado = () => ({
 });
 
 /**
- * Revisa si el estado de disponibilidad de un colaborador ha expirado y debe restablecerse a 'activo' (En Planta).
- * - Faltas (falta): Se restablecen automáticamente al día siguiente (cuando fechaFalta < fechaHoy).
- * - Ausencias por tiempo definido (con campo `hasta`): Se restablecen cuando la fecha actual supera el `hasta` (hasta < fechaHoy).
+ * Determina si un estado de disponibilidad ya expiró y debe restablecerse a 'activo'.
+ * - Faltas (falta): expiran al día siguiente (cuando fechaFalta < fechaHoy).
+ * - Ausencias por tiempo definido (con campo `hasta`): expiran cuando la fecha actual
+ *   supera el `hasta` (hasta < fechaHoy).
+ * @returns {string|null} La nota de restablecimiento si expiró, o null si sigue vigente
  */
-const evaluateAndResetExpiredEstado = async (op) => {
-  if (!db || !op || !op.estado || op.estado.tipo === 'activo') return;
-
-  const todayStr = getTodayLocalDateStr();
-  const { tipo, desde, hasta, registradoAt } = op.estado;
-
-  let shouldReset = false;
-  let resetNotes = '';
+const getExpiredEstadoResetNote = (estado, todayStr) => {
+  if (!estado || estado.tipo === 'activo') return null;
+  const { tipo, desde, hasta, registradoAt } = estado;
 
   if (tipo === 'falta') {
     const fechaFalta = desde || (registradoAt ? registradoAt.split('T')[0] : null);
     if (fechaFalta && fechaFalta < todayStr) {
-      shouldReset = true;
-      resetNotes = 'Restablecido automáticamente a En Planta (Falta diaria concluyó)';
+      return 'Restablecido automáticamente a En Planta (Falta diaria concluyó)';
     }
-  } else if (hasta) {
-    if (hasta < todayStr) {
-      shouldReset = true;
-      resetNotes = `Restablecido automáticamente a En Planta (Venció periodo de ausencia el ${hasta})`;
-    }
+    return null;
   }
+  if (hasta && hasta < todayStr) {
+    return `Restablecido automáticamente a En Planta (Venció periodo de ausencia el ${hasta})`;
+  }
+  return null;
+};
 
-  if (shouldReset) {
-    const defaultEstado = {
-      tipo: 'activo',
-      desde: null,
-      hasta: null,
-      notas: resetNotes,
-      registradoPor: 'Sistema (Restablecimiento Automático)',
-      registradoAt: new Date().toISOString(),
-    };
-    try {
-      await updateDoc(doc(db, 'operarios', op.id), {
+/**
+ * Revisa si el estado de disponibilidad de un colaborador ya expiró y, de ser así, lo
+ * restablece a 'activo' (En Planta) — dentro de una transacción que relee el documento
+ * ANTES de decidir.
+ *
+ * Por qué la transacción: esta función corre para CADA operario en CADA snapshot del
+ * listener de `operarios` (onSnapshot sobre la colección completa) — es decir, cualquier
+ * cambio a CUALQUIER colaborador (autorizar una jornada, aprobar horas extra, etc.) la
+ * vuelve a disparar para TODOS. Con un simple updateDoc basado en el `op` recibido por
+ * parámetro (que puede estar obsoleto), dos evaluaciones casi simultáneas del mismo
+ * colaborador podían pisarse: si un supervisor registraba una falta NUEVA justo cuando
+ * esta función todavía traía en memoria el estado ANTERIOR (ya vencido) de ese mismo
+ * colaborador, su updateDoc llegaba después y borraba la falta recién registrada —
+ * dejándola "sin registrar" pocos segundos después de capturada. Al releer el documento
+ * dentro de la transacción se evalúa siempre el estado más reciente, así que una falta
+ * nueva nunca puede ser pisada por un restablecimiento basado en datos viejos.
+ */
+const evaluateAndResetExpiredEstado = async (op) => {
+  if (!db || !op || !op.estado || op.estado.tipo === 'activo') return;
+  // Chequeo barato con los datos ya en memoria antes de abrir una transacción — evita
+  // pagar una lectura de red para el caso normal (colaborador activo o ausencia vigente).
+  if (!getExpiredEstadoResetNote(op.estado, getTodayLocalDateStr())) return;
+
+  const opRef = doc(db, 'operarios', op.id);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(opRef);
+      if (!snap.exists()) return;
+      const current = snap.data();
+      const resetNotes = getExpiredEstadoResetNote(current.estado, getTodayLocalDateStr());
+      if (!resetNotes) return;
+
+      const defaultEstado = {
+        tipo: 'activo',
+        desde: null,
+        hasta: null,
+        notas: resetNotes,
+        registradoPor: 'Sistema (Restablecimiento Automático)',
+        registradoAt: new Date().toISOString(),
+      };
+      tx.update(opRef, {
         estado: defaultEstado,
-        estadoHistorial: [...(op.estadoHistorial || []), defaultEstado],
+        estadoHistorial: [...(current.estadoHistorial || []), defaultEstado],
       });
-    } catch (err) {
-      console.error(`Error al restablecer automáticamente el estado de ${op.id}:`, err);
-    }
+    });
+  } catch (err) {
+    console.error(`Error al restablecer automáticamente el estado de ${op.id}:`, err);
   }
 };
 
@@ -130,26 +158,46 @@ export const OperariosProvider = ({ children }) => {
   // ============================================
   // PROGRAMACIÓN AUTOMÁTICA DE NOTIFICACIÓN A RH (10:00 AM)
   // ============================================
+  // Refs en vez de leer operarios/horasExtra/generalConfig directo del closure: esos
+  // arrays/objeto cambian de referencia con CUALQUIER escritura en tiempo real a esas
+  // colecciones (muy frecuente en horas pico), y antes este efecto los tenía como
+  // dependencias — se destruía y volvía a crear el intervalo (disparando además un chequeo
+  // INMEDIATO extra, ver línea de abajo) decenas de veces por minuto. Con refs, el efecto
+  // se monta una sola vez y el setInterval de 1 min siempre lee el valor más reciente.
+  const operariosRef = useRef(operarios);
+  const horasExtraRef = useRef(horasExtra);
+  const generalConfigRef = useRef(generalConfig);
+  useEffect(() => { operariosRef.current = operarios; }, [operarios]);
+  useEffect(() => { horasExtraRef.current = horasExtra; }, [horasExtra]);
+  useEffect(() => { generalConfigRef.current = generalConfig; }, [generalConfig]);
+
   useEffect(() => {
-    if (!db || !operarios.length || !generalConfig) return;
+    if (!db) return;
 
     const checkAndTriggerRHNotification = async () => {
+      const currentOperarios = operariosRef.current;
+      const currentGeneralConfig = generalConfigRef.current;
+      if (!currentOperarios.length || !currentGeneralConfig) return;
+
       const todayStr = getTodayLocalDateStr();
-      if (generalConfig.notificarFaltasRH === false) return;
-      if (generalConfig.lastRHNotificationDate === todayStr) return;
+      if (currentGeneralConfig.notificarFaltasRH === false) return;
+      if (currentGeneralConfig.lastRHNotificationDate === todayStr) return;
 
       const now = new Date();
       const currentHours = now.getHours();
       const currentMinutes = now.getMinutes();
 
-      const [targetHours, targetMinutes] = (generalConfig.horaNotificacionRH || '10:00').split(':').map(Number);
+      const [targetHours, targetMinutes] = (currentGeneralConfig.horaNotificacionRH || '10:00').split(':').map(Number);
       const isPastTargetTime = currentHours > targetHours || (currentHours === targetHours && currentMinutes >= targetMinutes);
 
       if (isPastTargetTime) {
+        // El reclamo atómico del día (transacción, ver triggerDailyRHNotification) es lo
+        // que en verdad evita el envío duplicado — esto solo reduce cuántas veces se
+        // intenta de más por sesión, no es la protección principal.
         const result = await triggerDailyRHNotification({
-          operarios,
-          horasExtra,
-          generalConfig,
+          operarios: currentOperarios,
+          horasExtra: horasExtraRef.current,
+          generalConfig: currentGeneralConfig,
           updateGeneralConfig,
           force: false,
         });
@@ -164,7 +212,7 @@ export const OperariosProvider = ({ children }) => {
     const intervalId = setInterval(checkAndTriggerRHNotification, 60000);
 
     return () => clearInterval(intervalId);
-  }, [operarios, horasExtra, generalConfig, updateGeneralConfig]);
+  }, [updateGeneralConfig]);
 
   // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE

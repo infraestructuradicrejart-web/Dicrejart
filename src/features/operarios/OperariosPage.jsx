@@ -399,12 +399,20 @@ const OperariosPage = () => {
   // Cambio de estado / disponibilidad del colaborador
   const handleOpenEstadoModal = (op) => {
     const todayStr = getTodayLocalDateStr();
+    // 'falta' es un marcador de un solo día: si la falta que se muestra es de un día
+    // ANTERIOR (pendiente de que el sistema la restablezca sola a "En Planta"), no debe
+    // reusarse su fecha como default — si el usuario no la cambia a mano, una falta NUEVA
+    // quedaría guardada con `desde` en el pasado, y el restablecimiento automático la
+    // vería "ya vencida" y la borraría casi de inmediato (ver evaluateAndResetExpiredEstado
+    // en OperariosContext.jsx). Se trata como si el colaborador ya estuviera activo, que es
+    // lo que en realidad es en este momento.
+    const estadoVencido = op.estado?.tipo === 'falta' && op.estado?.desde && op.estado.desde < todayStr;
     setEstadoModal({
       isOpen: true,
       operario: op,
-      tipo: op.estado?.tipo || 'activo',
-      desde: op.estado?.desde || todayStr,
-      hasta: op.estado?.hasta || '',
+      tipo: estadoVencido ? 'activo' : (op.estado?.tipo || 'activo'),
+      desde: estadoVencido ? todayStr : (op.estado?.desde || todayStr),
+      hasta: estadoVencido ? '' : (op.estado?.hasta || ''),
       notas: '',
     });
   };
