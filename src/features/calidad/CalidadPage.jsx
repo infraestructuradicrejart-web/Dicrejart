@@ -445,8 +445,27 @@ const CalidadPage = () => {
     ).length,
   }), [allReviewPairs]);
 
+  // La cola cubre dos tipos de pendiente: (a) el checklist de calidad aún sin aprobar, o
+  // (b) el checklist ya aprobado pero el área ya notificó su entrega a PT y todavía falta
+  // el visto bueno de recepción. Sin el caso (b), en cuanto se aprobaba el checklist la
+  // entrega desaparecía de esta lista — y como reviewAreaId/reviewGameName (los Select de
+  // abajo) son estado local que se resetea a su valor por defecto al salir y volver a esta
+  // página, no quedaba ninguna forma de volver a encontrarla desde la UI (parecía que el
+  // registro se había borrado, aunque seguía intacto en Firestore).
   const reviewQueue = useMemo(
-    () => allReviewPairs.filter((p) => p.isReady && (!p.review || p.review.status !== 'aprobado')),
+    () => allReviewPairs
+      .filter((p) => {
+        const needsChecklistApproval = p.isReady && (!p.review || p.review.status !== 'aprobado');
+        const deliveryStatus = p.game.areaDeliveryStatus?.[p.areaId];
+        const needsReceptionApproval =
+          (deliveryStatus === 'notificado_pt' || deliveryStatus === 'recibido_pt') &&
+          !p.game.receptionApproval?.[p.areaId];
+        return needsChecklistApproval || needsReceptionApproval;
+      })
+      .map((p) => ({
+        ...p,
+        pendingReason: (p.isReady && (!p.review || p.review.status !== 'aprobado')) ? 'checklist' : 'recepcion',
+      })),
     [allReviewPairs]
   );
 
@@ -1513,8 +1532,8 @@ const CalidadPage = () => {
                           <strong className={styles.insGame}>{pair.game.name}</strong>
                           <span className={styles.insArea}>{areaInfo?.name || pair.areaId}</span>
                         </div>
-                        <Badge variant={pair.review?.status === 'rechazado' ? 'danger' : 'warning'}>
-                          {pair.review?.status === 'rechazado' ? 'RECHAZADO' : 'SIN REVISAR'}
+                        <Badge variant={pair.pendingReason === 'recepcion' ? 'primary' : pair.review?.status === 'rechazado' ? 'danger' : 'warning'}>
+                          {pair.pendingReason === 'recepcion' ? 'FALTA APROBAR RECEPCIÓN' : pair.review?.status === 'rechazado' ? 'RECHAZADO' : 'SIN REVISAR'}
                         </Badge>
                       </div>
                       <p className={styles.insNotes}>Proyecto: {pair.game.projectName}</p>
