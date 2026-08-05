@@ -316,6 +316,92 @@ exports.onRequisicionUpdated = onDocumentUpdated(
 );
 
 // ============================================================
+// SOLICITUDES DE MATERIALES A ALMACÉN (interno, sin Compras de por medio)
+// ============================================================
+/**
+ * Al crearse una solicitud de materiales (siempre en 'pendiente'), avisa por correo al
+ * Encargado de Almacén — mismo patrón de búsqueda de destinatario que ya usa la
+ * notificación de "comprada" en el flujo de Compras más arriba.
+ */
+exports.onSolicitudMaterialCreated = onDocumentCreated(
+  { document: 'solicitudes_materiales/{id}', secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    const sol = event.data?.data();
+    if (!sol || sol.status !== 'pendiente') return;
+
+    const encargadoSnap = await admin.firestore().collection('users')
+      .where('roleType', '==', 'encargado-area')
+      .where('areaId', '==', 'almacen')
+      .get();
+    const recipients = encargadoSnap.docs.map((d) => d.data().email).filter(Boolean);
+    if (recipients.length === 0) return;
+
+    const appUrl = APP_BASE_URL.value();
+    await Promise.all(
+      recipients.map((email) =>
+        sendMail({
+          to: email,
+          subject: `[Dicrejart] Nueva solicitud de materiales de ${sol.areaId}${sol.priority === 'urgente' ? ' 🔴 URGENTE' : ''}`,
+          html: emailShell(`
+            <h2 style="margin-top:0;">Solicitud de materiales — ${sol.areaId}</h2>
+            <p><strong>Solicitó:</strong> ${sol.requestedBy} &nbsp; <strong>Prioridad:</strong> ${sol.priority === 'urgente' ? '🔴 Urgente' : 'Normal'}</p>
+            ${sol.gameName ? `<p><strong>Juego:</strong> ${sol.gameName}</p>` : ''}
+            <p><strong>Justificación:</strong> ${sol.justification}</p>
+            <p><strong>Materiales:</strong></p>
+            ${itemsList(sol.items)}
+            <div style="margin-top:20px;">${button(`${appUrl}/produccion/almacen`, 'Ir a Solicitudes de Materiales', '#0099cc')}</div>
+          `),
+        })
+      )
+    );
+  }
+);
+
+/**
+ * Al cambiar de estatus una solicitud de materiales: avisa al solicitante cuando Almacén
+ * ya la dejó lista para recoger, o cuando la rechazó (con motivo).
+ */
+exports.onSolicitudMaterialUpdated = onDocumentUpdated(
+  { document: 'solicitudes_materiales/{id}', secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS] },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after || before.status === after.status) return;
+    if (!after.requestedByUserId) return;
+
+    const solicitanteSnap = await admin.firestore().collection('users').doc(after.requestedByUserId).get();
+    if (!solicitanteSnap.exists || !solicitanteSnap.data().email) return;
+    const appUrl = APP_BASE_URL.value();
+
+    if (after.status === 'lista') {
+      await sendMail({
+        to: solicitanteSnap.data().email,
+        subject: `[Dicrejart] Tus materiales ya están listos para recoger en Almacén`,
+        html: emailShell(`
+          <h2 style="margin-top:0;">Materiales listos para recoger</h2>
+          <p>Almacén ya preparó lo que solicitaste${after.reviewedBy ? ` (${after.reviewedBy})` : ''}. Pasa a recogerlo y confirma la recepción en la app.</p>
+          ${itemsList(after.items)}
+          <div style="margin-top:20px;">${button(`${appUrl}/produccion/${after.areaId}`, 'Ir a Mis Solicitudes', '#16a34a')}</div>
+        `),
+      });
+      return;
+    }
+
+    if (after.status === 'rechazada') {
+      await sendMail({
+        to: solicitanteSnap.data().email,
+        subject: `[Dicrejart] Tu solicitud de materiales fue rechazada`,
+        html: emailShell(`
+          <h2 style="margin-top:0;">Solicitud de materiales rechazada</h2>
+          <p><strong>Motivo:</strong> ${after.reviewNotes || 'Sin especificar.'}</p>
+          <div style="margin-top:20px;">${button(`${appUrl}/produccion/${after.areaId}`, 'Ir a Mis Solicitudes', '#ff3300')}</div>
+        `),
+      });
+    }
+  }
+);
+
+// ============================================================
 // ALERTAS DE CALIDAD AUTOMÁTICAS
 // ============================================================
 /**

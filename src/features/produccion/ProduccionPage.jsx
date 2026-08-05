@@ -127,7 +127,8 @@ const ProduccionPage = () => {
   const {
     solicitudesMateriales,
     solicitarMateriales,
-    marcarMaterialesEntregados,
+    marcarMaterialesListos,
+    confirmarRecepcionMateriales,
     rechazarSolicitudMateriales,
     cancelarSolicitudMateriales,
   } = useMateriales();
@@ -762,17 +763,23 @@ const ProduccionPage = () => {
   const operadoresDisponibles = operarios.filter((op) => op.currentArea === areaId);
 
   // Solicitudes de materiales a Almacén: las de ESTA área (para cualquier área) y, si
-  // esta vista es la de Almacén, las de TODAS las áreas (pendientes de atender + historial)
+  // esta vista es la de Almacén, las de TODAS las áreas — separadas en "pendientes de
+  // atender" (necesitan que Almacén las junte o rechace) vs "ya listas, esperando que
+  // el área las recoja" (Almacén ya hizo su parte) vs historial (recibida/rechazada/cancelada)
   const misSolicitudesMateriales = useMemo(
     () => solicitudesMateriales.filter((s) => s.areaId === areaId),
     [solicitudesMateriales, areaId]
   );
-  const solicitudesMaterialesRecibidas = useMemo(
+  const solicitudesMaterialesPendientes = useMemo(
     () => (areaId === 'almacen' ? solicitudesMateriales.filter((s) => s.status === 'pendiente') : []),
     [solicitudesMateriales, areaId]
   );
+  const solicitudesMaterialesListas = useMemo(
+    () => (areaId === 'almacen' ? solicitudesMateriales.filter((s) => s.status === 'lista') : []),
+    [solicitudesMateriales, areaId]
+  );
   const solicitudesMaterialesResueltas = useMemo(
-    () => (areaId === 'almacen' ? solicitudesMateriales.filter((s) => s.status !== 'pendiente') : []),
+    () => (areaId === 'almacen' ? solicitudesMateriales.filter((s) => s.status === 'recibida' || s.status === 'rechazada' || s.status === 'cancelada') : []),
     [solicitudesMateriales, areaId]
   );
 
@@ -888,13 +895,22 @@ const ProduccionPage = () => {
     toast.warning('Solicitud de materiales cancelada.');
   };
 
-  const handleMarkMaterialDelivered = async (solicitudId) => {
-    const res = await marcarMaterialesEntregados(solicitudId);
+  const handleMarkMaterialReady = async (solicitudId) => {
+    const res = await marcarMaterialesListos(solicitudId);
     if (!res.ok) {
-      toast.danger(res.error || 'No se pudo marcar como entregado.');
+      toast.danger(res.error || 'No se pudo marcar como listo.');
       return;
     }
-    toast.success('✅ Materiales marcados como entregados.');
+    toast.success('✅ Materiales marcados como listos para recoger.');
+  };
+
+  const handleConfirmMaterialReceipt = async (solicitudId) => {
+    const res = await confirmarRecepcionMateriales(solicitudId);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo confirmar la recepción.');
+      return;
+    }
+    toast.success('📥 Recepción de materiales confirmada.');
   };
 
   const handleOpenMaterialRejectModal = (solicitudId) => {
@@ -918,7 +934,8 @@ const ProduccionPage = () => {
 
   const MATERIAL_STATUS_BADGE = {
     pendiente: { variant: 'warning', label: 'Pendiente' },
-    entregada: { variant: 'success', label: 'Entregada' },
+    lista: { variant: 'primary', label: 'Lista para Recoger' },
+    recibida: { variant: 'success', label: 'Recibida' },
     rechazada: { variant: 'danger', label: 'Rechazada' },
     cancelada: { variant: 'neutral', label: 'Cancelada' },
   };
@@ -1269,14 +1286,14 @@ const ProduccionPage = () => {
             canFulfillMaterialRequests() && (
               <motion.div variants={itemVariants} style={{ marginBottom: 'var(--space-4)' }}>
                 <Card variant="default">
-                  <h3 className={styles.sectionTitle}>📦 Solicitudes de Materiales Recibidas ({solicitudesMaterialesRecibidas.length})</h3>
-                  {solicitudesMaterialesRecibidas.length === 0 ? (
+                  <h3 className={styles.sectionTitle}>📦 Solicitudes de Materiales Pendientes ({solicitudesMaterialesPendientes.length})</h3>
+                  {solicitudesMaterialesPendientes.length === 0 ? (
                     <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '16px' }}>
                       No hay solicitudes de materiales pendientes de otras áreas.
                     </p>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
-                      {solicitudesMaterialesRecibidas.map((s) => (
+                      {solicitudesMaterialesPendientes.map((s) => (
                         <div key={s.id} style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(255, 153, 51, 0.08)', border: '1px solid rgba(255, 153, 51, 0.25)', fontSize: '13px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
                             <strong>{AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
@@ -1295,8 +1312,8 @@ const ProduccionPage = () => {
                             Solicitó {s.requestedBy} el {new Date(s.createdAt).toLocaleString('es-MX')}
                           </div>
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <Button type="button" variant="primary" size="sm" onClick={() => handleMarkMaterialDelivered(s.id)}>
-                              ✅ Marcar Entregado
+                            <Button type="button" variant="primary" size="sm" onClick={() => handleMarkMaterialReady(s.id)}>
+                              ✅ Marcar Listo para Recoger
                             </Button>
                             <Button type="button" variant="secondary" size="sm" onClick={() => handleOpenMaterialRejectModal(s.id)}>
                               ❌ Rechazar
@@ -1304,6 +1321,22 @@ const ProduccionPage = () => {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {solicitudesMaterialesListas.length > 0 && (
+                    <div style={{ marginTop: '16px' }}>
+                      <h4 style={{ fontSize: '13px', color: 'var(--color-secondary)', marginBottom: '8px' }}>
+                        🚚 Listas, Esperando que las Recojan ({solicitudesMaterialesListas.length})
+                      </h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {solicitudesMaterialesListas.map((s) => (
+                          <div key={s.id} style={{ padding: '8px 10px', borderRadius: '6px', background: 'rgba(0, 153, 204, 0.06)', border: '1px solid rgba(0, 153, 204, 0.2)', fontSize: '12px' }}>
+                            <strong>{AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
+                            <span style={{ color: 'var(--color-gray-600)' }}> — {s.items.map((it) => it.name).join(', ')}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -1368,6 +1401,13 @@ const ProduccionPage = () => {
                             >
                               Cancelar solicitud
                             </button>
+                          )}
+                          {s.status === 'lista' && (
+                            <div style={{ marginTop: '6px' }}>
+                              <Button type="button" variant="primary" size="sm" onClick={() => handleConfirmMaterialReceipt(s.id)}>
+                                📥 Confirmar Recepción
+                              </Button>
+                            </div>
                           )}
                         </div>
                       ))}

@@ -2,10 +2,13 @@
  * @file MaterialesContext.jsx
  * @description Contexto de solicitudes de materiales que un área de producción le pide
  * a Almacén (interno, sin proveedores externos ni pago de por medio — para eso existe
- * Compras). Flujo simple de un solo paso, igual que las solicitudes de horas extra en
- * OperariosContext.jsx: 'pendiente' -> ('entregada' | 'rechazada' | 'cancelada').
- * Por ahora no verifica existencias reales de Almacén (Dicrejart no tiene inventario
- * propio todavía) — es solo captura de la solicitud y seguimiento de su estatus.
+ * Compras). Flujo de dos pasos de entrega (para que quede claro quién hizo qué y cuándo):
+ * 'pendiente' -> ('lista' | 'rechazada' | 'cancelada'), y 'lista' -> 'recibida' cuando el
+ * área confirma que ya recogió el material. Por ahora no verifica existencias reales de
+ * Almacén (Dicrejart no tiene inventario propio todavía) — es solo captura de la
+ * solicitud y seguimiento de su estatus. Las notificaciones por correo (nueva solicitud a
+ * Almacén, lista para recoger o rechazada al solicitante) viven en functions/index.js
+ * (onSolicitudMaterialCreated/onSolicitudMaterialUpdated).
  * @author Dicrejart Dev Team
  * @requires react
  * @requires firebase/firestore
@@ -117,22 +120,43 @@ export const MaterialesProvider = ({ children }) => {
   }, [user]);
 
   /**
-   * Almacén confirma que ya entregó los materiales de una solicitud.
+   * Almacén marca que ya juntó los materiales y están listos para que el área los
+   * recoja — todavía no es la confirmación final, esa la da el área con
+   * confirmarRecepcionMateriales cuando de verdad los tenga en sus manos.
    */
-  const marcarMaterialesEntregados = useCallback(async (solicitudId, notes = '') => {
+  const marcarMaterialesListos = useCallback(async (solicitudId, notes = '') => {
     if (!db) return { ok: false, error: 'Firestore no inicializado' };
     try {
       await updateDoc(doc(db, 'solicitudes_materiales', solicitudId), {
-        status: 'entregada',
+        status: 'lista',
         reviewedBy: user?.name || 'Almacén',
         reviewedByRole: user?.roleType || null,
         reviewedAt: new Date().toISOString(),
         reviewNotes: notes || '',
       });
-      logAudit({ user, module: 'produccion', action: 'Marcó materiales como entregados', details: solicitudId });
+      logAudit({ user, module: 'produccion', action: 'Marcó materiales como listos para recoger', details: solicitudId });
       return { ok: true };
     } catch (error) {
-      console.error('Error al marcar materiales como entregados:', error);
+      console.error('Error al marcar materiales como listos:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [user]);
+
+  /**
+   * El área solicitante confirma que ya recogió/recibió el material — cierra el ciclo.
+   */
+  const confirmarRecepcionMateriales = useCallback(async (solicitudId) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    try {
+      await updateDoc(doc(db, 'solicitudes_materiales', solicitudId), {
+        status: 'recibida',
+        receivedBy: user?.name || 'Usuario',
+        receivedAt: new Date().toISOString(),
+      });
+      logAudit({ user, module: 'produccion', action: 'Confirmó recepción de materiales', details: solicitudId });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al confirmar recepción de materiales:', error);
       return { ok: false, error: error.message };
     }
   }, [user]);
@@ -183,11 +207,12 @@ export const MaterialesProvider = ({ children }) => {
     () => ({
       solicitudesMateriales,
       solicitarMateriales,
-      marcarMaterialesEntregados,
+      marcarMaterialesListos,
+      confirmarRecepcionMateriales,
       rechazarSolicitudMateriales,
       cancelarSolicitudMateriales,
     }),
-    [solicitudesMateriales, solicitarMateriales, marcarMaterialesEntregados, rechazarSolicitudMateriales, cancelarSolicitudMateriales]
+    [solicitudesMateriales, solicitarMateriales, marcarMaterialesListos, confirmarRecepcionMateriales, rechazarSolicitudMateriales, cancelarSolicitudMateriales]
   );
 
   return <MaterialesContext.Provider value={value}>{children}</MaterialesContext.Provider>;
