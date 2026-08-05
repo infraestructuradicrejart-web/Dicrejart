@@ -692,6 +692,23 @@ const ProduccionPage = () => {
     return juegos.filter((j) => j.areas.includes(areaId));
   }, [juegos, areaId]);
 
+  // Juegos de esta área listos para arrancar: ya no están bloqueados por secuencia (ej.
+  // Herrería esperando a que Corte Láser complete su parte), todavía no llegan al 100%,
+  // y nadie les ha dado el banderazo inicial — sin esta lista, la única forma de
+  // enterarse de que un juego ya se desbloqueó era abrir el selector y leer el prefijo
+  // de cada opción una por una.
+  const readyToStartGames = useMemo(() => {
+    if (areaId === 'producto-terminado') return [];
+    return filteredJuegos.filter((j) => {
+      const target = j.targetPieces?.[areaId] || 10;
+      const produced = j.producedPieces?.[areaId] || 0;
+      if (produced >= target) return false;
+      if (isAreaBlockedBySequence(j, areaId)) return false;
+      if (j.areaKickoff?.[areaId]) return false;
+      return true;
+    });
+  }, [filteredJuegos, areaId]);
+
   // Revela la tabla de juegos asignados en tandas de 15 en vez de pintarla completa.
   const {
     visibleItems: visibleFilteredJuegos,
@@ -727,17 +744,25 @@ const ProduccionPage = () => {
   const requiredAreaTarget = selectedGameObj?.targetPieces?.[requiredAreaId] || 0;
 
   /**
-   * Marca el banderazo inicial de esta área para el juego seleccionado — independiente
-   * de registrar piezas, para poder medir cuánto tarda el área en completar su meta.
+   * Marca el banderazo inicial de esta área para un juego — independiente de registrar
+   * piezas, para poder medir cuánto tarda el área en completar su meta. Se usa tanto
+   * desde el formulario (juego ya seleccionado) como desde la tarjeta "🎉 Juegos Listos
+   * para Iniciar" (cualquier juego de la lista, sin necesidad de seleccionarlo primero);
+   * en ese segundo caso además lo deja preseleccionado en el formulario de abajo, listo
+   * para capturar piezas de inmediato.
    */
-  const handleStartAreaWork = async () => {
-    if (!selectedGameObj) return;
-    const res = await startAreaWork(selectedGameObj.id, areaId);
+  const handleStartAreaWork = async (game) => {
+    const targetGame = game || selectedGameObj;
+    if (!targetGame) return;
+    const res = await startAreaWork(targetGame.id, areaId);
     if (!res.ok) {
       toast.danger(res.error || 'No se pudo registrar el inicio de trabajo.');
       return;
     }
-    toast.success('🚩 Inicio de trabajo registrado.');
+    if (game) {
+      setNewLog((prev) => ({ ...prev, gameName: game.name }));
+    }
+    toast.success(`🚩 Inicio de trabajo registrado para "${targetGame.name}".`);
   };
 
   const handleSubmit = async (e) => {
@@ -1052,6 +1077,33 @@ const ProduccionPage = () => {
             </div>
           )}
 
+          {!isReadOnly && readyToStartGames.length > 0 && (
+            <motion.div variants={itemVariants} style={{ marginBottom: 'var(--space-4)' }}>
+              <Card variant="success">
+                <h3 className={styles.sectionTitle}>🎉 Juegos Listos para Iniciar ({readyToStartGames.length})</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                  {readyToStartGames.map((j) => (
+                    <div
+                      key={j.id}
+                      style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px',
+                        padding: '8px 12px', background: 'rgba(16, 185, 129, 0.06)', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.2)',
+                      }}
+                    >
+                      <div>
+                        <strong>{j.name}</strong>
+                        <span style={{ marginLeft: '8px', fontSize: '12px', color: 'var(--color-gray-600)' }}>Proyecto: {j.projectName}</span>
+                      </div>
+                      <Button type="button" variant="primary" size="sm" onClick={() => handleStartAreaWork(j)}>
+                        🚩 Iniciar Trabajo
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </motion.div>
+          )}
+
           <div className={styles.layoutColumns}>
             {/* Columna 1: Formulario (oculto en modo solo lectura) */}
             {!isReadOnly && (
@@ -1121,7 +1173,7 @@ const ProduccionPage = () => {
                             <strong>💤 Sin Iniciar:</strong>
                             <span>Aún no se han registrado piezas de la meta de <strong>{targetPiecesForArea}</strong>.</span>
                             <div style={{ marginTop: '8px' }}>
-                              <Button type="button" variant="secondary" size="sm" onClick={handleStartAreaWork}>
+                              <Button type="button" variant="secondary" size="sm" onClick={() => handleStartAreaWork()}>
                                 🚩 Iniciar Trabajo en este Juego
                               </Button>
                             </div>
