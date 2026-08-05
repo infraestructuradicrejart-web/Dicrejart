@@ -10,10 +10,11 @@ import { MaterialesContext } from '../context/MaterialesContext';
 
 /**
  * Hook para acceder a las solicitudes de materiales a Almacén y sus acciones
- * (solicitar, marcar listo para recoger, confirmar recepción, rechazar, cancelar).
- * Debe usarse dentro de un árbol envuelto por <MaterialesProvider>.
+ * (solicitar, marcar listo para recoger, confirmar recepción, rechazar, cancelar,
+ * corregir y reenviar, eliminar). Debe usarse dentro de un árbol envuelto por
+ * <MaterialesProvider>.
  *
- * @returns {{solicitudesMateriales: Array<Object>, solicitarMateriales: function, marcarMaterialesListos: function, confirmarRecepcionMateriales: function, rechazarSolicitudMateriales: function, cancelarSolicitudMateriales: function}}
+ * @returns {{solicitudesMateriales: Array<Object>, solicitarMateriales: function, marcarMaterialesListos: function, confirmarRecepcionMateriales: function, rechazarSolicitudMateriales: function, cancelarSolicitudMateriales: function, modificarSolicitudMateriales: function, eliminarSolicitudMateriales: function}}
  */
 const useMateriales = () => {
   const context = useContext(MaterialesContext);

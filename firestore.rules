@@ -46,9 +46,12 @@ service cloud.firestore {
 
     // Reglas para solicitudes de materiales a Almacén (flujo interno, área a área — sin
     // proveedores externos ni pago de por medio, a diferencia de "requisiciones" de
-    // Compras más abajo, así que no necesita reglas por rol/etapa).
+    // Compras más abajo, así que no necesita reglas por rol/etapa en create/update).
+    // Eliminar sí queda restringido a Admin, igual que en Compras — es irreversible.
     match /solicitudes_materiales/{solicitudId} {
-      allow read, write: if request.auth != null;
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleType == 'admin';
     }
 
     // Reglas para requisiciones de compra (el código escribe/lee "requisiciones").

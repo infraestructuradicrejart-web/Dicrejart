@@ -131,6 +131,8 @@ const ProduccionPage = () => {
     confirmarRecepcionMateriales,
     rechazarSolicitudMateriales,
     cancelarSolicitudMateriales,
+    modificarSolicitudMateriales,
+    eliminarSolicitudMateriales,
   } = useMateriales();
   const { user } = useAuth();
   const isReadOnly = isReadOnlySection(user, 'produccion', areaId);
@@ -188,6 +190,7 @@ const ProduccionPage = () => {
   // almacén) y para el modal de "Rechazar" que usa Almacén al atender una solicitud
   const [materialModal, setMaterialModal] = useState({
     isOpen: false,
+    editingId: null,
     gameId: '',
     items: [{ name: '', itemId: null, quantity: 1, unit: 'pza' }],
     justification: '',
@@ -198,7 +201,13 @@ const ProduccionPage = () => {
     solicitudId: null,
     notes: '',
   });
+  const [materialDeleteConfirm, setMaterialDeleteConfirm] = useState({
+    isOpen: false,
+    solicitudId: null,
+    folio: null,
+  });
   const [showMaterialesHistorial, setShowMaterialesHistorial] = useState(false);
+  const [isExportingMaterialPdf, setIsExportingMaterialPdf] = useState(false);
 
   const toast = useToast();
 
@@ -835,6 +844,7 @@ const ProduccionPage = () => {
   const handleOpenMaterialModal = () => {
     setMaterialModal({
       isOpen: true,
+      editingId: null,
       gameId: selectedGameObj?.id || '',
       items: [{ name: '', itemId: null, quantity: 1, unit: 'pza' }],
       justification: '',
@@ -842,9 +852,25 @@ const ProduccionPage = () => {
     });
   };
 
+  /**
+   * Abre el mismo modal, pero para corregir y reenviar una solicitud ya RECHAZADA
+   * (mismo folio, vuelve a 'pendiente' al guardar) — igual que "Corregir y Reenviar" en Compras.
+   */
+  const handleOpenEditMaterialModal = (sol) => {
+    setMaterialModal({
+      isOpen: true,
+      editingId: sol.id,
+      gameId: sol.gameId || '',
+      items: sol.items.map((it) => ({ ...it })),
+      justification: sol.justification,
+      priority: sol.priority,
+    });
+  };
+
   const handleCloseMaterialModal = () => {
     setMaterialModal({
       isOpen: false,
+      editingId: null,
       gameId: '',
       items: [{ name: '', itemId: null, quantity: 1, unit: 'pza' }],
       justification: '',
@@ -870,19 +896,21 @@ const ProduccionPage = () => {
   const handleSubmitMaterialRequest = async (e) => {
     e.preventDefault();
     const game = juegos.find((j) => j.id === materialModal.gameId);
-    const res = await solicitarMateriales({
-      areaId,
+    const payload = {
       items: materialModal.items,
       justification: materialModal.justification,
       priority: materialModal.priority,
       gameId: game?.id || null,
       gameName: game?.name || null,
-    });
+    };
+    const res = materialModal.editingId
+      ? await modificarSolicitudMateriales(materialModal.editingId, payload)
+      : await solicitarMateriales({ areaId, ...payload });
     if (!res.ok) {
       toast.danger(res.error || 'No se pudo enviar la solicitud de materiales.');
       return;
     }
-    toast.success('📦 Solicitud de materiales enviada a Almacén.');
+    toast.success(materialModal.editingId ? '📦 Solicitud corregida y reenviada a Almacén.' : '📦 Solicitud de materiales enviada a Almacén.');
     handleCloseMaterialModal();
   };
 
@@ -932,6 +960,217 @@ const ProduccionPage = () => {
     handleCloseMaterialRejectModal();
   };
 
+  const handleOpenMaterialDeleteConfirm = (sol) => {
+    setMaterialDeleteConfirm({ isOpen: true, solicitudId: sol.id, folio: sol.folio });
+  };
+
+  const handleCloseMaterialDeleteConfirm = () => {
+    setMaterialDeleteConfirm({ isOpen: false, solicitudId: null, folio: null });
+  };
+
+  const handleConfirmDeleteMaterial = async () => {
+    const res = await eliminarSolicitudMateriales(materialDeleteConfirm.solicitudId);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo eliminar la solicitud.');
+      return;
+    }
+    toast.success('🗑️ Solicitud de materiales eliminada.');
+    handleCloseMaterialDeleteConfirm();
+  };
+
+  /**
+   * Texto legible del tiempo entre que se creó la solicitud y Almacén respondió
+   * (marcó lista o rechazó) — para poder medir qué tan rápido responde Almacén.
+   */
+  const formatResponseTime = (createdAt, reviewedAt) => {
+    if (!createdAt || !reviewedAt) return null;
+    const ms = new Date(reviewedAt) - new Date(createdAt);
+    if (ms < 0) return null;
+    const minutes = Math.round(ms / 60000);
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const remMinutes = minutes % 60;
+    if (hours < 24) return `${hours}h ${remMinutes}min`;
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    return `${days}d ${remHours}h`;
+  };
+
+  /**
+   * Exporta una solicitud de materiales a PDF, mismo estilo de marca que las
+   * requisiciones de Compras (logo, caja de folio/fecha, tabla, bitácora, firmas) pero
+   * simplificado al flujo de 2 pasos de materiales (sin pago/proveedor/adjuntos).
+   */
+  const handleExportMaterialPdf = async (sol) => {
+    setIsExportingMaterialPdf(true);
+    try {
+      const areaName = AREAS_CONFIG.find((a) => a.id === sol.areaId)?.name || sol.areaId;
+      const { default: jsPDF } = await import('jspdf');
+      const { rasterizeImage, brandShapeToDataUrl, logoUrl } = await import('../../utils/pdfBranding');
+
+      const MARGIN = 14;
+      const WIDTH = 182;
+      const SECONDARY = [51, 0, 102];
+      const PRIMARY = [255, 51, 0];
+      const PRINCETON_ORANGE = '#FF9933';
+      const BORDER = [209, 213, 219];
+      const STRIPE = [243, 244, 246];
+      const DARK = [27, 27, 27];
+      const GRAY = [107, 114, 128];
+
+      const [logoImg, ringImg] = await Promise.all([
+        rasterizeImage(logoUrl),
+        rasterizeImage(brandShapeToDataUrl('anillo', PRINCETON_ORANGE, 1)),
+      ]);
+
+      const doc = new jsPDF();
+      const folioLabel = sol.folio ? `MAT-${String(sol.folio).padStart(4, '0')}` : sol.id;
+
+      const logoH = 15;
+      const logoW = logoH * (logoImg.width / logoImg.height);
+      doc.addImage(logoImg.dataUrl, 'PNG', MARGIN, 8, logoW, logoH);
+
+      const boxX = MARGIN + WIDTH - 60;
+      doc.setDrawColor(...BORDER);
+      doc.rect(boxX, 9, 60, 20);
+      doc.setFont(undefined, 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(...SECONDARY);
+      doc.text('SOLICITUD DE MATERIALES', boxX + 30, 15, { align: 'center' });
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(...DARK);
+      doc.text(`Folio: ${folioLabel}`, boxX + 30, 21, { align: 'center' });
+      doc.text(`Fecha: ${new Date(sol.createdAt).toLocaleString('es-MX')}`, boxX + 30, 26, { align: 'center' });
+
+      doc.setDrawColor(...PRIMARY);
+      doc.setLineWidth(1);
+      doc.line(MARGIN, 33, MARGIN + WIDTH, 33);
+      doc.setLineWidth(0.2);
+
+      const sectionTitle = (text, titleY) => {
+        doc.addImage(ringImg.dataUrl, 'PNG', MARGIN, titleY - 4, 4.5, 4.5 * (ringImg.height / ringImg.width));
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(...SECONDARY);
+        doc.text(text, MARGIN + 7, titleY);
+      };
+      let y = 40;
+      const gridRowH = 8;
+      const responseTime = formatResponseTime(sol.createdAt, sol.reviewedAt);
+
+      const gridRows = [
+        [`Área Solicitante: ${areaName}`, `Prioridad: ${sol.priority === 'urgente' ? 'Urgente' : 'Normal'}`],
+        [`Solicitó: ${sol.requestedBy || '—'}`, `Estado Actual: ${MATERIAL_STATUS_BADGE[sol.status]?.label || sol.status}`],
+        [`Juego: ${sol.gameName || 'Sin vincular'}`, `Tiempo de Respuesta de Almacén: ${responseTime || 'Pendiente'}`],
+      ];
+      doc.setFontSize(8.5);
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(...DARK);
+      gridRows.forEach((row, i) => {
+        const rowY = y + i * gridRowH;
+        doc.setDrawColor(...BORDER);
+        doc.rect(MARGIN, rowY, WIDTH, gridRowH);
+        doc.line(MARGIN + WIDTH / 2, rowY, MARGIN + WIDTH / 2, rowY + gridRowH);
+        doc.text(row[0], MARGIN + 3, rowY + gridRowH - 2.8, { maxWidth: WIDTH / 2 - 6 });
+        doc.text(row[1], MARGIN + WIDTH / 2 + 3, rowY + gridRowH - 2.8, { maxWidth: WIDTH / 2 - 6 });
+      });
+      y += gridRows.length * gridRowH + 6;
+
+      sectionTitle('Materiales Solicitados', y);
+      y += 5;
+
+      const colWidths = [110, 36, 36];
+      const tableHeaders = ['Material', 'Cantidad', 'Unidad'];
+      const rowH = 7;
+      doc.setFillColor(...SECONDARY);
+      doc.rect(MARGIN, y, WIDTH, rowH, 'F');
+      doc.setFont(undefined, 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(255, 255, 255);
+      let cx = MARGIN;
+      tableHeaders.forEach((h, i) => {
+        doc.text(h, cx + 3, y + rowH - 2.3);
+        cx += colWidths[i];
+      });
+      y += rowH;
+
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(9);
+      sol.items.forEach((it, idx) => {
+        if (idx % 2 === 1) {
+          doc.setFillColor(...STRIPE);
+          doc.rect(MARGIN, y, WIDTH, rowH, 'F');
+        }
+        doc.setDrawColor(...BORDER);
+        doc.rect(MARGIN, y, WIDTH, rowH);
+        doc.line(MARGIN + colWidths[0], y, MARGIN + colWidths[0], y + rowH);
+        doc.line(MARGIN + colWidths[0] + colWidths[1], y, MARGIN + colWidths[0] + colWidths[1], y + rowH);
+        doc.setTextColor(...DARK);
+        doc.text(String(it.name), MARGIN + 3, y + rowH - 2.3, { maxWidth: colWidths[0] - 6 });
+        doc.text(String(it.quantity), MARGIN + colWidths[0] + 3, y + rowH - 2.3);
+        doc.text(String(it.unit), MARGIN + colWidths[0] + colWidths[1] + 3, y + rowH - 2.3);
+        y += rowH;
+      });
+      y += 8;
+
+      sectionTitle('Justificación', y);
+      y += 5;
+      const justificationLines = doc.splitTextToSize(sol.justification || '—', WIDTH - 8);
+      const justBoxH = Math.max(justificationLines.length * 4.5 + 6, 12);
+      doc.setDrawColor(...BORDER);
+      doc.rect(MARGIN, y, WIDTH, justBoxH);
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...DARK);
+      doc.text(justificationLines, MARGIN + 4, y + 5.5);
+      y += justBoxH + 8;
+
+      const seguimientoLines = [];
+      seguimientoLines.push(`- Paso 1 (Solicitud): Registrada por ${sol.requestedBy || '—'} el ${new Date(sol.createdAt).toLocaleString('es-MX')}`);
+      if (sol.status === 'rechazada' && sol.reviewedBy) {
+        seguimientoLines.push(`- Paso 2 (Respuesta de Almacén): RECHAZADA por ${sol.reviewedBy} el ${new Date(sol.reviewedAt).toLocaleString('es-MX')}`);
+        if (sol.reviewNotes) seguimientoLines.push(`  Motivo: ${sol.reviewNotes}`);
+      } else if (sol.reviewedBy) {
+        seguimientoLines.push(`- Paso 2 (Respuesta de Almacén): LISTA PARA RECOGER, preparada por ${sol.reviewedBy} el ${new Date(sol.reviewedAt).toLocaleString('es-MX')}`);
+      } else {
+        seguimientoLines.push(`- Paso 2 (Respuesta de Almacén): [PENDIENTE]`);
+      }
+      if (sol.status === 'recibida' && sol.receivedBy) {
+        seguimientoLines.push(`- Paso 3 (Recepción): CONFIRMADA por ${sol.receivedBy} el ${new Date(sol.receivedAt).toLocaleString('es-MX')}`);
+      } else if (sol.status === 'lista') {
+        seguimientoLines.push(`- Paso 3 (Recepción): [PENDIENTE DE QUE EL ÁREA CONFIRME]`);
+      }
+
+      if (y > 245) {
+        doc.addPage();
+        y = 20;
+      }
+      sectionTitle('Bitácora', y);
+      y += 5;
+      const seguimientoWrapped = seguimientoLines.flatMap((line) => doc.splitTextToSize(line, WIDTH - 8));
+      const segBoxH = Math.max(seguimientoWrapped.length * 4.5 + 6, 16);
+      doc.setDrawColor(...BORDER);
+      doc.rect(MARGIN, y, WIDTH, segBoxH);
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(...DARK);
+      doc.text(seguimientoWrapped, MARGIN + 4, y + 5);
+      y += segBoxH + 8;
+
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      doc.text(`Generado el ${new Date().toLocaleString('es-MX')} por ${user?.name || 'Usuario'} — Sistema Dicrejart`, MARGIN, 290);
+
+      doc.save(`Solicitud-Materiales_${folioLabel}_${areaName.replace(/\s+/g, '-')}.pdf`);
+    } catch (error) {
+      console.error('Error al generar el PDF de la solicitud de materiales:', error);
+      toast.danger('No se pudo generar el PDF. Intenta de nuevo.');
+    } finally {
+      setIsExportingMaterialPdf(false);
+    }
+  };
+
   const MATERIAL_STATUS_BADGE = {
     pendiente: { variant: 'warning', label: 'Pendiente' },
     lista: { variant: 'primary', label: 'Lista para Recoger' },
@@ -939,6 +1178,9 @@ const ProduccionPage = () => {
     rechazada: { variant: 'danger', label: 'Rechazada' },
     cancelada: { variant: 'neutral', label: 'Cancelada' },
   };
+
+  /** Folio legible: MAT-0001 si ya tiene folio consecutivo, o el id viejo si no (registros de antes de este cambio). */
+  const formatMaterialFolio = (s) => (s.folio ? `MAT-${String(s.folio).padStart(4, '0')}` : s.id);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1296,7 +1538,7 @@ const ProduccionPage = () => {
                       {solicitudesMaterialesPendientes.map((s) => (
                         <div key={s.id} style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(255, 153, 51, 0.08)', border: '1px solid rgba(255, 153, 51, 0.25)', fontSize: '13px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
-                            <strong>{AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
+                            <strong>{formatMaterialFolio(s)} — {AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
                             {s.priority === 'urgente' && <Badge variant="danger">🔥 Urgente</Badge>}
                           </div>
                           <ul style={{ margin: '0 0 6px', paddingLeft: '18px' }}>
@@ -1311,13 +1553,21 @@ const ProduccionPage = () => {
                           <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginBottom: '8px' }}>
                             Solicitó {s.requestedBy} el {new Date(s.createdAt).toLocaleString('es-MX')}
                           </div>
-                          <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                             <Button type="button" variant="primary" size="sm" onClick={() => handleMarkMaterialReady(s.id)}>
                               ✅ Marcar Listo para Recoger
                             </Button>
                             <Button type="button" variant="secondary" size="sm" onClick={() => handleOpenMaterialRejectModal(s.id)}>
                               ❌ Rechazar
                             </Button>
+                            <Button type="button" variant="ghost" size="sm" onClick={() => handleExportMaterialPdf(s)} isLoading={isExportingMaterialPdf}>
+                              📄 PDF
+                            </Button>
+                            {user?.roleType === ROLE_TYPES.ADMIN && (
+                              <Button type="button" variant="ghost" size="sm" onClick={() => handleOpenMaterialDeleteConfirm(s)} style={{ color: 'var(--color-danger)' }}>
+                                🗑️
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -1332,7 +1582,7 @@ const ProduccionPage = () => {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {solicitudesMaterialesListas.map((s) => (
                           <div key={s.id} style={{ padding: '8px 10px', borderRadius: '6px', background: 'rgba(0, 153, 204, 0.06)', border: '1px solid rgba(0, 153, 204, 0.2)', fontSize: '12px' }}>
-                            <strong>{AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
+                            <strong>{formatMaterialFolio(s)} — {AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
                             <span style={{ color: 'var(--color-gray-600)' }}> — {s.items.map((it) => it.name).join(', ')}</span>
                           </div>
                         ))}
@@ -1351,18 +1601,40 @@ const ProduccionPage = () => {
                       </button>
                       {showMaterialesHistorial && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-                          {solicitudesMaterialesResueltas.map((s) => (
+                          {solicitudesMaterialesResueltas.map((s) => {
+                            const responseTime = formatResponseTime(s.createdAt, s.reviewedAt);
+                            return (
                             <div key={s.id} style={{ padding: '8px 10px', borderRadius: '6px', background: 'var(--color-gray-50)', border: '1px solid var(--color-gray-200)', fontSize: '12px' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
-                                <strong>{AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
+                                <strong>{formatMaterialFolio(s)} — {AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
                                 <Badge variant={MATERIAL_STATUS_BADGE[s.status]?.variant || 'neutral'}>
                                   {MATERIAL_STATUS_BADGE[s.status]?.label || s.status}
                                 </Badge>
                               </div>
                               <div style={{ color: 'var(--color-gray-600)' }}>{s.items.map((it) => it.name).join(', ')}</div>
                               {s.reviewNotes && <div style={{ color: 'var(--color-gray-500)' }}>Motivo: {s.reviewNotes}</div>}
+                              {responseTime && <div style={{ color: 'var(--color-gray-500)' }}>⏱️ Respondido en {responseTime}</div>}
+                              <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleExportMaterialPdf(s)}
+                                  style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-secondary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                                >
+                                  📄 PDF
+                                </button>
+                                {user?.roleType === ROLE_TYPES.ADMIN && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenMaterialDeleteConfirm(s)}
+                                    style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                                  >
+                                    🗑️ Eliminar
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -1382,35 +1654,64 @@ const ProduccionPage = () => {
                   </div>
                   {misSolicitudesMateriales.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
-                      {misSolicitudesMateriales.map((s) => (
+                      {misSolicitudesMateriales.map((s) => {
+                        const responseTime = formatResponseTime(s.createdAt, s.reviewedAt);
+                        return (
                         <div key={s.id} style={{ padding: '8px 10px', borderRadius: '6px', background: 'var(--color-gray-50)', border: '1px solid var(--color-gray-200)', fontSize: '12px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
-                            <span>{s.items.map((it) => `${it.quantity} ${it.unit} ${it.name}`).join(', ')}</span>
+                            <strong>{formatMaterialFolio(s)}</strong>
                             <Badge variant={MATERIAL_STATUS_BADGE[s.status]?.variant || 'neutral'}>
                               {MATERIAL_STATUS_BADGE[s.status]?.label || s.status}
                             </Badge>
                           </div>
+                          <div>{s.items.map((it) => `${it.quantity} ${it.unit} ${it.name}`).join(', ')}</div>
+                          <div style={{ color: 'var(--color-gray-500)', fontSize: '11px' }}>
+                            {new Date(s.createdAt).toLocaleString('es-MX')}
+                          </div>
                           {s.status === 'rechazada' && s.reviewNotes && (
                             <div style={{ color: 'var(--color-alert)', marginTop: '4px' }}>Motivo del rechazo: {s.reviewNotes}</div>
                           )}
-                          {s.status === 'pendiente' && (
-                            <button
-                              type="button"
-                              onClick={() => handleCancelMaterialRequest(s.id)}
-                              style={{ marginTop: '4px', fontSize: '11px', fontWeight: 700, color: 'var(--color-gray-500)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                            >
-                              Cancelar solicitud
-                            </button>
-                          )}
-                          {s.status === 'lista' && (
-                            <div style={{ marginTop: '6px' }}>
+                          {responseTime && <div style={{ color: 'var(--color-gray-500)', marginTop: '2px' }}>⏱️ Respondido en {responseTime}</div>}
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '6px', alignItems: 'center' }}>
+                            {s.status === 'pendiente' && (
+                              <button
+                                type="button"
+                                onClick={() => handleCancelMaterialRequest(s.id)}
+                                style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-gray-500)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                              >
+                                Cancelar solicitud
+                              </button>
+                            )}
+                            {s.status === 'rechazada' && (
+                              <Button type="button" variant="secondary" size="sm" onClick={() => handleOpenEditMaterialModal(s)}>
+                                ✏️ Corregir y Reenviar
+                              </Button>
+                            )}
+                            {s.status === 'lista' && (
                               <Button type="button" variant="primary" size="sm" onClick={() => handleConfirmMaterialReceipt(s.id)}>
                                 📥 Confirmar Recepción
                               </Button>
-                            </div>
-                          )}
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleExportMaterialPdf(s)}
+                              style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-secondary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                            >
+                              📄 PDF
+                            </button>
+                            {user?.roleType === ROLE_TYPES.ADMIN && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenMaterialDeleteConfirm(s)}
+                                style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                              >
+                                🗑️ Eliminar
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </Card>
@@ -2889,7 +3190,7 @@ const ProduccionPage = () => {
 
       {/* MODAL: SOLICITAR MATERIALES A ALMACÉN */}
       {materialModal.isOpen && (
-        <Modal isOpen={materialModal.isOpen} onClose={handleCloseMaterialModal} title="📦 Solicitar Materiales a Almacén">
+        <Modal isOpen={materialModal.isOpen} onClose={handleCloseMaterialModal} title={materialModal.editingId ? '✏️ Corregir y Reenviar Solicitud' : '📦 Solicitar Materiales a Almacén'}>
           <form onSubmit={handleSubmitMaterialRequest} className={styles.form}>
             <div className={styles.formGroup}>
               <Select
@@ -2969,7 +3270,7 @@ const ProduccionPage = () => {
                 Cancelar
               </Button>
               <Button type="submit" variant="primary" size="md">
-                Enviar Solicitud
+                {materialModal.editingId ? 'Reenviar Solicitud' : 'Enviar Solicitud'}
               </Button>
             </div>
           </form>
@@ -3000,6 +3301,28 @@ const ProduccionPage = () => {
               </Button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* MODAL: CONFIRMAR ELIMINACIÓN DE SOLICITUD DE MATERIALES (Admin) */}
+      {materialDeleteConfirm.isOpen && (
+        <Modal isOpen={materialDeleteConfirm.isOpen} onClose={handleCloseMaterialDeleteConfirm} title="🗑️ Confirmar Eliminación">
+          <div style={{ padding: 'var(--space-2) 0' }}>
+            <p style={{ marginBottom: 'var(--space-4)', fontSize: 'var(--body-size)', color: 'var(--color-dark)' }}>
+              ¿Estás seguro de que deseas eliminar la solicitud <strong>MAT-{String(materialDeleteConfirm.folio || '').padStart(4, '0')}</strong>?
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginBottom: 'var(--space-5)' }}>
+              Esta acción no se puede deshacer y eliminará el registro por completo.
+            </p>
+            <div className={styles.formActions} style={{ marginTop: 'var(--space-4)' }}>
+              <Button type="button" variant="secondary" size="md" onClick={handleCloseMaterialDeleteConfirm}>
+                Cancelar
+              </Button>
+              <Button type="button" variant="danger" size="md" onClick={handleConfirmDeleteMaterial}>
+                Eliminar Solicitud
+              </Button>
+            </div>
+          </div>
         </Modal>
       )}
 

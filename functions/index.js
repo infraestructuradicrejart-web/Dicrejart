@@ -337,13 +337,14 @@ exports.onSolicitudMaterialCreated = onDocumentCreated(
     if (recipients.length === 0) return;
 
     const appUrl = APP_BASE_URL.value();
+    const folioLabel = sol.folio ? `MAT-${String(sol.folio).padStart(4, '0')}` : event.params.id;
     await Promise.all(
       recipients.map((email) =>
         sendMail({
           to: email,
-          subject: `[Dicrejart] Nueva solicitud de materiales de ${sol.areaId}${sol.priority === 'urgente' ? ' 🔴 URGENTE' : ''}`,
+          subject: `[Dicrejart] ${folioLabel} — Nueva solicitud de materiales de ${sol.areaId}${sol.priority === 'urgente' ? ' 🔴 URGENTE' : ''}`,
           html: emailShell(`
-            <h2 style="margin-top:0;">Solicitud de materiales — ${sol.areaId}</h2>
+            <h2 style="margin-top:0;">Solicitud ${folioLabel} — ${sol.areaId}</h2>
             <p><strong>Solicitó:</strong> ${sol.requestedBy} &nbsp; <strong>Prioridad:</strong> ${sol.priority === 'urgente' ? '🔴 Urgente' : 'Normal'}</p>
             ${sol.gameName ? `<p><strong>Juego:</strong> ${sol.gameName}</p>` : ''}
             <p><strong>Justificación:</strong> ${sol.justification}</p>
@@ -372,13 +373,14 @@ exports.onSolicitudMaterialUpdated = onDocumentUpdated(
     const solicitanteSnap = await admin.firestore().collection('users').doc(after.requestedByUserId).get();
     if (!solicitanteSnap.exists || !solicitanteSnap.data().email) return;
     const appUrl = APP_BASE_URL.value();
+    const folioLabel = after.folio ? `MAT-${String(after.folio).padStart(4, '0')}` : event.params.id;
 
     if (after.status === 'lista') {
       await sendMail({
         to: solicitanteSnap.data().email,
-        subject: `[Dicrejart] Tus materiales ya están listos para recoger en Almacén`,
+        subject: `[Dicrejart] ${folioLabel} — Tus materiales ya están listos para recoger en Almacén`,
         html: emailShell(`
-          <h2 style="margin-top:0;">Materiales listos para recoger</h2>
+          <h2 style="margin-top:0;">Materiales listos para recoger — ${folioLabel}</h2>
           <p>Almacén ya preparó lo que solicitaste${after.reviewedBy ? ` (${after.reviewedBy})` : ''}. Pasa a recogerlo y confirma la recepción en la app.</p>
           ${itemsList(after.items)}
           <div style="margin-top:20px;">${button(`${appUrl}/produccion/${after.areaId}`, 'Ir a Mis Solicitudes', '#16a34a')}</div>
@@ -390,9 +392,9 @@ exports.onSolicitudMaterialUpdated = onDocumentUpdated(
     if (after.status === 'rechazada') {
       await sendMail({
         to: solicitanteSnap.data().email,
-        subject: `[Dicrejart] Tu solicitud de materiales fue rechazada`,
+        subject: `[Dicrejart] ${folioLabel} — Tu solicitud de materiales fue rechazada`,
         html: emailShell(`
-          <h2 style="margin-top:0;">Solicitud de materiales rechazada</h2>
+          <h2 style="margin-top:0;">Solicitud ${folioLabel} rechazada</h2>
           <p><strong>Motivo:</strong> ${after.reviewNotes || 'Sin especificar.'}</p>
           <div style="margin-top:20px;">${button(`${appUrl}/produccion/${after.areaId}`, 'Ir a Mis Solicitudes', '#ff3300')}</div>
         `),

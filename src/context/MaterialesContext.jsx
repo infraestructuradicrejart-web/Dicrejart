@@ -16,7 +16,7 @@
 
 import React, { createContext, useState, useEffect, useCallback, useMemo, useContext } from 'react';
 import PropTypes from 'prop-types';
-import { collection, doc, setDoc, updateDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, runTransaction } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
 import { AuthContext } from './AuthContext';
@@ -24,6 +24,22 @@ import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
 
 export const MaterialesContext = createContext(null);
+
+/**
+ * Reclama el siguiente folio consecutivo (empieza en 1) de forma atómica en una
+ * transacción — el id real del documento sigue siendo `MAT-{timestamp}` (garantiza que
+ * nunca choque aunque dos solicitudes se creen en el mismo milisegundo); `folio` es solo
+ * el número consecutivo para mostrar/ordenar/exportar, guardado en config/materialesFolio.
+ */
+const getNextMaterialFolio = async () => {
+  const counterRef = doc(db, 'config', 'materialesFolio');
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(counterRef);
+    const next = snap.exists() ? (snap.data().next || 1) : 1;
+    tx.set(counterRef, { next: next + 1 }, { merge: true });
+    return next;
+  });
+};
 
 export const MaterialesProvider = ({ children }) => {
   const [solicitudesMateriales, setSolicitudesMateriales] = useState([]);
@@ -80,8 +96,17 @@ export const MaterialesProvider = ({ children }) => {
     }
 
     const id = `MAT-${Date.now()}`;
+    let folio;
+    try {
+      folio = await getNextMaterialFolio();
+    } catch (error) {
+      console.error('Error al reclamar folio de solicitud de materiales:', error);
+      return { ok: false, error: 'No se pudo generar el folio de la solicitud. Intenta de nuevo.' };
+    }
+
     const nuevaSolicitud = {
       id,
+      folio,
       status: 'pendiente',
       areaId,
       items: validItems.map((it) => ({
@@ -203,6 +228,67 @@ export const MaterialesProvider = ({ children }) => {
     }
   }, [user]);
 
+  /**
+   * Corrige y reenvía una solicitud RECHAZADA (mismo folio, vuelve a 'pendiente' con la
+   * bitácora de revisión limpia) — mismo patrón que "Corregir y Reenviar" en Compras.
+   */
+  const modificarSolicitudMateriales = useCallback(async (solicitudId, { items, justification, priority, gameId, gameName }) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const sol = solicitudesMateriales.find((s) => s.id === solicitudId);
+    if (!sol) return { ok: false, error: 'Solicitud no encontrada.' };
+    if (sol.status !== 'rechazada') {
+      return { ok: false, error: 'Solo se puede corregir una solicitud rechazada.' };
+    }
+    const validItems = (items || []).filter((it) => it.name?.trim() && Number(it.quantity) > 0);
+    if (validItems.length === 0) {
+      return { ok: false, error: 'Agrega al menos un material con cantidad mayor a 0.' };
+    }
+    if (!justification?.trim()) {
+      return { ok: false, error: 'Indica la justificación de la solicitud.' };
+    }
+
+    try {
+      await updateDoc(doc(db, 'solicitudes_materiales', solicitudId), {
+        status: 'pendiente',
+        items: validItems.map((it) => ({
+          name: it.name.trim(),
+          itemId: it.itemId || null,
+          quantity: Number(it.quantity),
+          unit: it.unit?.trim() || '',
+        })),
+        justification: justification.trim(),
+        priority: priority === 'urgente' ? 'urgente' : 'normal',
+        gameId: gameId || null,
+        gameName: gameName || null,
+        reviewedBy: null,
+        reviewedByRole: null,
+        reviewedAt: null,
+        reviewNotes: '',
+      });
+      logAudit({ user, module: 'produccion', action: 'Corrigió y reenvió solicitud de materiales', details: solicitudId });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al corregir solicitud de materiales:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [solicitudesMateriales, user]);
+
+  /**
+   * Elimina una solicitud de materiales — exclusivo de Admin (ver gate en la UI y en
+   * firestore.rules), sin restricción de estatus.
+   */
+  const eliminarSolicitudMateriales = useCallback(async (solicitudId) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    try {
+      await deleteDoc(doc(db, 'solicitudes_materiales', solicitudId));
+      logAudit({ user, module: 'produccion', action: 'Eliminó una solicitud de materiales', details: solicitudId });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al eliminar solicitud de materiales:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [user]);
+
   const value = useMemo(
     () => ({
       solicitudesMateriales,
@@ -211,8 +297,19 @@ export const MaterialesProvider = ({ children }) => {
       confirmarRecepcionMateriales,
       rechazarSolicitudMateriales,
       cancelarSolicitudMateriales,
+      modificarSolicitudMateriales,
+      eliminarSolicitudMateriales,
     }),
-    [solicitudesMateriales, solicitarMateriales, marcarMaterialesListos, confirmarRecepcionMateriales, rechazarSolicitudMateriales, cancelarSolicitudMateriales]
+    [
+      solicitudesMateriales,
+      solicitarMateriales,
+      marcarMaterialesListos,
+      confirmarRecepcionMateriales,
+      rechazarSolicitudMateriales,
+      cancelarSolicitudMateriales,
+      modificarSolicitudMateriales,
+      eliminarSolicitudMateriales,
+    ]
   );
 
   return <MaterialesContext.Provider value={value}>{children}</MaterialesContext.Provider>;
