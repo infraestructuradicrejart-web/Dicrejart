@@ -527,6 +527,12 @@ export const ProduccionProvider = ({ children }) => {
           areaStatus,
           progress,
           status,
+          // Se sella una sola vez, en el momento REAL en que el área cruza su meta —
+          // si luego se corrigen cantidades, esta fecha ya no se vuelve a tocar (ver
+          // startAreaWork abajo para el "banderazo" de inicio, su contraparte).
+          ...(newProduced >= targetLimit && !game.areaCompletedAt?.[areaId]
+            ? { [`areaCompletedAt.${areaId}`]: new Date().toISOString() }
+            : {}),
         });
 
         const project = proyectos.find((p) => p.id === game.projectId);
@@ -592,6 +598,37 @@ export const ProduccionProvider = ({ children }) => {
 
     return { ok: true };
   }, [juegos, proyectos, user]);
+
+  /**
+   * Marca el "banderazo inicial": el momento real en que un área empieza a trabajar en
+   * un juego, INDEPENDIENTE de cuándo se registre la primera pieza (un área puede
+   * preparar máquina/material antes de entregar algo) — sin esto no había forma de medir
+   * cuánto tarda un área en producir su parte, ya que `areaStatus` solo se derivaba de
+   * `producedPieces > 0`. Se guarda una sola vez por área; no se puede repetir ni
+   * corregir desde aquí. Respeta la misma dependencia de secuencia que ya bloquea el
+   * registro de piezas (ej. Herrería no puede iniciar hasta que Corte Láser complete).
+   */
+  const startAreaWork = useCallback(async (gameId, areaId) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const game = juegos.find((j) => j.id === gameId);
+    if (!game) return { ok: false, error: 'Juego no encontrado' };
+    if (game.areaKickoff?.[areaId]) {
+      return { ok: false, error: 'Ya se registró el inicio de esta área.' };
+    }
+    if (isAreaBlockedBySequence(game, areaId)) {
+      return { ok: false, error: 'Esta área todavía no puede iniciar (depende de que otra área termine primero).' };
+    }
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`areaKickoff.${areaId}`]: { startedAt: new Date().toISOString(), startedBy: user?.name || 'Usuario' },
+      });
+      logAudit({ user, module: 'produccion', action: 'Inició trabajo en un área', details: `${game.name} (${areaId})` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al marcar inicio de trabajo en área:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
 
   /**
    * Agrega una tarima de producto terminado
@@ -1592,6 +1629,7 @@ export const ProduccionProvider = ({ children }) => {
       deleteProject,
       deleteGame,
       registerProductionLog,
+      startAreaWork,
       editProductionLog,
       deleteProductionLog,
       addEvidenceToLog,
@@ -1638,6 +1676,7 @@ export const ProduccionProvider = ({ children }) => {
       deleteProject,
       deleteGame,
       registerProductionLog,
+      startAreaWork,
       editProductionLog,
       deleteProductionLog,
       addEvidenceToLog,

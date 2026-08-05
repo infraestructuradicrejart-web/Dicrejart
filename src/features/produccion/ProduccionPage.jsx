@@ -97,6 +97,7 @@ const ProduccionPage = () => {
     areaHistorial,
     subscribeAreaHistorial,
     registerProductionLog,
+    startAreaWork,
     editProductionLog,
     deleteProductionLog,
     addEvidenceToLog,
@@ -725,6 +726,20 @@ const ProduccionPage = () => {
   const requiredAreaProduced = selectedGameObj?.producedPieces?.[requiredAreaId] || 0;
   const requiredAreaTarget = selectedGameObj?.targetPieces?.[requiredAreaId] || 0;
 
+  /**
+   * Marca el banderazo inicial de esta área para el juego seleccionado — independiente
+   * de registrar piezas, para poder medir cuánto tarda el área en completar su meta.
+   */
+  const handleStartAreaWork = async () => {
+    if (!selectedGameObj) return;
+    const res = await startAreaWork(selectedGameObj.id, areaId);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo registrar el inicio de trabajo.');
+      return;
+    }
+    toast.success('🚩 Inicio de trabajo registrado.');
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!newLog.gameName || !newLog.quantity || !newLog.operator) {
@@ -1092,10 +1107,24 @@ const ProduccionPage = () => {
                             <strong>⏳ Producción en Proceso:</strong>
                             <span>Se han registrado <strong>{producedPiecesForArea}</strong> de <strong>{targetPiecesForArea}</strong> piezas. Faltan <strong>{remainingPiecesForArea}</strong> para completar.</span>
                           </div>
+                        ) : selectedGameObj.areaKickoff?.[areaId] ? (
+                          <div className={styles.bannerInfo}>
+                            <strong>🚩 Trabajo Iniciado:</strong>
+                            <span>
+                              Iniciado el <strong>{new Date(selectedGameObj.areaKickoff[areaId].startedAt).toLocaleString('es-MX')}</strong> por{' '}
+                              <strong>{selectedGameObj.areaKickoff[areaId].startedBy}</strong>. Aún no se han registrado piezas de la meta de{' '}
+                              <strong>{targetPiecesForArea}</strong>.
+                            </span>
+                          </div>
                         ) : (
                           <div className={styles.bannerInfo}>
                             <strong>💤 Sin Iniciar:</strong>
                             <span>Aún no se han registrado piezas de la meta de <strong>{targetPiecesForArea}</strong>.</span>
+                            <div style={{ marginTop: '8px' }}>
+                              <Button type="button" variant="secondary" size="sm" onClick={handleStartAreaWork}>
+                                🚩 Iniciar Trabajo en este Juego
+                              </Button>
+                            </div>
                           </div>
                         )}
                       </>

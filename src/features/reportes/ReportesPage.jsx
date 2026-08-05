@@ -72,7 +72,7 @@ const ReportesPage = () => {
   const [isExportingExcel, setIsExportingExcel] = useState(false);
 
   const toast = useToast();
-  const { historialProduccion } = useProduccion();
+  const { historialProduccion, juegos } = useProduccion();
   const { inspecciones } = useCalidad();
   const { actividades } = useActividades();
   const { operarios } = useOperarios();
@@ -196,6 +196,48 @@ const ReportesPage = () => {
     area: key.toUpperCase().replace('-', ' '),
     diasPromedio: Number((tiempoResolucionRaw[key].sumaDias / tiempoResolucionRaw[key].total).toFixed(1)),
   }));
+
+  // 4e. Tiempo promedio de PRODUCCIÓN (banderazo inicial → meta completada) por área,
+  // juego por juego — solo cuenta pares juego+área donde YA existen tanto areaKickoff
+  // (el "banderazo" manual, ver startAreaWork en ProduccionContext.jsx) como
+  // areaCompletedAt (sellado la primera vez que el área llega a su meta, ver
+  // registerProductionLog). Juegos/áreas sin alguno de los dos (todo lo que ya existía
+  // antes de esta métrica) simplemente no entran aquí — no hay forma de estimarlos con
+  // precisión, así que no se intenta.
+  const detalleProduccionTiempos = [];
+  juegos.forEach((j) => {
+    j.areas.forEach((aid) => {
+      if (areaFilter !== 'todos' && aid !== areaFilter) return;
+      const kickoff = j.areaKickoff?.[aid]?.startedAt;
+      const completedAt = j.areaCompletedAt?.[aid];
+      if (!kickoff || !completedAt || !withinDateRange(completedAt)) return;
+      const dias = (new Date(completedAt) - new Date(kickoff)) / (1000 * 60 * 60 * 24);
+      detalleProduccionTiempos.push({
+        juego: j.name,
+        area: aid,
+        iniciado: kickoff,
+        completado: completedAt,
+        diasDuracion: Number(dias.toFixed(1)),
+      });
+    });
+  });
+
+  const tiempoProduccionRaw = detalleProduccionTiempos.reduce((acc, curr) => {
+    if (!acc[curr.area]) acc[curr.area] = { sumaDias: 0, total: 0 };
+    acc[curr.area].sumaDias += curr.diasDuracion;
+    acc[curr.area].total += 1;
+    return acc;
+  }, {});
+  const dataTiempoProduccion = Object.keys(tiempoProduccionRaw).map((key) => ({
+    area: key.toUpperCase().replace('-', ' '),
+    diasPromedio: Number((tiempoProduccionRaw[key].sumaDias / tiempoProduccionRaw[key].total).toFixed(1)),
+  }));
+
+  // Detalle de los juegos/áreas específicos con más días, para poder ver CUÁLES
+  // tardaron más, no solo el promedio (mismo patrón que detalleInterferencia más abajo).
+  const detalleTiempoProduccionTop = [...detalleProduccionTiempos]
+    .sort((a, b) => b.diasDuracion - a.diasDuracion)
+    .slice(0, 10);
 
   // 5. Interferencia: actividades del área SIN vínculo a ningún proyecto/juego — por
   // definición, trabajo ajeno al proyecto que se esté produciendo ahí en ese momento
@@ -339,6 +381,22 @@ const ReportesPage = () => {
         }))),
         'Detalle Interferencia'
       );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(dataTiempoProduccion.map((d) => ({ Área: d.area, 'Días Promedio de Producción': d.diasPromedio }))),
+        'Tiempo de Producción'
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(detalleProduccionTiempos.map((d) => ({
+          Juego: d.juego,
+          Área: d.area,
+          Iniciado: new Date(d.iniciado).toLocaleString('es-MX'),
+          Completado: new Date(d.completado).toLocaleString('es-MX'),
+          'Días de Duración': d.diasDuracion,
+        }))),
+        'Detalle Producción'
+      );
 
       XLSX.writeFile(wb, `Reporte-Dicrejart-${fechaArchivo}.xlsx`);
       toast.success('📊 Excel generado correctamente y descargado.');
@@ -412,6 +470,12 @@ const ReportesPage = () => {
         rows: dataInterferencia.map((d) => [d.area, d.dias, d.enCurso]),
         startY: y,
       });
+      y = addPdfTable(doc, {
+        title: 'Tiempo Promedio de Producción por Área (días)',
+        headers: ['Área', 'Días Promedio'],
+        rows: dataTiempoProduccion.map((d) => [d.area, d.diasPromedio]),
+        startY: y,
+      });
 
       doc.addPage();
       addPdfTable(doc, {
@@ -456,6 +520,19 @@ const ReportesPage = () => {
           a.createdAt ? new Date(a.createdAt).toLocaleDateString('es-MX') : '-',
           a.completedAt ? new Date(a.completedAt).toLocaleDateString('es-MX') : '-',
           a.diasDuracion,
+        ]),
+        startY: 20,
+      });
+
+      doc.addPage();
+      addPdfTable(doc, {
+        title: 'Detalle de Tiempo de Producción (Banderazo → Completado)',
+        headers: ['Juego', 'Área', 'Iniciado', 'Completado', 'Días'],
+        rows: detalleProduccionTiempos.map((d) => [
+          d.juego, d.area,
+          new Date(d.iniciado).toLocaleDateString('es-MX'),
+          new Date(d.completado).toLocaleDateString('es-MX'),
+          d.diasDuracion,
         ]),
         startY: 20,
       });
@@ -825,6 +902,69 @@ const ReportesPage = () => {
                   </tbody>
                 </table>
               </div>
+            )}
+          </Card>
+        </motion.div>
+
+        <div style={{ gridColumn: '1 / -1' }}>
+          <h3 className={styles.chartTitle} style={{ marginBottom: 'var(--space-2)', marginTop: 'var(--space-2)' }}>🏭 Producción</h3>
+          <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: '-8px', marginBottom: 'var(--space-4)' }}>
+            Tiempo entre el banderazo inicial de un área (🚩 Iniciar Trabajo, en Producción) y el momento en que completa su meta de piezas — solo cuenta juegos/áreas con ambos datos registrados.
+          </p>
+        </div>
+
+        {/* Gráfica 9: Tiempo Promedio de Producción por Área */}
+        <motion.div variants={itemVariants} style={{ gridColumn: '1 / -1' }}>
+          <Card variant="default">
+            <h3 className={styles.chartTitle}>Tiempo Promedio de Producción por Área (días)</h3>
+            <div className={styles.chartContainer}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dataTiempoProduccion} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                  <XAxis dataKey="area" tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#6B7280' }} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      borderRadius: '8px',
+                      border: '1px solid #E5E7EB',
+                      boxShadow: 'var(--shadow-md)',
+                    }}
+                  />
+                  <Bar dataKey="diasPromedio" name="Días Promedio" fill="var(--color-area-corte-laser)" radius={[4, 4, 0, 0]} barSize={30} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {detalleTiempoProduccionTop.length > 0 ? (
+              <div className={styles.tableResponsive} style={{ marginTop: 'var(--space-5)' }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Juego</th>
+                      <th>Área</th>
+                      <th>Iniciado</th>
+                      <th>Completado</th>
+                      <th>Días</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalleTiempoProduccionTop.map((d, idx) => (
+                      <tr key={`${d.juego}-${d.area}-${idx}`}>
+                        <td data-label="Juego" className={styles.boldText}>{d.juego}</td>
+                        <td data-label="Área">{d.area.toUpperCase().replace('-', ' ')}</td>
+                        <td data-label="Iniciado" className={styles.textMuted}>{new Date(d.iniciado).toLocaleDateString('es-MX')}</td>
+                        <td data-label="Completado" className={styles.textMuted}>{new Date(d.completado).toLocaleDateString('es-MX')}</td>
+                        <td data-label="Días">{d.diasDuracion}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '16px' }}>
+                Todavía no hay juegos/áreas con banderazo inicial Y meta completada para calcular este tiempo.
+              </p>
             )}
           </Card>
         </motion.div>
