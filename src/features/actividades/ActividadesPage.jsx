@@ -98,6 +98,15 @@ const ActividadesPage = () => {
     activityId: null,
     newItemText: '',
   });
+  // Confirmación antes de marcar una actividad como completada — un solo clic accidental
+  // en el badge de estatus (proceso -> completado) podía cerrarla antes de tiempo sin
+  // querer; las otras transiciones (pendiente -> proceso, reabrir desde completado) son
+  // de bajo riesgo y se quedan como un clic directo, sin fricción de más.
+  const [completeConfirmation, setCompleteConfirmation] = useState({
+    isOpen: false,
+    activityId: null,
+    title: '',
+  });
 
   const { operarios } = useOperarios();
   const { proyectos, juegos } = useProduccion();
@@ -183,10 +192,22 @@ const ActividadesPage = () => {
   /**
    * Avanza el estatus de una actividad al siguiente en el ciclo
    * pendiente -> proceso -> completado -> pendiente
+   * La transición a 'completado' pide confirmación aparte (ver completeConfirmation) —
+   * las demás se aplican directo, sin diálogo.
    * @param {string} activityId
    */
   const handleAdvanceStatus = (activityId) => {
+    const act = actividades.find((a) => a.id === activityId);
+    if (act?.status === 'proceso') {
+      setCompleteConfirmation({ isOpen: true, activityId, title: act.title });
+      return;
+    }
     advanceStatus(activityId);
+  };
+
+  const handleConfirmCompleteActivity = () => {
+    advanceStatus(completeConfirmation.activityId);
+    setCompleteConfirmation({ isOpen: false, activityId: null, title: '' });
   };
 
   const handleDeleteActivity = (activityId, title) => {
@@ -616,6 +637,42 @@ const ActividadesPage = () => {
                 onClick={handleConfirmDeleteActivity}
               >
                 Eliminar Actividad
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* MODAL: CONFIRMACIÓN DE COMPLETAR ACTIVIDAD */}
+      {completeConfirmation.isOpen && (
+        <Modal
+          isOpen={completeConfirmation.isOpen}
+          onClose={() => setCompleteConfirmation({ isOpen: false, activityId: null, title: '' })}
+          title="✅ Confirmar Actividad Completada"
+        >
+          <div style={{ padding: 'var(--space-2) 0' }}>
+            <p style={{ marginBottom: 'var(--space-4)', fontSize: 'var(--body-size)', color: 'var(--color-dark)' }}>
+              ¿Confirmas que la actividad <strong>{completeConfirmation.title}</strong> ya se completó?
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginBottom: 'var(--space-5)' }}>
+              Se guardará la fecha de cierre. Si te equivocas, puedes reabrirla después dándole clic de nuevo al estatus.
+            </p>
+            <div className={styles.formActions} style={{ marginTop: 'var(--space-4)' }}>
+              <Button
+                type="button"
+                variant="secondary"
+                size="md"
+                onClick={() => setCompleteConfirmation({ isOpen: false, activityId: null, title: '' })}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="md"
+                onClick={handleConfirmCompleteActivity}
+              >
+                ✅ Marcar como Completada
               </Button>
             </div>
           </div>
