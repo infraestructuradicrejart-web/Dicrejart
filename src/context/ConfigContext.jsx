@@ -3,7 +3,8 @@
  * @description Contexto global de configuración de la aplicación Dicrejart. Administra
  * los límites dinámicos de cuántos registros recientes se mantienen en vivo (en memoria
  * del navegador) para las colecciones tipo bitácora (historial de producción,
- * inspecciones, evaluaciones, actividades, requisiciones y movimientos de personal), y
+ * inspecciones, evaluaciones, actividades, requisiciones, movimientos de personal y
+ * solicitudes de materiales a Almacén), y
  * la configuración general (Modo Mantenimiento, alertas de calidad automáticas y
  * tolerancia de calidad exigida), todo configurable por el Admin desde AdminPage.
  * @author Dicrejart Dev Team
@@ -34,6 +35,7 @@ export const DEFAULT_LIMITS = {
   movimientosPersonalLimit: 5,
   horasExtraLimit: 50,
   auditLogLimit: 100,
+  materialesLimit: 20,
 };
 
 /**

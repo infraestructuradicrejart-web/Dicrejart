@@ -23,6 +23,7 @@ import { ConfigProvider } from './context/ConfigContext';
 import { AreasProvider } from './context/AreasContext';
 import { OperariosProvider } from './context/OperariosContext';
 import { ProduccionProvider } from './context/ProduccionContext';
+import { MaterialesProvider } from './context/MaterialesContext';
 import { CalidadProvider } from './context/CalidadContext';
 import { ActividadesProvider } from './context/ActividadesContext';
 import { ComprasProvider } from './context/ComprasContext';
@@ -347,6 +348,7 @@ function App() {
             <AreasProvider>
               <OperariosProvider>
                 <ProduccionProvider>
+                  <MaterialesProvider>
                   <CalidadProvider>
                     <ActividadesProvider>
                       <ComprasProvider>
@@ -413,6 +415,7 @@ function App() {
                       </ComprasProvider>
                     </ActividadesProvider>
                   </CalidadProvider>
+                  </MaterialesProvider>
                 </ProduccionProvider>
               </OperariosProvider>
             </AreasProvider>

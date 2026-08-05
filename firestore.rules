@@ -44,6 +44,13 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
+    // Reglas para solicitudes de materiales a Almacén (flujo interno, área a área — sin
+    // proveedores externos ni pago de por medio, a diferencia de "requisiciones" de
+    // Compras más abajo, así que no necesita reglas por rol/etapa).
+    match /solicitudes_materiales/{solicitudId} {
+      allow read, write: if request.auth != null;
+    }
+
     // Reglas para requisiciones de compra (el código escribe/lee "requisiciones").
     // Cualquier usuario autenticado puede leer y crear/editar sus propias requisiciones;
     // cada transición de estado exige el rol correspondiente Y el estado "de origen"

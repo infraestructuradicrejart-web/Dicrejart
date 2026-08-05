@@ -148,6 +148,7 @@ const AdminPage = () => {
     { field: 'requisicionesLimit', label: 'Requisiciones de Compra' },
     { field: 'movimientosPersonalLimit', label: 'Movimientos de Personal' },
     { field: 'horasExtraLimit', label: 'Autorizaciones de Horas Extra' },
+    { field: 'materialesLimit', label: 'Solicitudes de Materiales a Almacén' },
     { field: 'auditLogLimit', label: 'Bitácora de Auditoría' },
   ];
 

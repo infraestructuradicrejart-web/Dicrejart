@@ -18,9 +18,11 @@ import Input from '../../components/ui/Input';
 import Select from '../../components/ui/Select';
 import Badge from '../../components/ui/Badge';
 import Modal from '../../components/ui/Modal';
+import ItemAutocomplete from '../../components/ui/ItemAutocomplete';
 import useToast from '../../hooks/useToast';
 import useOperarios from '../../hooks/useOperarios';
 import useProduccion from '../../hooks/useProduccion';
+import useMateriales from '../../hooks/useMateriales';
 import { isAreaBlockedBySequence, AREA_SEQUENCE_DEPENDENCIES, getFeederDependentAreaId } from '../../context/ProduccionContext';
 import useProgressiveList from '../../hooks/useProgressiveList';
 import useAuth from '../../hooks/useAuth';
@@ -122,6 +124,13 @@ const ProduccionPage = () => {
     cancelarSolicitudHoraExtra,
     modificarSolicitudHoraExtra,
   } = useOperarios();
+  const {
+    solicitudesMateriales,
+    solicitarMateriales,
+    marcarMaterialesEntregados,
+    rechazarSolicitudMateriales,
+    cancelarSolicitudMateriales,
+  } = useMateriales();
   const { user } = useAuth();
   const isReadOnly = isReadOnlySection(user, 'produccion', areaId);
 
@@ -174,6 +183,22 @@ const ProduccionPage = () => {
     logId: null,
   });
 
+  // Estado para el modal de "Solicitar Materiales a Almacén" (cualquier área que no sea
+  // almacén) y para el modal de "Rechazar" que usa Almacén al atender una solicitud
+  const [materialModal, setMaterialModal] = useState({
+    isOpen: false,
+    gameId: '',
+    items: [{ name: '', itemId: null, quantity: 1, unit: 'pza' }],
+    justification: '',
+    priority: 'normal',
+  });
+  const [materialRejectModal, setMaterialRejectModal] = useState({
+    isOpen: false,
+    solicitudId: null,
+    notes: '',
+  });
+  const [showMaterialesHistorial, setShowMaterialesHistorial] = useState(false);
+
   const toast = useToast();
 
   /**
@@ -202,6 +227,22 @@ const ProduccionPage = () => {
     if (user.roleType === ROLE_TYPES.ENCARGADO_AREA) return user.areaId === 'producto-terminado';
     if (user.roleType === ROLE_TYPES.SUPERVISOR_AREA) {
       return (user.areaIds || []).includes('producto-terminado');
+    }
+    return false;
+  };
+
+  /**
+   * Determina si el usuario puede atender (entregar/rechazar) solicitudes de materiales
+   * como Almacén: el Encargado de Almacén, un Supervisor de Área que lo tenga entre sus
+   * áreas, o Admin — mismo patrón que canReceiveExternalOrders arriba, pero para
+   * 'almacen' en vez de 'producto-terminado'.
+   */
+  const canFulfillMaterialRequests = () => {
+    if (!user) return false;
+    if (user.roleType === ROLE_TYPES.ADMIN) return true;
+    if (user.roleType === ROLE_TYPES.ENCARGADO_AREA) return user.areaId === 'almacen';
+    if (user.roleType === ROLE_TYPES.SUPERVISOR_AREA) {
+      return (user.areaIds || []).includes('almacen');
     }
     return false;
   };
@@ -720,6 +761,21 @@ const ProduccionPage = () => {
   // Operarios asignados temporal o permanentemente a esta área
   const operadoresDisponibles = operarios.filter((op) => op.currentArea === areaId);
 
+  // Solicitudes de materiales a Almacén: las de ESTA área (para cualquier área) y, si
+  // esta vista es la de Almacén, las de TODAS las áreas (pendientes de atender + historial)
+  const misSolicitudesMateriales = useMemo(
+    () => solicitudesMateriales.filter((s) => s.areaId === areaId),
+    [solicitudesMateriales, areaId]
+  );
+  const solicitudesMaterialesRecibidas = useMemo(
+    () => (areaId === 'almacen' ? solicitudesMateriales.filter((s) => s.status === 'pendiente') : []),
+    [solicitudesMateriales, areaId]
+  );
+  const solicitudesMaterialesResueltas = useMemo(
+    () => (areaId === 'almacen' ? solicitudesMateriales.filter((s) => s.status !== 'pendiente') : []),
+    [solicitudesMateriales, areaId]
+  );
+
   // Datos dinámicos del juego seleccionado actualmente en el formulario
   const selectedGameObj = useMemo(() => {
     return juegos.find((j) => j.name === newLog.gameName);
@@ -763,6 +819,108 @@ const ProduccionPage = () => {
       setNewLog((prev) => ({ ...prev, gameName: game.name }));
     }
     toast.success(`🚩 Inicio de trabajo registrado para "${targetGame.name}".`);
+  };
+
+  // ============================================
+  // HANDLERS — SOLICITUD DE MATERIALES A ALMACÉN
+  // ============================================
+
+  const handleOpenMaterialModal = () => {
+    setMaterialModal({
+      isOpen: true,
+      gameId: selectedGameObj?.id || '',
+      items: [{ name: '', itemId: null, quantity: 1, unit: 'pza' }],
+      justification: '',
+      priority: 'normal',
+    });
+  };
+
+  const handleCloseMaterialModal = () => {
+    setMaterialModal({
+      isOpen: false,
+      gameId: '',
+      items: [{ name: '', itemId: null, quantity: 1, unit: 'pza' }],
+      justification: '',
+      priority: 'normal',
+    });
+  };
+
+  const handleMaterialItemChange = (idx, field, value) => {
+    setMaterialModal((prev) => ({
+      ...prev,
+      items: prev.items.map((it, i) => (i === idx ? { ...it, [field]: value } : it)),
+    }));
+  };
+
+  const handleAddMaterialItemRow = () => {
+    setMaterialModal((prev) => ({ ...prev, items: [...prev.items, { name: '', itemId: null, quantity: 1, unit: 'pza' }] }));
+  };
+
+  const handleRemoveMaterialItemRow = (idx) => {
+    setMaterialModal((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }));
+  };
+
+  const handleSubmitMaterialRequest = async (e) => {
+    e.preventDefault();
+    const game = juegos.find((j) => j.id === materialModal.gameId);
+    const res = await solicitarMateriales({
+      areaId,
+      items: materialModal.items,
+      justification: materialModal.justification,
+      priority: materialModal.priority,
+      gameId: game?.id || null,
+      gameName: game?.name || null,
+    });
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo enviar la solicitud de materiales.');
+      return;
+    }
+    toast.success('📦 Solicitud de materiales enviada a Almacén.');
+    handleCloseMaterialModal();
+  };
+
+  const handleCancelMaterialRequest = async (solicitudId) => {
+    const res = await cancelarSolicitudMateriales(solicitudId);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo cancelar la solicitud.');
+      return;
+    }
+    toast.warning('Solicitud de materiales cancelada.');
+  };
+
+  const handleMarkMaterialDelivered = async (solicitudId) => {
+    const res = await marcarMaterialesEntregados(solicitudId);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo marcar como entregado.');
+      return;
+    }
+    toast.success('✅ Materiales marcados como entregados.');
+  };
+
+  const handleOpenMaterialRejectModal = (solicitudId) => {
+    setMaterialRejectModal({ isOpen: true, solicitudId, notes: '' });
+  };
+
+  const handleCloseMaterialRejectModal = () => {
+    setMaterialRejectModal({ isOpen: false, solicitudId: null, notes: '' });
+  };
+
+  const handleSubmitMaterialReject = async (e) => {
+    e.preventDefault();
+    const res = await rechazarSolicitudMateriales(materialRejectModal.solicitudId, materialRejectModal.notes);
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo rechazar la solicitud.');
+      return;
+    }
+    toast.warning('❌ Solicitud de materiales rechazada.');
+    handleCloseMaterialRejectModal();
+  };
+
+  const MATERIAL_STATUS_BADGE = {
+    pendiente: { variant: 'warning', label: 'Pendiente' },
+    entregada: { variant: 'success', label: 'Entregada' },
+    rechazada: { variant: 'danger', label: 'Rechazada' },
+    cancelada: { variant: 'neutral', label: 'Cancelada' },
   };
 
   const handleSubmit = async (e) => {
@@ -1102,6 +1260,122 @@ const ProduccionPage = () => {
                 </div>
               </Card>
             </motion.div>
+          )}
+
+          {/* ============================================
+              SOLICITUD DE MATERIALES A ALMACÉN
+              ============================================ */}
+          {areaId === 'almacen' ? (
+            canFulfillMaterialRequests() && (
+              <motion.div variants={itemVariants} style={{ marginBottom: 'var(--space-4)' }}>
+                <Card variant="default">
+                  <h3 className={styles.sectionTitle}>📦 Solicitudes de Materiales Recibidas ({solicitudesMaterialesRecibidas.length})</h3>
+                  {solicitudesMaterialesRecibidas.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '16px' }}>
+                      No hay solicitudes de materiales pendientes de otras áreas.
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+                      {solicitudesMaterialesRecibidas.map((s) => (
+                        <div key={s.id} style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(255, 153, 51, 0.08)', border: '1px solid rgba(255, 153, 51, 0.25)', fontSize: '13px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
+                            <strong>{AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
+                            {s.priority === 'urgente' && <Badge variant="danger">🔥 Urgente</Badge>}
+                          </div>
+                          <ul style={{ margin: '0 0 6px', paddingLeft: '18px' }}>
+                            {s.items.map((it, idx) => (
+                              <li key={idx}>{it.quantity} {it.unit} — {it.name}</li>
+                            ))}
+                          </ul>
+                          <div style={{ color: 'var(--color-gray-600)', marginBottom: '4px' }}>
+                            <em>{s.justification}</em>
+                            {s.gameName && <span> — Juego: <strong>{s.gameName}</strong></span>}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginBottom: '8px' }}>
+                            Solicitó {s.requestedBy} el {new Date(s.createdAt).toLocaleString('es-MX')}
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <Button type="button" variant="primary" size="sm" onClick={() => handleMarkMaterialDelivered(s.id)}>
+                              ✅ Marcar Entregado
+                            </Button>
+                            <Button type="button" variant="secondary" size="sm" onClick={() => handleOpenMaterialRejectModal(s.id)}>
+                              ❌ Rechazar
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {solicitudesMaterialesResueltas.length > 0 && (
+                    <div style={{ marginTop: '16px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowMaterialesHistorial((prev) => !prev)}
+                        style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-secondary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                      >
+                        {showMaterialesHistorial ? '▲' : '▼'} Historial ({solicitudesMaterialesResueltas.length})
+                      </button>
+                      {showMaterialesHistorial && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                          {solicitudesMaterialesResueltas.map((s) => (
+                            <div key={s.id} style={{ padding: '8px 10px', borderRadius: '6px', background: 'var(--color-gray-50)', border: '1px solid var(--color-gray-200)', fontSize: '12px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                                <strong>{AREAS_CONFIG.find((a) => a.id === s.areaId)?.name || s.areaId}</strong>
+                                <Badge variant={MATERIAL_STATUS_BADGE[s.status]?.variant || 'neutral'}>
+                                  {MATERIAL_STATUS_BADGE[s.status]?.label || s.status}
+                                </Badge>
+                              </div>
+                              <div style={{ color: 'var(--color-gray-600)' }}>{s.items.map((it) => it.name).join(', ')}</div>
+                              {s.reviewNotes && <div style={{ color: 'var(--color-gray-500)' }}>Motivo: {s.reviewNotes}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+              </motion.div>
+            )
+          ) : (
+            !isReadOnly && (
+              <motion.div variants={itemVariants} style={{ marginBottom: 'var(--space-4)' }}>
+                <Card variant="default">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <h3 className={styles.sectionTitle} style={{ margin: 0 }}>📦 Materiales de Almacén</h3>
+                    <Button type="button" variant="secondary" size="sm" onClick={handleOpenMaterialModal}>
+                      📦 Solicitar Materiales a Almacén
+                    </Button>
+                  </div>
+                  {misSolicitudesMateriales.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                      {misSolicitudesMateriales.map((s) => (
+                        <div key={s.id} style={{ padding: '8px 10px', borderRadius: '6px', background: 'var(--color-gray-50)', border: '1px solid var(--color-gray-200)', fontSize: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                            <span>{s.items.map((it) => `${it.quantity} ${it.unit} ${it.name}`).join(', ')}</span>
+                            <Badge variant={MATERIAL_STATUS_BADGE[s.status]?.variant || 'neutral'}>
+                              {MATERIAL_STATUS_BADGE[s.status]?.label || s.status}
+                            </Badge>
+                          </div>
+                          {s.status === 'rechazada' && s.reviewNotes && (
+                            <div style={{ color: 'var(--color-alert)', marginTop: '4px' }}>Motivo del rechazo: {s.reviewNotes}</div>
+                          )}
+                          {s.status === 'pendiente' && (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelMaterialRequest(s.id)}
+                              style={{ marginTop: '4px', fontSize: '11px', fontWeight: 700, color: 'var(--color-gray-500)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                            >
+                              Cancelar solicitud
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </motion.div>
+            )
           )}
 
           <div className={styles.layoutColumns}>
@@ -2572,6 +2846,122 @@ const ProduccionPage = () => {
           </Modal>
         );
       })()}
+
+      {/* MODAL: SOLICITAR MATERIALES A ALMACÉN */}
+      {materialModal.isOpen && (
+        <Modal isOpen={materialModal.isOpen} onClose={handleCloseMaterialModal} title="📦 Solicitar Materiales a Almacén">
+          <form onSubmit={handleSubmitMaterialRequest} className={styles.form}>
+            <div className={styles.formGroup}>
+              <Select
+                label="Juego (opcional)"
+                value={materialModal.gameId}
+                onChange={(e) => setMaterialModal((prev) => ({ ...prev, gameId: e.target.value }))}
+                placeholder="-- Sin vincular a un juego --"
+                options={filteredJuegos.map((j) => ({ value: j.id, label: `${j.name} (${j.projectName})` }))}
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Materiales Solicitados</label>
+              {materialModal.items.map((it, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: '6px', marginBottom: '6px', alignItems: 'flex-start' }}>
+                  <ItemAutocomplete
+                    value={{ name: it.name, itemId: it.itemId }}
+                    onChange={(val) => {
+                      handleMaterialItemChange(idx, 'name', val.name);
+                      handleMaterialItemChange(idx, 'itemId', val.itemId);
+                    }}
+                  />
+                  <input
+                    type="number"
+                    min="1"
+                    value={it.quantity}
+                    onChange={(e) => handleMaterialItemChange(idx, 'quantity', Math.max(1, Number(e.target.value) || 1))}
+                    className={styles.textInput}
+                    style={{ width: '70px' }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Unidad"
+                    value={it.unit}
+                    onChange={(e) => handleMaterialItemChange(idx, 'unit', e.target.value)}
+                    className={styles.textInput}
+                    style={{ width: '70px' }}
+                  />
+                  {materialModal.items.length > 1 && (
+                    <button type="button" onClick={() => handleRemoveMaterialItemRow(idx)} style={{ border: 'none', background: 'none', color: 'var(--color-danger)', cursor: 'pointer' }}>
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+              <Button type="button" variant="secondary" size="sm" onClick={handleAddMaterialItemRow}>
+                ➕ Agregar Material
+              </Button>
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Justificación</label>
+              <textarea
+                className={styles.textarea}
+                rows="3"
+                required
+                placeholder="Ej: Para terminar el ensamble de la estructura del juego X"
+                value={materialModal.justification}
+                onChange={(e) => setMaterialModal((prev) => ({ ...prev, justification: e.target.value }))}
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <Select
+                label="Prioridad"
+                value={materialModal.priority}
+                onChange={(e) => setMaterialModal((prev) => ({ ...prev, priority: e.target.value }))}
+                options={[
+                  { value: 'normal', label: 'Normal' },
+                  { value: 'urgente', label: '🔥 Urgente' },
+                ]}
+              />
+            </div>
+
+            <div className={styles.formActions}>
+              <Button type="button" variant="secondary" size="md" onClick={handleCloseMaterialModal}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary" size="md">
+                Enviar Solicitud
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* MODAL: RECHAZAR SOLICITUD DE MATERIALES */}
+      {materialRejectModal.isOpen && (
+        <Modal isOpen={materialRejectModal.isOpen} onClose={handleCloseMaterialRejectModal} title="❌ Rechazar Solicitud de Materiales">
+          <form onSubmit={handleSubmitMaterialReject} className={styles.form}>
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Motivo del Rechazo</label>
+              <textarea
+                className={styles.textarea}
+                rows="3"
+                required
+                placeholder="Ej: No hay existencias de este material por el momento"
+                value={materialRejectModal.notes}
+                onChange={(e) => setMaterialRejectModal((prev) => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+            <div className={styles.formActions}>
+              <Button type="button" variant="secondary" size="md" onClick={handleCloseMaterialRejectModal}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="danger" size="md">
+                Rechazar Solicitud
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* MODAL: SOLICITAR HORAS EXTRAS */}
       {requestOvertimeModal.isOpen && (() => {
