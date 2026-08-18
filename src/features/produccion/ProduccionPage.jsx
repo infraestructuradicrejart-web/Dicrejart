@@ -450,6 +450,18 @@ const ProduccionPage = () => {
     const todayForModal = getTodayLocalDateStr();
     const prefilledStart = Number(op.schedule?.startHour || 8);
     const prefilledEnd = Number(op.schedule?.endHour || 18);
+    // Si ya existe una autorización VIGENTE (no cancelada) de HOY para este colaborador,
+    // se recupera su texto de tareas para no perderlo al redefinir el horario del día —
+    // ej. se autorizó tiempo extra matutino en la mañana con su descripción, y en la
+    // tarde surge la necesidad de extender también el bloque vespertino: guardar
+    // (handleSaveSchedule) cancela esa autorización previa y crea una nueva combinada,
+    // así que sin esto el texto de la mañana desaparecía en automático si no se le
+    // ocurría al supervisor volver a escribirlo. No aplica a fechas viejas (op.schedule
+    // puede traer la última autorización de días atrás, ver nota de abajo).
+    const existingTodayHE = horasExtra.find(
+      (h) => h.operarioId === op.id && h.authorizedDate === todayForModal && h.verificationStatus !== 'cancelado'
+    );
+    const inheritedTasks = existingTodayHE?.overtimeTasks || '';
     // Recalcula las horas extra para HOY (no reutiliza op.schedule.overtimeHours tal
     // cual): si hoy es sábado y la última autorización fue un día de semana (o viceversa),
     // el bloque vespertino máximo cambia, así que el número heredado podía ya no ser
@@ -457,7 +469,7 @@ const ProduccionPage = () => {
     if (esFechaDomingo(todayForModal)) {
       setScheduleModal({
         isOpen: true, collaborator: op, startHour: '8', endHour: '18',
-        overtimeHours: '10', authorizedDate: todayForModal, overtimeTasks: '',
+        overtimeHours: '10', authorizedDate: todayForModal, overtimeTasks: inheritedTasks,
       });
       return;
     }
@@ -469,7 +481,7 @@ const ProduccionPage = () => {
       endHour: String(prefilledEnd),
       overtimeHours: String(earlyHours + lateHours),
       authorizedDate: todayForModal,
-      overtimeTasks: '',
+      overtimeTasks: inheritedTasks,
     });
   };
 

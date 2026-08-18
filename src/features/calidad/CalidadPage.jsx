@@ -62,39 +62,80 @@ const DEFECT_TYPES = [
   'Otro defecto',
 ];
 
+/** Hora normal de entrada del taller — primera ancla fija de la cuadrícula de bloques. */
+const BLOCK_GRID_ANCHOR_HOUR = 8;
+
 /**
- * Genera dinámicamente los bloques de horario laboral basados en la frecuencia global
- * y la hora máxima de salida en taller para ese día.
+ * Genera dinámicamente los bloques de horario laboral basados en la frecuencia global y el
+ * rango de horario (más temprano/más tarde) de la fecha para toda el área — este rango
+ * puede venir extendido por el tiempo extra de un solo colaborador (matutino o vespertino,
+ * incluidas medias horas), así que la cuadrícula de bloques es COMPARTIDA por todos los
+ * operarios del área ese día (luego cada quien filtra los que caen dentro de su propio
+ * horario, ver `opHasBlock` más abajo en el render).
+ *
+ * Los bloques se generan en TRES tramos, anclados siempre a {@link BLOCK_GRID_ANCHOR_HOUR}
+ * (8:00, entrada normal) y a `normalEndHour` (18:00 entre semana / 13:00 sábado, salida
+ * normal) — nunca iterando de corrido desde `minStartHour` hasta `maxEndHour` sin más:
+ *   1. Hacia atrás desde 8:00 hasta `minStartHour` (cubre tiempo extra matutino).
+ *   2. Hacia adelante desde 8:00 hasta `normalEndHour` (jornada normal).
+ *   3. Hacia adelante desde `normalEndHour` hasta `maxEndHour` (tiempo extra vespertino).
+ *
+ * Iterar de corrido desalinea la cuadrícula del día completo en cuanto cualquiera de los
+ * dos extremos no coincide EXACTO con 8:00/normalEndHour — pasa no solo con medias horas
+ * (ej. alguien entró 7:30) sino también con horas extra vespertinas en sábado cuando la
+ * duración de bloque no divide parejo la jornada corta (5h): con bloques de 2h, iterar
+ * desde 8:00 hasta un sábado extendido a 15:00 da 8-10, 10-12, 12-14, 14-15 — el bloque
+ * 12-14 rebasa la salida normal (13:00) de cualquier compañero SIN horas extra, así que
+ * pierde por completo su franja 12:00-13:00 aunque nunca trabajó tiempo extra. Anclar
+ * también en `normalEndHour` (no solo en 8:00) garantiza que cualquiera con horario
+ * estándar siempre tenga bloques limpios y completos, sin huecos, sin importar el horario
+ * extendido de sus compañeros ese día — los tramos irregulares (si sobra un pedazo menor a
+ * la duración completa) quedan siempre en los extremos, nunca dentro de la jornada normal.
  *
  * @param {number} blockDuration - Frecuencia de los bloques en horas (1, 2, 3)
- * @param {number} maxEndHour - Hora límite de salida en el taller
+ * @param {number} minStartHour - Hora de entrada más temprana del área ese día (admite medias horas)
+ * @param {number} maxEndHour - Hora de salida más tardía del área ese día (admite medias horas)
+ * @param {number} normalEndHour - Hora normal de salida de ese día (18 entre semana, 13 sábado)
  * @returns {Array<Object>} Bloques generados
  */
-const generateWorkBlocks = (blockDuration, minStartHour, maxEndHour) => {
-  const blocks = [];
+const generateWorkBlocks = (blockDuration, minStartHour, maxEndHour, normalEndHour) => {
   const duration = Number(blockDuration || 2);
-  
-  let current = Number(minStartHour || 8);
-  let blockIndex = 1;
-  
-  while (current < maxEndHour) {
-    const next = Math.min(current + duration, maxEndHour);
-    const startStr = String(current).padStart(2, '0');
-    const endStr = String(next).padStart(2, '0');
-    
-    blocks.push({
-      id: `b-${current}-${next}`,
-      name: `Bloque ${blockIndex}`,
-      timeRange: `${startStr}:00 - ${endStr}:00`,
-      startHour: current,
-      endHour: next,
-    });
-    
-    current = next;
-    blockIndex += 1;
+  const start = Number(minStartHour ?? BLOCK_GRID_ANCHOR_HOUR);
+  const end = Number(maxEndHour ?? BLOCK_GRID_ANCHOR_HOUR);
+  const normalEnd = Math.min(Number(normalEndHour ?? end), end);
+
+  const ranges = [];
+
+  let cursor = BLOCK_GRID_ANCHOR_HOUR;
+  while (cursor > start) {
+    const prev = Math.max(cursor - duration, start);
+    ranges.unshift({ start: prev, end: cursor });
+    cursor = prev;
   }
-  
-  return blocks;
+
+  cursor = BLOCK_GRID_ANCHOR_HOUR;
+  while (cursor < normalEnd) {
+    const next = Math.min(cursor + duration, normalEnd);
+    ranges.push({ start: cursor, end: next });
+    cursor = next;
+  }
+
+  cursor = normalEnd;
+  while (cursor < end) {
+    const next = Math.min(cursor + duration, end);
+    ranges.push({ start: cursor, end: next });
+    cursor = next;
+  }
+
+  return ranges.map(({ start: s, end: e }, index) => ({
+    id: `b-${s}-${e}`,
+    name: `Bloque ${index + 1}`,
+    // formatHourLabel convierte medias horas a "HH:MM" (ej. 13.5 -> "13:30") en vez de
+    // mostrar "13.5:00".
+    timeRange: `${formatHourLabel(s)} - ${formatHourLabel(e)}`,
+    startHour: s,
+    endHour: e,
+  }));
 };
 
 /**
@@ -104,7 +145,11 @@ const generateWorkBlocks = (blockDuration, minStartHour, maxEndHour) => {
  */
 const getLiveBlockId = (blocks) => {
   const now = new Date();
-  const currentHour = now.getHours();
+  // Hora decimal (ej. 13.75 = 13:45), no solo now.getHours() — desde que las horas extra
+  // admiten medias horas, un bloque puede empezar/terminar en punto medio (ej. 13.5) y
+  // truncar los minutos dejaba ese bloque marcado como "futuro" hasta que diera la
+  // siguiente hora en punto, en vez de desde su verdadera hora de inicio.
+  const currentHour = now.getHours() + now.getMinutes() / 60;
   const activeBlock = blocks.find(
     (b) => currentHour >= b.startHour && currentHour < b.endHour
   );
@@ -330,10 +375,13 @@ const CalidadPage = () => {
     }, defaultEnd);
   }, [areaOperarios, defaultEnd, selectedDate, horasExtra]);
 
-  // Generar bloques correspondientes a la duración elegida y la jornada extendida máxima
+  // Generar bloques correspondientes a la duración elegida y la jornada extendida máxima —
+  // se pasa `defaultEnd` como ancla de salida normal (18 entre semana / 13 sábado) para que
+  // una extensión vespertina de un solo colaborador no desalinee el bloque de quienes
+  // salen a su hora normal (ver JSDoc de generateWorkBlocks).
   const activeBlocks = useMemo(() => {
-    return generateWorkBlocks(blockDuration, minStartHour, maxEndHour);
-  }, [blockDuration, minStartHour, maxEndHour]);
+    return generateWorkBlocks(blockDuration, minStartHour, maxEndHour, defaultEnd);
+  }, [blockDuration, minStartHour, maxEndHour, defaultEnd]);
 
   // Determinar bloque activo en curso
   const liveBlockId = useMemo(() => {
@@ -2036,7 +2084,11 @@ const CalidadPage = () => {
                             // actual) no es "pasado" — antes cualquier bloque que no fuera el
                             // vivo se trataba como "previo" y quedaba editable, lo que permitía
                             // abrir y calificar bloques FUTUROS por error.
-                            const currentHour = new Date().getHours();
+                            // Hora decimal (ej. 13.75 = 13:45), no solo getHours() — un bloque
+                            // que empieza en punto medio (ej. 13.5, por una hora extra de media
+                            // hora) se quedaba marcado como "aún no llega" hasta la siguiente
+                            // hora en punto, en vez de desbloquearse en su verdadera hora.
+                            const currentHour = new Date().getHours() + new Date().getMinutes() / 60;
                             const isFutureBlock = selectedDate === todayStr && !isLive && block.startHour > currentHour;
                             const isPastBlock = selectedDate < todayStr || (selectedDate === todayStr && !isLive && !isFutureBlock);
                             const isOpAbsent = Boolean(op.estado?.tipo && op.estado.tipo !== 'activo');

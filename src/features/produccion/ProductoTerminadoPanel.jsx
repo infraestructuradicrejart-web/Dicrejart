@@ -283,10 +283,21 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     // horario visible (exige que la fecha sea exactamente hoy) — el guardado "funcionaba"
     // (toast de éxito) pero nada cambiaba en la tabla. Mismo criterio que overtimeTasks,
     // que también arranca vacío en vez de heredar el valor de la autorización anterior.
+    //
+    // EXCEPCIÓN: si ya existe una autorización VIGENTE (no cancelada) de HOY para este
+    // colaborador, sí se recupera su texto de tareas para no perderlo al redefinir el
+    // horario del día — ej. se autorizó tiempo extra matutino en la mañana con su
+    // descripción, y en la tarde surge la necesidad de extender también el bloque
+    // vespertino: guardar (handleSaveSchedule) cancela esa autorización previa y crea una
+    // nueva combinada, así que sin esto el texto de la mañana desaparecía en automático.
+    const existingTodayHE = horasExtra.find(
+      (h) => h.operarioId === op.id && h.authorizedDate === todayStr && h.verificationStatus !== 'cancelado'
+    );
+    const inheritedTasks = existingTodayHE?.overtimeTasks || '';
     if (esFechaDomingo(todayStr)) {
       setScheduleModal({
         isOpen: true, collaborator: op, startHour: '8', endHour: '18',
-        overtimeHours: '10', authorizedDate: todayStr, overtimeTasks: '',
+        overtimeHours: '10', authorizedDate: todayStr, overtimeTasks: inheritedTasks,
       });
       return;
     }
@@ -300,7 +311,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
       endHour: String(prefilledEnd),
       overtimeHours: String(earlyHours + lateHours),
       authorizedDate: todayStr,
-      overtimeTasks: '',
+      overtimeTasks: inheritedTasks,
     });
   };
 
