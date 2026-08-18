@@ -24,7 +24,7 @@ import useConfig from '../../hooks/useConfig';
 import { ROLE_TYPES, ROLE_TYPE_LABELS } from '../../data/usersData';
 import useAreas from '../../hooks/useAreas';
 import PageHeader from '../../components/ui/PageHeader';
-import { triggerDailyRHNotification } from '../../services/rhNotificationService';
+import { triggerDailyRHNotification, triggerRHOvertimeNotification } from '../../services/rhNotificationService';
 import { canAccessSection, isReadOnlySection } from '../../utils/roleAccess';
 import styles from './AdminPage.module.css';
 
@@ -677,6 +677,101 @@ const AdminPage = () => {
                       });
                       if (res && res.ok) {
                         toast.success(`📧 Reporte de RH preparado correctamente (${res.absentCount} personal ausente, ${res.horasExtraCount} hora(s) extra autorizadas). Destinatario: ${res.emailTarget}.`);
+                        setRhPreviewModal({ isOpen: true, notifRecord: res.record });
+                      } else {
+                        toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+                      }
+                    }}
+                  >
+                    📧 Probar / Enviar Ahora
+                  </Button>
+                </div>
+              </div>
+
+              {/* Opción RH-2: Correo vespertino/sabatino solo con horas extra autorizadas */}
+              <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-3)', backgroundColor: 'var(--color-gray-50)', borderRadius: '8px', border: '1px solid var(--color-gray-200)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div>
+                    <strong style={{ fontSize: '14px', color: 'var(--color-dark)' }}>🕒 Relación de Horas Extra a RH (Tarde)</strong>
+                    <p style={{ fontSize: '12px', color: 'var(--color-gray-600)', margin: '2px 0 0 0' }}>
+                      Envía solo la relación de personal con horas extra autorizadas hoy: Lun-Vie a las 17:30, sábado a las 12:00 (sin envío en domingo).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${generalConfig.notificarHorasExtraRH !== false ? styles.toggleActive : ''}`}
+                    onClick={() => {
+                      const nextVal = generalConfig.notificarHorasExtraRH === false;
+                      updateGeneralConfig('notificarHorasExtraRH', nextVal);
+                      toast.info(nextVal ? 'Correo de horas extra a RH activado.' : 'Correo de horas extra a RH desactivado.');
+                    }}
+                  >
+                    <span className={styles.toggleKnob} />
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' }}>
+                  <div>
+                    <label htmlFor="hora-he-semana-input" style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--color-dark)' }}>
+                      Hora Envío (Lun-Vie):
+                    </label>
+                    <input
+                      id="hora-he-semana-input"
+                      type="time"
+                      value={generalConfig.horaNotificacionHorasExtraRHSemana || '17:30'}
+                      onChange={(e) => updateGeneralConfig('horaNotificacionHorasExtraRHSemana', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '6px 8px',
+                        fontSize: '13px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-gray-300)',
+                        marginTop: '4px',
+                        textAlign: 'center'
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="hora-he-sabado-input" style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--color-dark)' }}>
+                      Hora Envío (Sábado):
+                    </label>
+                    <input
+                      id="hora-he-sabado-input"
+                      type="time"
+                      value={generalConfig.horaNotificacionHorasExtraRHSabado || '12:00'}
+                      onChange={(e) => updateGeneralConfig('horaNotificacionHorasExtraRHSabado', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '6px 8px',
+                        fontSize: '13px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-gray-300)',
+                        marginTop: '4px',
+                        textAlign: 'center'
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', paddingTop: '8px', borderTop: '1px dashed var(--color-gray-300)' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>
+                    Último envío: {generalConfig.lastRHOvertimeNotificationDate ? `Enviado hoy (${generalConfig.lastRHOvertimeNotificationDate})` : 'Pendiente hoy'}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={async () => {
+                      const res = await triggerRHOvertimeNotification({
+                        horasExtra,
+                        generalConfig,
+                        updateGeneralConfig,
+                        force: true,
+                        user,
+                        horaLabel: 'Prueba Manual',
+                      });
+                      if (res && res.ok) {
+                        toast.success(`📧 Relación de horas extra preparada correctamente (${res.horasExtraCount} autorización(es)). Destinatario: ${res.emailTarget}.`);
                         setRhPreviewModal({ isOpen: true, notifRecord: res.record });
                       } else {
                         toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
@@ -1342,21 +1437,25 @@ const AdminPage = () => {
         </Modal>
       )}
 
-      {/* MODAL: VISTA PREVIA DE NOTIFICACIÓN A RH (10:00 AM) */}
+      {/* MODAL: VISTA PREVIA DE NOTIFICACIÓN A RH (10:00 AM o correo de horas extra) */}
       {rhPreviewModal.isOpen && rhPreviewModal.notifRecord && (
         <Modal
           isOpen={rhPreviewModal.isOpen}
           onClose={() => setRhPreviewModal({ isOpen: false, notifRecord: null })}
-          title="📧 Reporte Diario para Recursos Humanos (RH)"
+          title={rhPreviewModal.notifRecord.type === 'horas_extra' ? '📧 Relación de Horas Extra para RH' : '📧 Reporte Diario para Recursos Humanos (RH)'}
           size="lg"
         >
           <div style={{ padding: '4px 0' }}>
             <div style={{ padding: '12px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '16px', fontSize: '13px' }}>
               <p style={{ margin: '0 0 4px 0' }}><strong>Destinatario RH:</strong> <span style={{ color: '#2563eb', fontWeight: 'bold' }}>{rhPreviewModal.notifRecord.emailRH}</span></p>
-              <p style={{ margin: '0 0 4px 0' }}><strong>Horario del corte:</strong> 10:00 AM ({rhPreviewModal.notifRecord.date})</p>
-              <p style={{ margin: '0 0 4px 0' }}><strong>Total Personal Ausente:</strong> <Badge variant={rhPreviewModal.notifRecord.absentCount > 0 ? 'danger' : 'success'}>{rhPreviewModal.notifRecord.absentCount} colaborador(es)</Badge></p>
+              <p style={{ margin: '0 0 4px 0' }}><strong>Fecha:</strong> {rhPreviewModal.notifRecord.date}</p>
               <p style={{ margin: '0 0 4px 0' }}><strong>Total Horas Extra Autorizadas:</strong> <Badge variant={rhPreviewModal.notifRecord.horasExtraCount > 0 ? 'warning' : 'neutral'}>{rhPreviewModal.notifRecord.horasExtraCount || 0} autorización(es)</Badge></p>
-              <p style={{ margin: 0 }}><strong>Verificaciones/Correcciones de Días Anteriores:</strong> <Badge variant={rhPreviewModal.notifRecord.verifiedPreviousDaysCount > 0 ? 'danger' : 'neutral'}>{rhPreviewModal.notifRecord.verifiedPreviousDaysCount || 0} registro(s)</Badge></p>
+              {rhPreviewModal.notifRecord.type !== 'horas_extra' && (
+                <>
+                  <p style={{ margin: '0 0 4px 0' }}><strong>Total Personal Ausente:</strong> <Badge variant={rhPreviewModal.notifRecord.absentCount > 0 ? 'danger' : 'success'}>{rhPreviewModal.notifRecord.absentCount} colaborador(es)</Badge></p>
+                  <p style={{ margin: 0 }}><strong>Verificaciones/Correcciones de Días Anteriores:</strong> <Badge variant={rhPreviewModal.notifRecord.verifiedPreviousDaysCount > 0 ? 'danger' : 'neutral'}>{rhPreviewModal.notifRecord.verifiedPreviousDaysCount || 0} registro(s)</Badge></p>
+                </>
+              )}
             </div>
 
             <div style={{ border: '1px solid #cbd5e1', borderRadius: '8px', overflow: 'hidden', maxHeight: '420px', overflowY: 'auto' }}>

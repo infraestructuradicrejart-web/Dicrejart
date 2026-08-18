@@ -51,6 +51,10 @@ export const DEFAULT_GENERAL_CONFIG = {
   horaNotificacionRH: '10:00',
   notificarFaltasRH: true,
   lastRHNotificationDate: '',
+  notificarHorasExtraRH: true,
+  horaNotificacionHorasExtraRHSemana: '17:30',
+  horaNotificacionHorasExtraRHSabado: '12:00',
+  lastRHOvertimeNotificationDate: '',
 };
 
 export const ConfigProvider = ({ children }) => {

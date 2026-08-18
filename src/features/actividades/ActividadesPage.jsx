@@ -9,7 +9,7 @@
  * @requires framer-motion
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -85,6 +85,10 @@ const ActividadesPage = () => {
   } = useActividades();
   const [areaFilter, setAreaFilter] = useState('todas');
   const [statusFilter, setStatusFilter] = useState('activos');
+  // 'general' = listado plano (como siempre); 'operario' = agrupado por operario, con cada
+  // grupo colapsable para ver solo lo que le corresponde a esa persona.
+  const [viewMode, setViewMode] = useState('general');
+  const [expandedOperarios, setExpandedOperarios] = useState(new Set());
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newActivity, setNewActivity] = useState(EMPTY_ACTIVITY_FORM);
@@ -106,6 +110,7 @@ const ActividadesPage = () => {
     isOpen: false,
     activityId: null,
     title: '',
+    notes: '',
   });
 
   const { operarios } = useOperarios();
@@ -199,15 +204,19 @@ const ActividadesPage = () => {
   const handleAdvanceStatus = (activityId) => {
     const act = actividades.find((a) => a.id === activityId);
     if (act?.status === 'proceso') {
-      setCompleteConfirmation({ isOpen: true, activityId, title: act.title });
+      setCompleteConfirmation({ isOpen: true, activityId, title: act.title, notes: '' });
       return;
     }
     advanceStatus(activityId);
   };
 
   const handleConfirmCompleteActivity = () => {
-    advanceStatus(completeConfirmation.activityId);
-    setCompleteConfirmation({ isOpen: false, activityId: null, title: '' });
+    if (!completeConfirmation.notes.trim()) {
+      toast.danger('Indica qué se hizo o verificó antes de marcar la actividad como completada.');
+      return;
+    }
+    advanceStatus(completeConfirmation.activityId, completeConfirmation.notes);
+    setCompleteConfirmation({ isOpen: false, activityId: null, title: '', notes: '' });
   };
 
   const handleDeleteActivity = (activityId, title) => {
@@ -254,6 +263,15 @@ const ActividadesPage = () => {
     removeChecklistItem(checklistModal.activityId, itemId);
   };
 
+  /** Expande/colapsa el panel de actividades de un operario en la vista "Por Operario". */
+  const toggleOperarioExpanded = (key) => {
+    setExpandedOperarios((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
   // ============================================
   // FILTRADO
   // ============================================
@@ -285,6 +303,40 @@ const ActividadesPage = () => {
     showMore: showMoreFilteredActividades,
   } = useProgressiveList(filteredActividades, { resetKey: `${areaFilter}-${statusFilter}` });
 
+  // Agrupa las actividades filtradas por operario responsable, para la vista "Por
+  // Operario" — las que no tienen a nadie específico asignado van en un grupo aparte al
+  // final, en vez de perderse de la vista.
+  const SIN_ASIGNAR_KEY = '__sin_asignar__';
+  const operarioGroups = useMemo(() => {
+    const map = new Map();
+    filteredActividades.forEach((act) => {
+      const key = act.operarioId || SIN_ASIGNAR_KEY;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(act);
+    });
+
+    const groups = Array.from(map.entries()).map(([key, acts]) => {
+      const isUnassigned = key === SIN_ASIGNAR_KEY;
+      const operario = isUnassigned ? null : operarios.find((op) => op.id === key);
+      const pendientes = acts.filter((a) => a.status !== 'completado').length;
+      return {
+        key,
+        name: isUnassigned ? 'Sin asignar a alguien específico' : (operario?.name || key),
+        areaName: operario ? getAreaName(operario.currentArea) : null,
+        activities: acts,
+        pendientes,
+        isUnassigned,
+      };
+    });
+
+    groups.sort((a, b) => {
+      if (a.isUnassigned !== b.isUnassigned) return a.isUnassigned ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return groups;
+  }, [filteredActividades, operarios]);
+
   // ============================================
   // ANIMACIONES
   // ============================================
@@ -295,6 +347,141 @@ const ActividadesPage = () => {
   const cardVariants = {
     initial: { opacity: 0, y: 15 },
     animate: { opacity: 1, y: 0, transition: { duration: 0.3 } },
+  };
+
+  /** Renderiza la tarjeta de una actividad — se reutiliza en la vista general y en la vista Por Operario. */
+  const renderActivityCard = (act) => {
+    const isOverdue = Boolean(act.dueDate) && act.dueDate < todayStr && act.status !== 'completado';
+    const checklistTotal = act.checklist?.length || 0;
+    const checklistDone = act.checklist?.filter((c) => c.checked).length || 0;
+    const checklistPct = checklistTotal > 0 ? Math.round((checklistDone / checklistTotal) * 100) : null;
+
+    return (
+      <motion.div key={act.id} variants={cardVariants}>
+        <Card variant="default" className={styles.activityCard}>
+          <div className={styles.cardHeader}>
+            <span className={styles.activityId}>{act.id}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {isOverdue && <Badge variant="danger">⏰ Vencida</Badge>}
+              <Badge variant={PRIORITY_BADGE_VARIANT[act.priority]}>
+                {PRIORITY_LABELS[act.priority]}
+              </Badge>
+            </div>
+          </div>
+          <h3 className={styles.activityTitle}>{act.title}</h3>
+          <p className={styles.activityDesc}>{act.description}</p>
+
+          <div className={styles.metaRow}>
+            <span className={styles.metaLabel}>Área:</span>
+            <strong>{getAreaName(act.areaId)}</strong>
+          </div>
+          <div className={styles.metaRow}>
+            <span className={styles.metaLabel}>Responsable:</span>
+            <strong>{getOperarioName(act.operarioId) || 'Sin asignar específico'}</strong>
+          </div>
+          {act.projectName && (
+            <div className={styles.metaRow}>
+              <span className={styles.metaLabel}>Proyecto:</span>
+              <strong>{act.projectName}</strong>
+            </div>
+          )}
+          {act.gameName && (
+            <div className={styles.metaRow}>
+              <span className={styles.metaLabel}>Juego:</span>
+              <strong>🧩 {act.gameName}</strong>
+            </div>
+          )}
+          {act.dueDate && (
+            <div className={styles.metaRow}>
+              <span className={styles.metaLabel}>Fecha límite:</span>
+              <strong>{act.dueDate}</strong>
+            </div>
+          )}
+          {checklistTotal > 0 && (
+            <div className={styles.metaRow}>
+              <span className={styles.metaLabel}>Avance:</span>
+              <strong>{checklistDone}/{checklistTotal} ({checklistPct}%)</strong>
+            </div>
+          )}
+          {act.status === 'completado' && act.completionNotes && (
+            <div style={{ fontSize: '12px', color: 'var(--color-gray-600)', backgroundColor: 'var(--color-gray-50)', border: '1px solid var(--color-gray-100)', borderRadius: '6px', padding: '8px 10px', marginTop: '2px' }}>
+              <strong style={{ color: 'var(--color-dark)' }}>✅ Cierre:</strong> {act.completionNotes}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' }}>
+            {isReadOnly ? (
+              <Badge variant={STATUS_BADGE_VARIANT[act.status]}>
+                {ACTIVITY_STATUS_LABELS[act.status]}
+              </Badge>
+            ) : (
+              <button
+                type="button"
+                className={styles.statusToggle}
+                onClick={() => handleAdvanceStatus(act.id)}
+                title="Clic para avanzar el estatus"
+                style={{ margin: 0 }}
+              >
+                <Badge variant={STATUS_BADGE_VARIANT[act.status]}>
+                  {ACTIVITY_STATUS_LABELS[act.status]}
+                </Badge>
+              </button>
+            )}
+
+            {!isReadOnly && (
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  type="button"
+                  onClick={() => handleOpenChecklistModal(act.id)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--color-primary)',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    padding: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '4px',
+                    transition: 'background-color 0.2s',
+                  }}
+                  title="Checklist de Subtareas"
+                  onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 153, 51, 0.1)')}
+                  onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
+                >
+                  📋
+                </button>
+                {act.status === 'pendiente' && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteActivity(act.id, act.title)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--color-alert)',
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                      padding: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '4px',
+                      transition: 'background-color 0.2s',
+                    }}
+                    title="Eliminar Actividad"
+                    onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 51, 0, 0.1)')}
+                    onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    🗑️
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </Card>
+      </motion.div>
+    );
   };
 
   return (
@@ -340,154 +527,92 @@ const ActividadesPage = () => {
             ]}
           />
         </div>
+        <div className={styles.filterWrapper} style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', minWidth: 'auto' }}>
+          <Button variant={viewMode === 'general' ? 'primary' : 'secondary'} size="md" onClick={() => setViewMode('general')}>
+            📋 Vista General
+          </Button>
+          <Button variant={viewMode === 'operario' ? 'primary' : 'secondary'} size="md" onClick={() => setViewMode('operario')}>
+            👤 Por Operario
+          </Button>
+        </div>
       </div>
 
       {/* ============================================
           LISTADO DE ACTIVIDADES
           ============================================ */}
-      {filteredActividades.length > 0 ? (
-        <motion.div className={styles.grid} variants={listVariants} initial="initial" animate="animate">
-          {visibleFilteredActividades.map((act) => {
-            const isOverdue = Boolean(act.dueDate) && act.dueDate < todayStr && act.status !== 'completado';
-            const checklistTotal = act.checklist?.length || 0;
-            const checklistDone = act.checklist?.filter((c) => c.checked).length || 0;
-            const checklistPct = checklistTotal > 0 ? Math.round((checklistDone / checklistTotal) * 100) : null;
-
-            return (
-            <motion.div key={act.id} variants={cardVariants}>
-              <Card variant="default" className={styles.activityCard}>
-                <div className={styles.cardHeader}>
-                  <span className={styles.activityId}>{act.id}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    {isOverdue && <Badge variant="danger">⏰ Vencida</Badge>}
-                    <Badge variant={PRIORITY_BADGE_VARIANT[act.priority]}>
-                      {PRIORITY_LABELS[act.priority]}
-                    </Badge>
-                  </div>
-                </div>
-                <h3 className={styles.activityTitle}>{act.title}</h3>
-                <p className={styles.activityDesc}>{act.description}</p>
-
-                <div className={styles.metaRow}>
-                  <span className={styles.metaLabel}>Área:</span>
-                  <strong>{getAreaName(act.areaId)}</strong>
-                </div>
-                <div className={styles.metaRow}>
-                  <span className={styles.metaLabel}>Responsable:</span>
-                  <strong>{getOperarioName(act.operarioId) || 'Sin asignar específico'}</strong>
-                </div>
-                {act.projectName && (
-                  <div className={styles.metaRow}>
-                    <span className={styles.metaLabel}>Proyecto:</span>
-                    <strong>{act.projectName}</strong>
-                  </div>
-                )}
-                {act.gameName && (
-                  <div className={styles.metaRow}>
-                    <span className={styles.metaLabel}>Juego:</span>
-                    <strong>🧩 {act.gameName}</strong>
-                  </div>
-                )}
-                {act.dueDate && (
-                  <div className={styles.metaRow}>
-                    <span className={styles.metaLabel}>Fecha límite:</span>
-                    <strong>{act.dueDate}</strong>
-                  </div>
-                )}
-                {checklistTotal > 0 && (
-                  <div className={styles.metaRow}>
-                    <span className={styles.metaLabel}>Avance:</span>
-                    <strong>{checklistDone}/{checklistTotal} ({checklistPct}%)</strong>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' }}>
-                  {isReadOnly ? (
-                    <Badge variant={STATUS_BADGE_VARIANT[act.status]}>
-                      {ACTIVITY_STATUS_LABELS[act.status]}
-                    </Badge>
-                  ) : (
-                    <button
-                      type="button"
-                      className={styles.statusToggle}
-                      onClick={() => handleAdvanceStatus(act.id)}
-                      title="Clic para avanzar el estatus"
-                      style={{ margin: 0 }}
-                    >
-                      <Badge variant={STATUS_BADGE_VARIANT[act.status]}>
-                        {ACTIVITY_STATUS_LABELS[act.status]}
-                      </Badge>
-                    </button>
-                  )}
-
-                  {!isReadOnly && (
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenChecklistModal(act.id)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: 'var(--color-primary)',
-                          cursor: 'pointer',
-                          fontSize: '16px',
-                          padding: '4px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          borderRadius: '4px',
-                          transition: 'background-color 0.2s',
-                        }}
-                        title="Checklist de Subtareas"
-                        onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 153, 51, 0.1)')}
-                        onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
-                      >
-                        📋
-                      </button>
-                      {act.status === 'pendiente' && (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteActivity(act.id, act.title)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: 'var(--color-alert)',
-                            cursor: 'pointer',
-                            fontSize: '16px',
-                            padding: '4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '4px',
-                            transition: 'background-color 0.2s',
-                          }}
-                          title="Eliminar Actividad"
-                          onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 51, 0, 0.1)')}
-                          onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
-                        >
-                          🗑️
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </Card>
-            </motion.div>
-            );
-          })}
-        </motion.div>
-      ) : (
+      {filteredActividades.length === 0 ? (
         <EmptyState
           message="No se encontraron actividades con los filtros actuales."
           shape="trebol"
           color="var(--color-princeton-orange)"
         />
-      )}
-      {hasMoreFilteredActividades && (
-        <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
-          <Button variant="secondary" onClick={showMoreFilteredActividades}>
-            Cargar {Math.min(remainingFilteredActividades, 15)} más ({remainingFilteredActividades} restantes)
-          </Button>
+      ) : viewMode === 'general' ? (
+        <>
+          <motion.div className={styles.grid} variants={listVariants} initial="initial" animate="animate">
+            {visibleFilteredActividades.map(renderActivityCard)}
+          </motion.div>
+          {hasMoreFilteredActividades && (
+            <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
+              <Button variant="secondary" onClick={showMoreFilteredActividades}>
+                Cargar {Math.min(remainingFilteredActividades, 15)} más ({remainingFilteredActividades} restantes)
+              </Button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          {operarioGroups.map((group) => {
+            const isExpanded = expandedOperarios.has(group.key);
+            return (
+              <Card key={group.key} variant="default" style={{ opacity: group.isUnassigned ? 0.85 : 1 }}>
+                <button
+                  type="button"
+                  onClick={() => toggleOperarioExpanded(group.key)}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                    textAlign: 'left',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: '15px', color: 'var(--color-secondary)' }}>
+                      {group.isUnassigned ? '❔' : '👤'} {group.name}
+                    </strong>
+                    {group.areaName && (
+                      <span style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>{group.areaName}</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {group.pendientes > 0 && (
+                      <Badge variant="warning" size="sm">{group.pendientes} activa(s)</Badge>
+                    )}
+                    <Badge variant="neutral" size="sm">{group.activities.length} total</Badge>
+                    <span style={{ fontSize: '12px', color: 'var(--color-gray-500)' }}>{isExpanded ? '▲' : '▼'}</span>
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <motion.div
+                    className={styles.grid}
+                    variants={listVariants}
+                    initial="initial"
+                    animate="animate"
+                    style={{ marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--color-gray-100)' }}
+                  >
+                    {group.activities.map(renderActivityCard)}
+                  </motion.div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -647,22 +772,34 @@ const ActividadesPage = () => {
       {completeConfirmation.isOpen && (
         <Modal
           isOpen={completeConfirmation.isOpen}
-          onClose={() => setCompleteConfirmation({ isOpen: false, activityId: null, title: '' })}
+          onClose={() => setCompleteConfirmation({ isOpen: false, activityId: null, title: '', notes: '' })}
           title="✅ Confirmar Actividad Completada"
         >
           <div style={{ padding: 'var(--space-2) 0' }}>
             <p style={{ marginBottom: 'var(--space-4)', fontSize: 'var(--body-size)', color: 'var(--color-dark)' }}>
               ¿Confirmas que la actividad <strong>{completeConfirmation.title}</strong> ya se completó?
             </p>
-            <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginBottom: 'var(--space-5)' }}>
-              Se guardará la fecha de cierre. Si te equivocas, puedes reabrirla después dándole clic de nuevo al estatus.
+            <div className={styles.formGroup}>
+              <label className={styles.label}>¿Qué se hizo o verificó? *</label>
+              <textarea
+                className={styles.textarea}
+                rows="3"
+                required
+                autoFocus
+                placeholder="Ej: Se realizó el mantenimiento preventivo del compresor, se probó y quedó funcionando..."
+                value={completeConfirmation.notes}
+                onChange={(e) => setCompleteConfirmation((prev) => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', margin: 'var(--space-2) 0 var(--space-5)' }}>
+              Se guardará junto con la fecha de cierre. Si te equivocas, puedes reabrirla después dándole clic de nuevo al estatus.
             </p>
             <div className={styles.formActions} style={{ marginTop: 'var(--space-4)' }}>
               <Button
                 type="button"
                 variant="secondary"
                 size="md"
-                onClick={() => setCompleteConfirmation({ isOpen: false, activityId: null, title: '' })}
+                onClick={() => setCompleteConfirmation({ isOpen: false, activityId: null, title: '', notes: '' })}
               >
                 Cancelar
               </Button>

@@ -9,13 +9,13 @@
 import { doc, setDoc, collection, addDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { getTodayLocalDateStr } from '../utils/dateUtils';
-import { getOvertimeBlocks } from '../utils/overtimeUtils';
+import { getOvertimeBlocks, formatHourLabel } from '../utils/overtimeUtils';
 import { logAudit } from '../utils/auditLog';
 
 /** Describe en texto el/los bloque(s) de tiempo extra de una autorización (matutino y/o vespertino, o domingo completo). */
 const describeOvertimeBlocks = (he) => {
   if (he.authorizedDate && new Date(`${he.authorizedDate}T00:00:00`).getDay() === 0) {
-    return `Domingo Completo ${he.overtimeHours}h (${String(he.startHour).padStart(2, '0')}:00-${String(he.endHour).padStart(2, '0')}:00)`;
+    return `Domingo Completo ${he.overtimeHours}h (${formatHourLabel(he.startHour)}-${formatHourLabel(he.endHour)})`;
   }
   const { earlyHours, earlyRange, lateHours, lateRange } = getOvertimeBlocks(he.startHour, he.endHour, he.authorizedDate);
   const parts = [];
@@ -34,10 +34,10 @@ const describeScheduleCorrection = (he) => {
   if (!correction) return null;
   const parts = [];
   if (correction.actualStartHour !== he.startHour) {
-    parts.push(`Entrada real ${String(correction.actualStartHour).padStart(2, '0')}:00 (autorizado ${String(he.startHour).padStart(2, '0')}:00)`);
+    parts.push(`Entrada real ${formatHourLabel(correction.actualStartHour)} (autorizado ${formatHourLabel(he.startHour)})`);
   }
   if (correction.actualEndHour !== he.endHour) {
-    parts.push(`Salida real ${String(correction.actualEndHour).padStart(2, '0')}:00 (autorizado ${String(he.endHour).padStart(2, '0')}:00)`);
+    parts.push(`Salida real ${formatHourLabel(correction.actualEndHour)} (autorizado ${formatHourLabel(he.endHour)})`);
   }
   if (parts.length === 0) return null;
   return `${parts.join(' / ')} — Motivo: ${correction.reason} — Corrigió: ${correction.correctedBy}`;
@@ -293,6 +293,203 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
   `;
 
   return { subject, bodyText, bodyHtml };
+};
+
+/**
+ * Genera el cuerpo en texto y HTML del correo vespertino/sabatino de RH, que a diferencia
+ * del reporte de las 10:00 AM SOLO incluye la relación de personal con horas extra
+ * autorizadas el día de hoy (sin faltas ni verificaciones de días anteriores).
+ */
+export const buildRHOvertimeReportEmailContent = (horasExtraList, dateStr, emailRH, horaLabel) => {
+  const formattedDate = new Date(`${dateStr}T00:00:00`).toLocaleDateString('es-MX', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  const subject = `[Dicrejart System] Relación de Horas Extra Autorizadas - ${dateStr} (${horaLabel})`;
+
+  let textLines = [
+    `=============================================================`,
+    `DICREJART - RELACIÓN DE HORAS EXTRA AUTORIZADAS`,
+    `=============================================================`,
+    `Fecha: ${formattedDate}`,
+    `Hora de corte: ${horaLabel}`,
+    `Destinatario RH: ${emailRH || 'Por definir (No configurado)'}`,
+    `Total de autorizaciones hoy: ${horasExtraList.length}`,
+    `-------------------------------------------------------------`,
+    ``
+  ];
+
+  if (horasExtraList.length === 0) {
+    textLines.push(`No se autorizaron horas extra el día de hoy.`);
+  } else {
+    horasExtraList.forEach((he, index) => {
+      textLines.push(`${index + 1}. COLABORADOR: ${he.operarioName} (ID: ${he.operarioId})`);
+      textLines.push(`   • Área: ${he.areaId || 'N/A'}`);
+      textLines.push(`   • Puesto: ${he.operarioPuesto || 'N/A'}`);
+      textLines.push(`   • Horas Extra Autorizadas: ${describeOvertimeBlocks(he)}`);
+      textLines.push(`   • Tareas a Realizar: ${he.overtimeTasks || 'N/A'}`);
+      textLines.push(`   • Autorizó: ${he.authorizedBy || 'N/A'}`);
+      textLines.push(`-------------------------------------------------------------`);
+    });
+  }
+
+  textLines.push(``);
+  textLines.push(`Este correo fue generado automáticamente por el Sistema Integral Dicrejart a las ${horaLabel}.`);
+
+  const bodyText = textLines.join('\n');
+
+  const rowsHtml = horasExtraList.length === 0
+    ? `<tr><td colspan="5" style="padding: 16px; text-align: center; color: #6b7280; background-color: #f9fafb;">No se autorizaron horas extra el día de hoy.</td></tr>`
+    : horasExtraList.map((he, i) => `
+      <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #1f2937;">${he.operarioName} <br/><span style="font-size:11px; color:#6b7280; font-weight:normal;">ID: ${he.operarioId}</span></td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #374151;">${he.areaId || 'N/A'}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${describeOvertimeBlocks(he)}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #4b5563;">${he.overtimeTasks || 'N/A'}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280;">${he.authorizedBy || 'N/A'}</td>
+      </tr>
+    `).join('');
+
+  const bodyHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background-color: #ffffff;">
+      <div style="background-color: #1e293b; color: #ffffff; padding: 20px; text-align: center;">
+        <h2 style="margin: 0; font-size: 20px; font-weight: bold;">DICREJART - Control de Calidad y Operarios</h2>
+        <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Relación de Horas Extra Autorizadas (${horaLabel})</p>
+      </div>
+      <div style="padding: 20px;">
+        <p style="font-size: 14px; color: #374151;"><strong>Fecha del Reporte:</strong> ${formattedDate}</p>
+        <p style="font-size: 14px; color: #374151;"><strong>Destinatario RH:</strong> <span style="color: #2563eb;">${emailRH || 'Por definir'}</span></p>
+        <h3 style="font-size: 15px; color: #1f2937; border-bottom: 2px solid #1e293b; padding-bottom: 6px;">🕒 Horas Extra Autorizadas</h3>
+        <p style="font-size: 14px; color: #374151;"><strong>Total de Autorizaciones Hoy:</strong> <span style="background-color: #fef3c7; color: #92400e; padding: 3px 8px; border-radius: 4px; font-weight: bold;">${horasExtraList.length} autorización(es)</span></p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+          <thead>
+            <tr style="background-color: #f3f4f6; color: #374151; font-size: 12px; text-transform: uppercase;">
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Colaborador</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Área</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Horas</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Tareas</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Autorizó</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+      <div style="background-color: #f9fafb; padding: 12px 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; text-align: center;">
+        Generado automáticamente por el Sistema Dicrejart. Notificación programada para Recursos Humanos a las ${horaLabel}.
+      </div>
+    </div>
+  `;
+
+  return { subject, bodyText, bodyHtml };
+};
+
+/**
+ * Dispara o simula el envío del correo vespertino/sabatino de RH con la relación de horas
+ * extra autorizadas hoy (de lunes a viernes a las 17:30, sábado a las 12:00 — ver el
+ * chequeo de horario en OperariosContext.jsx). Reutiliza el mismo candado atómico por día
+ * que triggerDailyRHNotification, pero en su propio campo (`lastRHOvertimeNotificationDate`)
+ * para no interferir con el reporte de las 10:00 AM.
+ */
+export const triggerRHOvertimeNotification = async ({
+  horasExtra = [],
+  generalConfig = {},
+  updateGeneralConfig = null,
+  force = false,
+  user = null,
+  horaLabel = '',
+}) => {
+  const todayStr = getTodayLocalDateStr();
+
+  if (!force) {
+    if (generalConfig.notificarHorasExtraRH === false) {
+      return { ok: false, reason: 'Notificación de horas extra a RH desactivada en la configuración.' };
+    }
+
+    if (!db) return { ok: false, reason: 'Firestore no está inicializado.' };
+
+    try {
+      await runTransaction(db, async (tx) => {
+        const configRef = doc(db, 'config', 'general');
+        const snap = await tx.get(configRef);
+        const currentLastDate = snap.exists() ? snap.data().lastRHOvertimeNotificationDate : null;
+        if (currentLastDate === todayStr) {
+          throw new Error('ALREADY_SENT');
+        }
+        tx.set(configRef, { lastRHOvertimeNotificationDate: todayStr }, { merge: true });
+      });
+    } catch (error) {
+      if (error.message === 'ALREADY_SENT') {
+        return { ok: false, reason: 'El correo de horas extra ya fue enviado el día de hoy.' };
+      }
+      console.error('Error al reclamar el envío de horas extra a RH:', error);
+      return { ok: false, error: error.message };
+    }
+  }
+
+  const horasExtraList = horasExtra.filter((he) => he.authorizedDate === todayStr && he.verificationStatus !== 'cancelado');
+  const emailTarget = generalConfig.emailRH || 'recursoshumanos@dicrejart.com (Por definir)';
+  const label = horaLabel || new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+
+  const { subject, bodyText, bodyHtml } = buildRHOvertimeReportEmailContent(horasExtraList, todayStr, emailTarget, label);
+
+  const notifId = `NOTIF-RH-HE-${Date.now()}`;
+  const notifRecord = {
+    id: notifId,
+    type: 'horas_extra',
+    date: todayStr,
+    timestamp: new Date().toISOString(),
+    emailRH: emailTarget,
+    horasExtraCount: horasExtraList.length,
+    horasExtraList: horasExtraList.map((he) => ({
+      operarioId: he.operarioId,
+      operarioName: he.operarioName,
+      operarioPuesto: he.operarioPuesto || 'N/A',
+      areaId: he.areaId || 'N/A',
+      overtimeHours: he.overtimeHours,
+      startHour: he.startHour,
+      endHour: he.endHour,
+      overtimeTasks: he.overtimeTasks || '',
+      authorizedBy: he.authorizedBy || 'N/A',
+    })),
+    status: 'enviado',
+    subject,
+    bodyText,
+    bodyHtml,
+    enviadoPor: user ? user.name : (force ? 'Administrador' : `Sistema Programado (${label})`),
+  };
+
+  try {
+    if (db) {
+      await addDoc(collection(db, 'notificaciones_rh'), notifRecord);
+
+      if (updateGeneralConfig) {
+        await updateGeneralConfig('lastRHOvertimeNotificationDate', todayStr);
+      }
+    }
+
+    logAudit({
+      user: user || { name: `Sistema Programado (${label})`, roleType: 'system' },
+      module: 'operarios',
+      action: 'Generó notificación de horas extra a RH',
+      details: `Reporte enviado a ${emailTarget} con ${horasExtraList.length} autorización(es) de horas extra`
+    });
+
+    return {
+      ok: true,
+      horasExtraCount: horasExtraList.length,
+      emailTarget,
+      record: notifRecord,
+    };
+  } catch (error) {
+    console.error('Error al enviar notificación de horas extra a RH:', error);
+    return { ok: false, error: error.message };
+  }
 };
 
 /**

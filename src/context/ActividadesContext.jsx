@@ -149,9 +149,12 @@ export const ActividadesProvider = ({ children }) => {
 
   /**
    * Avanza el estatus de una actividad al siguiente en el ciclo en Firestore
-   * pendiente -> proceso -> completado -> pendiente
+   * pendiente -> proceso -> completado -> pendiente.
+   * `completionNotes` es obligatorio (validado en la UI, ver ActividadesPage.jsx) solo al
+   * llegar a 'completado' — es el candado para que cerrar una actividad no sea un solo
+   * clic sin dejar constancia de qué se hizo/verificó.
    */
-  const advanceStatus = useCallback(async (activityId) => {
+  const advanceStatus = useCallback(async (activityId, completionNotes = '') => {
     if (!db) return;
     const act = actividades.find((a) => a.id === activityId);
     if (!act) return;
@@ -167,9 +170,11 @@ export const ActividadesProvider = ({ children }) => {
       updates.startedAt = new Date().toISOString();
     } else if (newStatus === 'completado') {
       updates.completedAt = new Date().toISOString();
+      updates.completionNotes = completionNotes.trim();
     } else if (newStatus === 'pendiente') {
       updates.startedAt = null;
       updates.completedAt = null;
+      updates.completionNotes = '';
     }
 
     try {

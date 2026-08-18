@@ -27,6 +27,7 @@ import { PUESTO_LABELS, PUESTO_ICONS, PUESTO_BADGE_VARIANT, PUESTO_OPTIONS, DESI
 import useConfig from '../../hooks/useConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { triggerDailyRHNotification } from '../../services/rhNotificationService';
+import { formatHourLabel } from '../../utils/overtimeUtils';
 import useProgressiveList from '../../hooks/useProgressiveList';
 import PageHeader from '../../components/ui/PageHeader';
 import styles from './OperariosPage.module.css';
@@ -880,8 +881,8 @@ const OperariosPage = () => {
                     .sort((a, b) => a.authorizedDate.localeCompare(b.authorizedDate))[0];
                   const hasOvertimeFuture = Boolean(nextFutureHE);
 
-                  const startStr = String(hasOvertimeToday ? op.schedule.startHour : 8).padStart(2, '0');
-                  const endStr = String(hasOvertimeToday ? op.schedule.endHour : defaultEnd).padStart(2, '0');
+                  const startStr = formatHourLabel(hasOvertimeToday ? op.schedule.startHour : 8);
+                  const endStr = formatHourLabel(hasOvertimeToday ? op.schedule.endHour : defaultEnd);
 
                   return (
                     <tr key={op.id}>
@@ -902,7 +903,7 @@ const OperariosPage = () => {
                       <td data-label="Área" className={styles.areaSelectCell}>{getAreaName(op.currentArea)}</td>
                       <td data-label="Jornada / Horario">
                         <div className={styles.scheduleInfoBlock}>
-                          <span>{startStr}:00 - {endStr}:00</span>
+                          <span>{startStr} - {endStr}</span>
                           {hasOvertimeToday && (
                             <div className={styles.overtimeBadgeWrapper}>
                               <Badge variant="warning" size="sm">

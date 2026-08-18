@@ -30,7 +30,7 @@ import { AuthContext } from './AuthContext';
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
 import { getTodayLocalDateStr } from '../utils/dateUtils';
-import { triggerDailyRHNotification } from '../services/rhNotificationService';
+import { triggerDailyRHNotification, triggerRHOvertimeNotification } from '../services/rhNotificationService';
 import { checkOvertimeEligibility, calculateScheduleFromOvertime } from '../utils/overtimeRules';
 
 export const OperariosContext = createContext(null);
@@ -208,8 +208,50 @@ export const OperariosProvider = ({ children }) => {
       }
     };
 
+    // ============================================
+    // SEGUNDA NOTIFICACIÓN A RH: SOLO HORAS EXTRA (L-V 17:30, sábado 12:00, sin domingo)
+    // ============================================
+    const checkAndTriggerRHOvertimeNotification = async () => {
+      const currentGeneralConfig = generalConfigRef.current;
+      if (!currentGeneralConfig) return;
+      if (currentGeneralConfig.notificarHorasExtraRH === false) return;
+
+      const todayStr = getTodayLocalDateStr();
+      if (currentGeneralConfig.lastRHOvertimeNotificationDate === todayStr) return;
+
+      const now = new Date();
+      const dayOfWeek = now.getDay(); // 0=domingo, 6=sábado
+      if (dayOfWeek === 0) return; // sin envío los domingos
+
+      const targetTimeStr = dayOfWeek === 6
+        ? (currentGeneralConfig.horaNotificacionHorasExtraRHSabado || '12:00')
+        : (currentGeneralConfig.horaNotificacionHorasExtraRHSemana || '17:30');
+      const [targetHours, targetMinutes] = targetTimeStr.split(':').map(Number);
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+      const isPastTargetTime = currentHours > targetHours || (currentHours === targetHours && currentMinutes >= targetMinutes);
+
+      if (isPastTargetTime) {
+        const result = await triggerRHOvertimeNotification({
+          horasExtra: horasExtraRef.current,
+          generalConfig: currentGeneralConfig,
+          updateGeneralConfig,
+          force: false,
+          horaLabel: targetTimeStr,
+        });
+
+        if (result && result.ok) {
+          console.log(`📧 [Dicrejart RH Notification System] Relación de horas extra enviada a las ${targetTimeStr} para ${result.emailTarget} (${result.horasExtraCount} autorización(es)).`);
+        }
+      }
+    };
+
     checkAndTriggerRHNotification();
-    const intervalId = setInterval(checkAndTriggerRHNotification, 60000);
+    checkAndTriggerRHOvertimeNotification();
+    const intervalId = setInterval(() => {
+      checkAndTriggerRHNotification();
+      checkAndTriggerRHOvertimeNotification();
+    }, 60000);
 
     return () => clearInterval(intervalId);
   }, [updateGeneralConfig]);

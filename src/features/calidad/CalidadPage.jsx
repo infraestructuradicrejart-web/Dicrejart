@@ -24,7 +24,7 @@ import useAuth from '../../hooks/useAuth';
 import PageHeader from '../../components/ui/PageHeader';
 import { isReadOnlySection } from '../../utils/roleAccess';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
-import { getOvertimeBlocks } from '../../utils/overtimeUtils';
+import { getOvertimeBlocks, formatHourLabel } from '../../utils/overtimeUtils';
 import useProgressiveList from '../../hooks/useProgressiveList';
 import styles from './CalidadPage.module.css';
 
@@ -1885,7 +1885,7 @@ const CalidadPage = () => {
 
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center', marginTop: '2px' }}>
                                 <span style={{ fontSize: '10px', color: 'var(--color-gray-600)', backgroundColor: 'var(--color-gray-100)', padding: '2px 6px', borderRadius: '4px' }}>
-                                  ⏰ {String(opStartHour).padStart(2, '0')}:00 - {String(opEndHour).padStart(2, '0')}:00
+                                  ⏰ {formatHourLabel(opStartHour)} - {formatHourLabel(opEndHour)}
                                 </span>
                                 {opDateOvertimeRecord && (
                                   <Badge variant="warning" size="sm">
@@ -1949,7 +1949,7 @@ const CalidadPage = () => {
                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
                                       {Boolean(h.authorizedDate) && new Date(`${h.authorizedDate}T00:00:00`).getDay() === 0 ? (
                                         <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fdf2f8', color: '#9d174d', border: '1px solid #fbcfe8' }}>
-                                          📅 Domingo Completo: {h.overtimeHours}h ({String(h.startHour).padStart(2, '0')}:00-{String(h.endHour).padStart(2, '0')}:00)
+                                          📅 Domingo Completo: {h.overtimeHours}h ({formatHourLabel(h.startHour)}-{formatHourLabel(h.endHour)})
                                         </span>
                                       ) : (
                                         <>
@@ -2010,10 +2010,10 @@ const CalidadPage = () => {
                                     {h.scheduleCorrection && (
                                       <div style={{ marginTop: '4px', fontSize: '10.5px', color: '#b91c1c' }}>
                                         {h.scheduleCorrection.actualStartHour !== h.startHour && (
-                                          <div>⚠️ Entrada real: {String(h.scheduleCorrection.actualStartHour).padStart(2, '0')}:00 (autorizado {String(h.startHour).padStart(2, '0')}:00)</div>
+                                          <div>⚠️ Entrada real: {formatHourLabel(h.scheduleCorrection.actualStartHour)} (autorizado {formatHourLabel(h.startHour)})</div>
                                         )}
                                         {h.scheduleCorrection.actualEndHour !== h.endHour && (
-                                          <div>⚠️ Salida real: {String(h.scheduleCorrection.actualEndHour).padStart(2, '0')}:00 (autorizado {String(h.endHour).padStart(2, '0')}:00)</div>
+                                          <div>⚠️ Salida real: {formatHourLabel(h.scheduleCorrection.actualEndHour)} (autorizado {formatHourLabel(h.endHour)})</div>
                                         )}
                                         <div>Motivo: {h.scheduleCorrection.reason} — Corrigió: {h.scheduleCorrection.correctedBy}</div>
                                       </div>
@@ -2247,7 +2247,7 @@ const CalidadPage = () => {
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
                         {esDomingo ? (
                           <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '4px', background: '#fdf2f8', color: '#9d174d', border: '1px solid #fbcfe8' }}>
-                            📅 Domingo Completo: {h.overtimeHours}h ({String(h.startHour).padStart(2, '0')}:00-{String(h.endHour).padStart(2, '0')}:00)
+                            📅 Domingo Completo: {h.overtimeHours}h ({formatHourLabel(h.startHour)}-{formatHourLabel(h.endHour)})
                           </span>
                         ) : (
                           <>
@@ -2407,12 +2407,12 @@ const CalidadPage = () => {
         const { earlyHours, lateHours, baseStartHour, baseEndHour } = getOvertimeBlocks(targetHE.startHour, targetHE.endHour, targetHE.authorizedDate);
 
         const startOptions = [];
-        for (let hVal = targetHE.startHour; hVal <= baseStartHour; hVal += 1) {
-          startOptions.push({ value: String(hVal), label: `${String(hVal).padStart(2, '0')}:00` });
+        for (let hVal = targetHE.startHour; hVal <= baseStartHour; hVal += 0.5) {
+          startOptions.push({ value: String(hVal), label: formatHourLabel(hVal) });
         }
         const endOptions = [];
-        for (let hVal = baseEndHour; hVal <= targetHE.endHour; hVal += 1) {
-          endOptions.push({ value: String(hVal), label: `${String(hVal).padStart(2, '0')}:00` });
+        for (let hVal = baseEndHour; hVal <= targetHE.endHour; hVal += 0.5) {
+          endOptions.push({ value: String(hVal), label: formatHourLabel(hVal) });
         }
 
         return (
@@ -2423,7 +2423,7 @@ const CalidadPage = () => {
           >
             <form onSubmit={handleSubmitScheduleCorrection} className={styles.modalForm}>
               <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 0 }}>
-                Autorizado: {String(targetHE.startHour).padStart(2, '0')}:00 - {String(targetHE.endHour).padStart(2, '0')}:00. Ajusta solo la hora del bloque que en realidad no se cumplió como se autorizó.
+                Autorizado: {formatHourLabel(targetHE.startHour)} - {formatHourLabel(targetHE.endHour)}. Ajusta solo la hora del bloque que en realidad no se cumplió como se autorizó.
               </p>
 
               {earlyHours > 0 && (
