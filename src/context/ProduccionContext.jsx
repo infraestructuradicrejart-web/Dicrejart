@@ -22,7 +22,8 @@ import {
   query,
   where,
   orderBy,
-  limit
+  limit,
+  runTransaction
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
@@ -270,11 +271,43 @@ export const ProduccionProvider = ({ children }) => {
   // ============================================
 
   /**
+   * Reclama de forma atómica el siguiente número consecutivo de proyecto (PRJ-001,
+   * PRJ-002, ...). Antes se calculaba como `proyectos.length + 1` — en cuanto se borraba
+   * CUALQUIER proyecto anterior, ese conteo dejaba de corresponder al máximo id realmente
+   * usado, así que el siguiente proyecto creado podía generar un id YA EN USO por otro
+   * proyecto existente. Como `setDoc` sin `merge` reemplaza el documento completo, esto
+   * sobrescribía en silencio el nombre/cliente/fechas de ese proyecto existente con los
+   * del nuevo (sus juegos seguían intactos en la colección `juegos`, por eso se veían
+   * "mezclados" con un proyecto que de pronto tenía otro nombre). Se guarda en
+   * `config/proyectosFolio`, arrancando del máximo PRJ-### ya existente la primera vez
+   * que se usa (para no colisionar con proyectos creados antes de este cambio).
+   */
+  const getNextProjectNumber = useCallback(async () => {
+    const counterRef = doc(db, 'config', 'proyectosFolio');
+    return runTransaction(db, async (tx) => {
+      const snap = await tx.get(counterRef);
+      let next;
+      if (snap.exists()) {
+        next = snap.data().next || 1;
+      } else {
+        const maxExisting = proyectos.reduce((max, p) => {
+          const num = Number(String(p.id).replace('PRJ-', ''));
+          return Number.isFinite(num) && num > max ? num : max;
+        }, 0);
+        next = maxExisting + 1;
+      }
+      tx.set(counterRef, { next: next + 1 }, { merge: true });
+      return next;
+    });
+  }, [proyectos]);
+
+  /**
    * Registra un nuevo proyecto en el sistema
    */
   const addProject = useCallback(async (projectData) => {
     if (!db) return;
-    const id = `PRJ-${String(proyectos.length + 1).padStart(3, '0')}`;
+    const number = await getNextProjectNumber();
+    const id = `PRJ-${String(number).padStart(3, '0')}`;
     const created = {
       id,
       progress: 0,
@@ -289,7 +322,7 @@ export const ProduccionProvider = ({ children }) => {
       console.error('Error al guardar proyecto en Firestore:', error);
       return null;
     }
-  }, [proyectos, user]);
+  }, [getNextProjectNumber, user]);
 
   /**
    * Actualiza un proyecto existente, por ejemplo para extender su fecha límite
@@ -317,6 +350,30 @@ export const ProduccionProvider = ({ children }) => {
   }, [proyectos, user]);
 
   /**
+   * Reclama de forma atómica el siguiente número consecutivo de juego (GME-101, GME-102,
+   * ...) — mismo motivo y mismo patrón que getNextProjectNumber: `juegos.length + 101`
+   * colisionaba con un id ya existente en cuanto se borraba cualquier juego anterior.
+   */
+  const getNextGameNumber = useCallback(async () => {
+    const counterRef = doc(db, 'config', 'juegosFolio');
+    return runTransaction(db, async (tx) => {
+      const snap = await tx.get(counterRef);
+      let next;
+      if (snap.exists()) {
+        next = snap.data().next || 101;
+      } else {
+        const maxExisting = juegos.reduce((max, j) => {
+          const num = Number(String(j.id).replace('GME-', ''));
+          return Number.isFinite(num) && num > max ? num : max;
+        }, 100);
+        next = maxExisting + 1;
+      }
+      tx.set(counterRef, { next: next + 1 }, { merge: true });
+      return next;
+    });
+  }, [juegos]);
+
+  /**
    * Registra un nuevo modelo de juego en el sistema
    */
   const addGame = useCallback(async (gameData) => {
@@ -324,7 +381,8 @@ export const ProduccionProvider = ({ children }) => {
     const { name, projectId, areas, targetPieces } = gameData;
     const project = proyectos.find((p) => p.id === projectId);
 
-    const id = `GME-${String(juegos.length + 101).padStart(3, '0')}`;
+    const gameNumber = await getNextGameNumber();
+    const id = `GME-${String(gameNumber).padStart(3, '0')}`;
 
     const areaStatus = {};
     const initialProduced = {};
@@ -384,7 +442,7 @@ export const ProduccionProvider = ({ children }) => {
       console.error('Error al agregar juego en Firestore:', error);
       return null;
     }
-  }, [juegos, proyectos, user]);
+  }, [getNextGameNumber, proyectos, user]);
 
   /**
    * Modifica las metas de piezas por área de un juego YA CREADO (ej. el cliente amplió o
@@ -1287,8 +1345,15 @@ export const ProduccionProvider = ({ children }) => {
     const j = juegos.find((jg) => jg.id === gameId);
     if (!j) return;
     const nextOrders = j.externalOrders || [];
+    // Máximo id existente + 1, no nextOrders.length + 1 — si se había quitado una orden de
+    // en medio del arreglo, el conteo por longitud podía volver a generar un id ya usado
+    // por una orden que sigue activa, dejando dos órdenes con el mismo id.
+    const maxOrderNum = nextOrders.reduce((max, o) => {
+      const num = Number(String(o.id).replace('OT-', ''));
+      return Number.isFinite(num) && num > max ? num : max;
+    }, 0);
     const created = {
-      id: `OT-${String(nextOrders.length + 1).padStart(3, '0')}`,
+      id: `OT-${String(maxOrderNum + 1).padStart(3, '0')}`,
       status: 'pendiente',
       orderedDate: new Date().toISOString(),
       receivedDate: null,
