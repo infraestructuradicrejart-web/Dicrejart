@@ -452,6 +452,33 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, proyectos, user]);
 
   /**
+   * Renombra un juego ya creado (ej. se corrigió cómo lo pidió el cliente) — exclusivo de
+   * Supervisor de Área y Admin (mismo permiso que updateGameTargetPieces, ver
+   * canEditGameQuantities en JuegosPage.jsx). No afecta el nombre ya guardado en registros
+   * históricos de otras colecciones (producción, actividades, materiales, etc.) — esos
+   * quedan como una fotografía del nombre al momento en que se generaron, igual que pasa
+   * al renombrar un área.
+   */
+  const updateGameName = useCallback(async (gameId, newName) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const game = juegos.find((j) => j.id === gameId);
+    if (!game) return { ok: false, error: 'Juego no encontrado.' };
+
+    const trimmedName = newName?.trim();
+    if (!trimmedName) return { ok: false, error: 'El nombre del juego no puede estar vacío.' };
+    if (trimmedName === game.name) return { ok: true };
+
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), { name: trimmedName });
+      logAudit({ user, module: 'produccion', action: 'Renombró un juego', details: `${game.name} -> ${trimmedName}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al renombrar juego:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
    * Registra un log de producción de piezas y recalcula progresos
    */
   const registerProductionLog = useCallback(async (logData) => {
@@ -1626,6 +1653,7 @@ export const ProduccionProvider = ({ children }) => {
       updateProject,
       addGame,
       updateGameTargetPieces,
+      updateGameName,
       deleteProject,
       deleteGame,
       registerProductionLog,
@@ -1673,6 +1701,7 @@ export const ProduccionProvider = ({ children }) => {
       updateProject,
       addGame,
       updateGameTargetPieces,
+      updateGameName,
       deleteProject,
       deleteGame,
       registerProductionLog,

@@ -66,7 +66,7 @@ const JuegosPage = () => {
   // ============================================
   // ESTADO Y CONTEXTO GLOBAL
   // ============================================
-  const { juegos: allJuegos, proyectos, addGame, updateGameTargetPieces, deleteGame } = useProduccion();
+  const { juegos: allJuegos, proyectos, addGame, updateGameTargetPieces, updateGameName, deleteGame } = useProduccion();
   const { user } = useAuth();
   const { areas: dynamicAreas, resolveAreaId } = useAreas();
   const isEncargado = user?.roleType === 'encargado-area';
@@ -113,6 +113,7 @@ const JuegosPage = () => {
   const [editQuantitiesModal, setEditQuantitiesModal] = useState({
     isOpen: false,
     game: null,
+    name: '',
     targetPieces: {},
   });
   const [isSavingQuantities, setIsSavingQuantities] = useState(false);
@@ -366,20 +367,34 @@ const JuegosPage = () => {
     setEditQuantitiesModal({
       isOpen: true,
       game: juego,
+      name: juego.name,
       targetPieces: { ...juego.targetPieces },
     });
   };
 
   const handleCloseEditQuantitiesModal = () => {
-    setEditQuantitiesModal({ isOpen: false, game: null, targetPieces: {} });
+    setEditQuantitiesModal({ isOpen: false, game: null, name: '', targetPieces: {} });
   };
 
   const handleSaveQuantities = async (e) => {
     e.preventDefault();
-    const { game, targetPieces } = editQuantitiesModal;
+    const { game, name, targetPieces } = editQuantitiesModal;
     if (!game) return;
 
+    if (!name.trim()) {
+      toast.danger('El nombre del juego no puede estar vacío.');
+      return;
+    }
+
     setIsSavingQuantities(true);
+    if (name.trim() !== game.name) {
+      const renameRes = await updateGameName(game.id, name);
+      if (!renameRes.ok) {
+        setIsSavingQuantities(false);
+        toast.danger(renameRes.error || 'No se pudo renombrar el juego.');
+        return;
+      }
+    }
     const res = await updateGameTargetPieces(game.id, targetPieces);
     setIsSavingQuantities(false);
 
@@ -387,7 +402,7 @@ const JuegosPage = () => {
       toast.danger(res.error || 'No se pudieron modificar las cantidades.');
       return;
     }
-    toast.success(`✅ Metas de piezas de "${game.name}" actualizadas correctamente.`);
+    toast.success(`✅ "${name.trim()}" actualizado correctamente.`);
     handleCloseEditQuantitiesModal();
   };
 
@@ -552,7 +567,7 @@ const JuegosPage = () => {
                           borderRadius: '4px',
                           transition: 'background-color 0.2s',
                         }}
-                        title="Editar Cantidades de Piezas"
+                        title="Editar Juego (nombre y cantidades)"
                         onMouseEnter={(el) => (el.currentTarget.style.backgroundColor = 'rgba(255, 51, 0, 0.08)')}
                         onMouseLeave={(el) => (el.currentTarget.style.backgroundColor = 'transparent')}
                       >
@@ -880,9 +895,19 @@ const JuegosPage = () => {
         <Modal
           isOpen={editQuantitiesModal.isOpen}
           onClose={handleCloseEditQuantitiesModal}
-          title={`✏️ Editar Cantidades: ${editQuantitiesModal.game.name}`}
+          title={`✏️ Editar Juego: ${editQuantitiesModal.game.name}`}
         >
           <form onSubmit={handleSaveQuantities} className={styles.form}>
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Nombre del Juego / Módulo</label>
+              <input
+                type="text"
+                className={styles.textInput}
+                value={editQuantitiesModal.name}
+                onChange={(e) => setEditQuantitiesModal((prev) => ({ ...prev, name: e.target.value }))}
+                required
+              />
+            </div>
             <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 0 }}>
               Ajusta la meta de piezas por área si el pedido del cliente cambió. No se puede fijar una meta menor a lo que ya se produjo en esa área.
             </p>
