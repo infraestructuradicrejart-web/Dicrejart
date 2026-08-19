@@ -173,11 +173,17 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
   const handleRequestFechaChange = (e) => {
     const newFecha = e.target.value;
     const esDomingo = esFechaDomingo(newFecha);
+    // startHour/endHour (solo aplican al bloque 'domingo') se reinician al cambiar de
+    // fecha — de lo contrario, un domingo con horario ya capturado se quedaba pegado en
+    // el formulario al cambiar a OTRO domingo, y la solicitud se podía enviar con el
+    // horario equivocado (mismo tipo de error ya corregido en handleDateChange).
     setRequestOvertimeModal((prev) => ({
       ...prev,
       fecha: newFecha,
       bloque: esDomingo ? 'domingo' : (prev.bloque === 'domingo' ? 'vespertino' : prev.bloque),
-      horas: esDomingo ? String(Math.max(0, Number(prev.endHour) - Number(prev.startHour))) : prev.horas,
+      startHour: '8',
+      endHour: '18',
+      horas: esDomingo ? '10' : prev.horas,
     }));
   };
 
@@ -230,11 +236,15 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
   const handleEditRequestFechaChange = (e) => {
     const newFecha = e.target.value;
     const esDomingo = esFechaDomingo(newFecha);
+    // Mismo motivo que handleRequestFechaChange: startHour/endHour se reinician al
+    // cambiar de fecha, para no arrastrar el horario de domingo de la fecha anterior.
     setEditOvertimeRequestModal((prev) => ({
       ...prev,
       fecha: newFecha,
       bloque: esDomingo ? 'domingo' : (prev.bloque === 'domingo' ? 'vespertino' : prev.bloque),
-      horas: esDomingo ? String(Math.max(0, Number(prev.endHour) - Number(prev.startHour))) : prev.horas,
+      startHour: '8',
+      endHour: '18',
+      horas: esDomingo ? '10' : prev.horas,
     }));
   };
 
@@ -324,14 +334,33 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
 
   const handleDateChange = (e) => {
     const dateStr = e.target.value;
-    if (esFechaDomingo(dateStr)) {
-      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: '18', overtimeHours: '10' }));
+    // Cambiar la fecha DENTRO del modal (para reprogramar otro día sin cerrarlo) antes
+    // dejaba pegados el horario y las tareas de la fecha con la que se había abierto el
+    // modal — solo se recalculaba `overtimeHours`, pero startHour/endHour/overtimeTasks
+    // seguían siendo los de la fecha anterior, así que la fecha nueva se podía guardar con
+    // el horario de la fecha vieja si no se tocaban a mano. Ahora, si ya existe una
+    // autorización vigente para la fecha nueva, se recupera tal cual (para poder editarla);
+    // si no existe, se reinicia a "sin tiempo extra" para forzar una elección deliberada.
+    const existingHE = horasExtra.find(
+      (h) => h.operarioId === scheduleModal.collaborator?.id && h.authorizedDate === dateStr && h.verificationStatus !== 'cancelado'
+    );
+    if (existingHE) {
+      setScheduleModal((prev) => ({
+        ...prev,
+        authorizedDate: dateStr,
+        startHour: String(existingHE.startHour),
+        endHour: String(existingHE.endHour),
+        overtimeHours: String(existingHE.overtimeHours),
+        overtimeTasks: existingHE.overtimeTasks || '',
+      }));
       return;
     }
-    const startVal = Number(scheduleModal.startHour);
-    const endVal = Number(scheduleModal.endHour);
-    const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, dateStr);
-    setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, overtimeHours: String(earlyHours + lateHours) }));
+    if (esFechaDomingo(dateStr)) {
+      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: '18', overtimeHours: '10', overtimeTasks: '' }));
+      return;
+    }
+    const newDefaultEnd = new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 13 : 18;
+    setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: String(newDefaultEnd), overtimeHours: '0', overtimeTasks: '' }));
   };
 
   const handleStartHourChange = (e) => {

@@ -494,16 +494,36 @@ const ProduccionPage = () => {
 
   const handleDateChange = (e) => {
     const dateStr = e.target.value;
+    // Cambiar la fecha DENTRO del modal (para reprogramar otro día sin cerrarlo) antes
+    // dejaba pegados el horario y las tareas de la fecha con la que se había abierto el
+    // modal — solo se recalculaba `overtimeHours`, pero startHour/endHour/overtimeTasks
+    // seguían siendo los de la fecha anterior. Si el supervisor no los tocaba a mano, la
+    // nueva fecha se guardaba con el horario de la fecha vieja (ej. programó el 19 en la
+    // mañana pero quedó con el horario vespertino que tenía el 18). Ahora, si ya existe una
+    // autorización vigente para la fecha nueva, se recupera tal cual (para poder editarla);
+    // si no existe, se reinicia a "sin tiempo extra" para forzar una elección deliberada.
+    const existingHE = horasExtra.find(
+      (h) => h.operarioId === scheduleModal.collaborator?.id && h.authorizedDate === dateStr && h.verificationStatus !== 'cancelado'
+    );
+    if (existingHE) {
+      setScheduleModal((prev) => ({
+        ...prev,
+        authorizedDate: dateStr,
+        startHour: String(existingHE.startHour),
+        endHour: String(existingHE.endHour),
+        overtimeHours: String(existingHE.overtimeHours),
+        overtimeTasks: existingHE.overtimeTasks || '',
+      }));
+      return;
+    }
     if (esFechaDomingo(dateStr)) {
       // Domingo es turno completo desde cero — se resetea a un turno normal (08:00-18:00)
       // en vez de arrastrar horas de bloque matutino/vespertino que no aplican aquí.
-      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: '18', overtimeHours: '10' }));
+      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: '18', overtimeHours: '10', overtimeTasks: '' }));
       return;
     }
-    const startVal = Number(scheduleModal.startHour);
-    const endVal = Number(scheduleModal.endHour);
-    const { earlyHours, lateHours } = getOvertimeBlocks(startVal, endVal, dateStr);
-    setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, overtimeHours: String(earlyHours + lateHours) }));
+    const newDefaultEnd = new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 13 : 18;
+    setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: String(newDefaultEnd), overtimeHours: '0', overtimeTasks: '' }));
   };
 
   const handleStartHourChange = (e) => {
@@ -614,11 +634,18 @@ const ProduccionPage = () => {
   const handleRequestFechaChange = (e) => {
     const newFecha = e.target.value;
     const esDomingo = esFechaDomingo(newFecha);
+    // startHour/endHour (solo aplican al bloque 'domingo') se reinician al cambiar de
+    // fecha — de lo contrario, un domingo con horario ya capturado (ej. 8:00-15:00) se
+    // quedaba pegado en el formulario al cambiar a OTRO domingo, y la solicitud se podía
+    // enviar con el horario equivocado si no se ajustaba a mano (mismo tipo de error ya
+    // corregido en el modal de autorización directa, ver handleDateChange).
     setRequestOvertimeModal((prev) => ({
       ...prev,
       fecha: newFecha,
       bloque: esDomingo ? 'domingo' : (prev.bloque === 'domingo' ? 'vespertino' : prev.bloque),
-      horas: esDomingo ? String(Math.max(0, Number(prev.endHour) - Number(prev.startHour))) : prev.horas,
+      startHour: '8',
+      endHour: '18',
+      horas: esDomingo ? '10' : prev.horas,
     }));
   };
 
@@ -671,11 +698,15 @@ const ProduccionPage = () => {
   const handleEditRequestFechaChange = (e) => {
     const newFecha = e.target.value;
     const esDomingo = esFechaDomingo(newFecha);
+    // Mismo motivo que handleRequestFechaChange: startHour/endHour se reinician al
+    // cambiar de fecha, para no arrastrar el horario de domingo de la fecha anterior.
     setEditOvertimeRequestModal((prev) => ({
       ...prev,
       fecha: newFecha,
       bloque: esDomingo ? 'domingo' : (prev.bloque === 'domingo' ? 'vespertino' : prev.bloque),
-      horas: esDomingo ? String(Math.max(0, Number(prev.endHour) - Number(prev.startHour))) : prev.horas,
+      startHour: '8',
+      endHour: '18',
+      horas: esDomingo ? '10' : prev.horas,
     }));
   };
 
