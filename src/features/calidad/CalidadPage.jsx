@@ -25,6 +25,7 @@ import PageHeader from '../../components/ui/PageHeader';
 import { isReadOnlySection } from '../../utils/roleAccess';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { getOvertimeBlocks, formatHourLabel } from '../../utils/overtimeUtils';
+import { getEstadoOnDate } from '../../utils/estadoUtils';
 import useProgressiveList from '../../hooks/useProgressiveList';
 import styles from './CalidadPage.module.css';
 
@@ -857,10 +858,14 @@ const CalidadPage = () => {
 
   // Handlers para Evaluaciones
   const handleOpenEvalModal = (collaborator, block, existingEval, isPastBlock = false) => {
-    // Si no hay evaluación previa y el colaborador no está activo, se bloquea la creación
-    if (collaborator.estado?.tipo !== 'activo' && !existingEval) {
-      const estadoNombre = ESTADO_AUSENCIA_DESCRIP[collaborator.estado?.tipo] || collaborator.estado?.tipo || 'Ausente';
-      toast.warning(`No se puede evaluar el desempeño de ${collaborator.name}. Estado actual: ${estadoNombre}. Solo el personal "En Planta" es evaluable.`);
+    // Si no hay evaluación previa y el colaborador no estaba activo EN LA FECHA
+    // CONSULTADA (selectedDate, no necesariamente hoy), se bloquea la creación — antes se
+    // comparaba contra collaborator.estado (el vigente ahora mismo), así que alguien
+    // ausente hoy pero activo el día que se está revisando se veía bloqueado sin razón.
+    const estadoEnFecha = getEstadoOnDate(collaborator, selectedDate);
+    if (estadoEnFecha && !existingEval) {
+      const estadoNombre = ESTADO_AUSENCIA_DESCRIP[estadoEnFecha.tipo] || estadoEnFecha.tipo || 'Ausente';
+      toast.warning(`No se puede evaluar el desempeño de ${collaborator.name}. Estado el ${selectedDate}: ${estadoNombre}. Solo el personal "En Planta" es evaluable.`);
       return;
     }
 
@@ -2190,7 +2195,10 @@ const CalidadPage = () => {
                             const currentHour = new Date().getHours() + new Date().getMinutes() / 60;
                             const isFutureBlock = selectedDate === todayStr && !isLive && block.startHour > currentHour;
                             const isPastBlock = selectedDate < todayStr || (selectedDate === todayStr && !isLive && !isFutureBlock);
-                            const isOpAbsent = Boolean(op.estado?.tipo && op.estado.tipo !== 'activo');
+                            // Estado del colaborador EN selectedDate, no el vigente ahora mismo — ver
+                            // getEstadoOnDate (estadoUtils.js) y su comentario en generateWorkBlocks.
+                            const estadoEnFecha = getEstadoOnDate(op, selectedDate);
+                            const isOpAbsent = Boolean(estadoEnFecha);
 
                             const existingEval = dailyEvaluaciones.find(
                               (ev) => ev.operarioId === op.id && ev.blockId === block.id
@@ -2260,7 +2268,7 @@ const CalidadPage = () => {
                                         cursor: 'pointer',
                                       }}
                                       onClick={() => handleOpenEvalModal(op, block, existingEval, isPastBlock)}
-                                      title={`Colaborador ausente (${ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || op.estado?.tipo}). Clic para revisar o eliminar calificación asignada por error.`}
+                                      title={`Colaborador ausente (${ESTADO_AUSENCIA_DESCRIP[estadoEnFecha?.tipo] || estadoEnFecha?.tipo}). Clic para revisar o eliminar calificación asignada por error.`}
                                     >
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
                                         <Badge variant={getScoreVariant(existingEval.score)}>
@@ -2271,7 +2279,7 @@ const CalidadPage = () => {
                                         </span>
                                       </div>
                                       <span style={{ fontSize: '10px', color: '#dc2626', fontWeight: 600, display: 'block', marginTop: '2px' }}>
-                                        🚫 {ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || 'Ausente'} (Clic para eliminar)
+                                        🚫 {ESTADO_AUSENCIA_DESCRIP[estadoEnFecha?.tipo] || 'Ausente'} (Clic para eliminar)
                                       </span>
                                       {existingEval.notes && (
                                         <span className={styles.evalNote} title={existingEval.notes}>
@@ -2285,14 +2293,14 @@ const CalidadPage = () => {
                                     <span
                                       className={styles.closedBlockLabel}
                                       style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#dc2626', borderColor: '#fca5a5', whiteSpace: 'nowrap' }}
-                                      title={`No evaluable: El colaborador no está En Planta (${ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || op.estado?.tipo})`}
+                                      title={`No evaluable: El colaborador no está En Planta (${ESTADO_AUSENCIA_DESCRIP[estadoEnFecha?.tipo] || estadoEnFecha?.tipo})`}
                                     >
-                                      🚫 {ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || 'Ausente'}
+                                      🚫 {ESTADO_AUSENCIA_DESCRIP[estadoEnFecha?.tipo] || 'Ausente'}
                                     </span>
                                   ) : (
                                     <span
                                       style={{ color: 'var(--color-gray-400)', fontSize: '13px', fontWeight: 'bold' }}
-                                      title={`Inactivo (${ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || op.estado?.tipo})`}
+                                      title={`Inactivo (${ESTADO_AUSENCIA_DESCRIP[estadoEnFecha?.tipo] || estadoEnFecha?.tipo})`}
                                     >
                                       —
                                     </span>
@@ -2534,13 +2542,13 @@ const CalidadPage = () => {
               </div>
             )}
 
-            {evalModal.collaborator?.estado?.tipo && evalModal.collaborator.estado.tipo !== 'activo' && (
+            {evalModal.collaborator && getEstadoOnDate(evalModal.collaborator, selectedDate) && (
               <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px' }}>
                 <p style={{ margin: 0, fontSize: '12px', color: '#991b1b', fontWeight: 'bold' }}>
-                  🚫 COLABORADOR AUSENTE ({ESTADO_AUSENCIA_DESCRIP[evalModal.collaborator.estado.tipo] || evalModal.collaborator.estado.tipo})
+                  🚫 COLABORADOR AUSENTE EL {selectedDate} ({ESTADO_AUSENCIA_DESCRIP[getEstadoOnDate(evalModal.collaborator, selectedDate)?.tipo] || getEstadoOnDate(evalModal.collaborator, selectedDate)?.tipo})
                 </p>
                 <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#b91c1c' }}>
-                  Este colaborador no se encuentra "En Planta". Si esta calificación se registró por error (por ejemplo, porque el colaborador faltó), puedes eliminarla con el botón rojo abajo.
+                  Este colaborador no se encontraba "En Planta" esa fecha. Si esta calificación se registró por error (por ejemplo, porque el colaborador faltó), puedes eliminarla con el botón rojo abajo.
                 </p>
               </div>
             )}
