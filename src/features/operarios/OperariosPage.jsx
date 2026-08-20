@@ -74,6 +74,8 @@ const OperariosPage = () => {
     authorizeMovimientoDestino,
     rejectMovimiento,
     setOperarioEstado,
+    deleteOperarioAusencia,
+    editOperarioAusencia,
     horasExtra,
     solicitudesHorasExtra,
     autorizarSolicitudHoraExtra,
@@ -98,6 +100,65 @@ const OperariosPage = () => {
     isOpen: false,
     selectedOperarioId: 'todos',
   });
+
+  // Modal para editar o rectificar un registro específico de ausencia o falta
+  const [editAbsenceModal, setEditAbsenceModal] = useState({
+    isOpen: false,
+    record: null,
+    tipo: 'falta',
+    desde: '',
+    hasta: '',
+    notas: '',
+  });
+
+  const handleDeleteAbsenceRecord = async (record) => {
+    const tipoLabel = ESTADO_LABELS[record.tipo] || record.tipo;
+    if (!window.confirm(`¿Estás seguro de eliminar el registro de ${tipoLabel} de ${record.operarioName} (${record.desde || 'N/A'})? Si fue un error, esto desbloqueará sus horas extras de inmediato.`)) {
+      return;
+    }
+    const res = await deleteOperarioAusencia(record.operarioId, {
+      recordIndex: record.recordIndex,
+      isCurrent: record.isCurrent,
+      tipo: record.tipo,
+      desde: record.desde,
+    });
+    if (res?.ok) {
+      toast.success(`Registro de ausencia de ${record.operarioName} eliminado correctamente.`);
+    } else {
+      toast.danger(res?.error || 'No se pudo eliminar el registro.');
+    }
+  };
+
+  const handleOpenEditAbsenceModal = (record) => {
+    setEditAbsenceModal({
+      isOpen: true,
+      record,
+      tipo: record.tipo || 'falta',
+      desde: record.desde || '',
+      hasta: record.hasta || '',
+      notas: record.notas || '',
+    });
+  };
+
+  const handleSaveEditAbsence = async (e) => {
+    e.preventDefault();
+    if (!editAbsenceModal.record) return;
+    const { record, tipo, desde, hasta, notas } = editAbsenceModal;
+    const res = await editOperarioAusencia(record.operarioId, {
+      recordIndex: record.recordIndex,
+      isCurrent: record.isCurrent,
+      tipo,
+      desde,
+      hasta: hasta || null,
+      notas: notas || '',
+    });
+    if (res?.ok) {
+      toast.success('Registro de ausencia actualizado correctamente.');
+      setEditAbsenceModal({ isOpen: false, record: null, tipo: 'falta', desde: '', hasta: '', notas: '' });
+    } else {
+      toast.danger(res?.error || 'No se pudo actualizar el registro.');
+    }
+  };
 
   // Barra de scroll horizontal duplicada arriba de la tabla: el navegador solo dibuja
   // la barra nativa hasta abajo de un contenedor con overflow-x, así que en una tabla
@@ -592,6 +653,7 @@ const OperariosPage = () => {
           registradoPor: op.estado.registradoPor || 'N/A',
           registradoAt: op.estado.registradoAt || new Date().toISOString(),
           isCurrent: true,
+          recordIndex: -1,
         });
       }
       // Historial pasado
@@ -610,6 +672,7 @@ const OperariosPage = () => {
             registradoPor: hist.registradoPor || 'N/A',
             registradoAt: hist.registradoAt || null,
             isCurrent: false,
+            recordIndex: idx,
           });
         }
       });
@@ -1667,6 +1730,7 @@ const OperariosPage = () => {
                       <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Tipo de Ausencia</th>
                       <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Motivo / Notas</th>
                       <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Registrado por</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--color-gray-200)' }}>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1703,6 +1767,44 @@ const OperariosPage = () => {
                               </div>
                             )}
                           </td>
+                          <td style={{ padding: '8px 10px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditAbsenceModal(r)}
+                                style={{
+                                  padding: '3px 8px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  color: 'var(--color-primary-dark, #1e40af)',
+                                  backgroundColor: '#eff6ff',
+                                  border: '1px solid #bfdbfe',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                }}
+                                title="Editar tipo de ausencia, fechas o notas"
+                              >
+                                ✏️ Editar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteAbsenceRecord(r)}
+                                style={{
+                                  padding: '3px 8px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  color: '#b91c1c',
+                                  backgroundColor: '#fef2f2',
+                                  border: '1px solid #fecaca',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                }}
+                                title="Eliminar / Anular esta falta o ausencia (desbloquea horas extras)"
+                              >
+                                🗑️ Eliminar
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                   </tbody>
@@ -1720,6 +1822,73 @@ const OperariosPage = () => {
               </Button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {/* Modal para Editar/Modificar Registro de Ausencia o Falta */}
+      {editAbsenceModal.isOpen && (
+        <Modal
+          isOpen={editAbsenceModal.isOpen}
+          onClose={() => setEditAbsenceModal({ isOpen: false, record: null, tipo: 'falta', desde: '', hasta: '', notas: '' })}
+          title={`✏️ Modificar Ausencia / Falta — ${editAbsenceModal.record?.operarioName || ''}`}
+        >
+          <form onSubmit={handleSaveEditAbsence} className={styles.modalForm}>
+            <p style={{ fontSize: '12.5px', color: 'var(--color-gray-600)', marginBottom: '12px' }}>
+              Puedes corregir el tipo de ausencia (ej. si fue justificada, permiso o incapacidad), ajustar las fechas o cambiar las observaciones.
+            </p>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Tipo de Ausencia / Estado</label>
+              <Select
+                value={editAbsenceModal.tipo}
+                onChange={(e) => setEditAbsenceModal(prev => ({ ...prev, tipo: e.target.value }))}
+                options={ESTADO_OPTIONS}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Desde (Fecha Inicio)</label>
+                <Input
+                  type="date"
+                  value={editAbsenceModal.desde}
+                  onChange={(e) => setEditAbsenceModal(prev => ({ ...prev, desde: e.target.value }))}
+                  required
+                />
+              </div>
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Hasta (Opcional)</label>
+                <Input
+                  type="date"
+                  value={editAbsenceModal.hasta}
+                  onChange={(e) => setEditAbsenceModal(prev => ({ ...prev, hasta: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Motivo / Observaciones</label>
+              <Input
+                value={editAbsenceModal.notas}
+                onChange={(e) => setEditAbsenceModal(prev => ({ ...prev, notas: e.target.value }))}
+                placeholder="Ej. Permiso económico autorizado / Falta justificada..."
+              />
+            </div>
+
+            <div className={styles.modalActions}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setEditAbsenceModal({ isOpen: false, record: null, tipo: 'falta', desde: '', hasta: '', notas: '' })}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary">
+                💾 Guardar Cambios
+              </Button>
+            </div>
+          </form>
         </Modal>
       )}
 

@@ -882,6 +882,113 @@ export const OperariosProvider = ({ children }) => {
     }
   }, [operarios, user, cancelPendingHorasExtra]);
 
+  /**
+   * Elimina o anula un registro de falta o ausencia del historial de un colaborador (o el estado actual).
+   * Desbloquea de inmediato las horas extras si se trataba de una falta errónea.
+   */
+  const deleteOperarioAusencia = useCallback(
+    async (operarioId, { recordIndex, isCurrent, tipo, desde }) => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
+      const op = operarios.find((o) => o.id === operarioId);
+      if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
+
+      try {
+        const updates = {};
+        const todayStr = getTodayLocalDateStr();
+
+        // 1. Si es el estado actual vigente
+        if (isCurrent) {
+          updates.estado = {
+            tipo: 'activo',
+            desde: todayStr,
+            hasta: null,
+            notas: '',
+            registradoPor: user?.name || 'Supervisor',
+            registradoAt: new Date().toISOString(),
+          };
+        }
+
+        // 2. Modificar o limpiar el historial
+        const currentHist = [...(op.estadoHistorial || [])];
+        if (typeof recordIndex === 'number' && recordIndex >= 0 && recordIndex < currentHist.length) {
+          currentHist.splice(recordIndex, 1);
+        } else if (desde) {
+          const matchIdx = currentHist.findIndex((h) => (h.desde === desde || h.registradoAt?.startsWith(desde)) && (!tipo || h.tipo === tipo));
+          if (matchIdx !== -1) {
+            currentHist.splice(matchIdx, 1);
+          }
+        }
+        updates.estadoHistorial = currentHist;
+
+        await updateDoc(doc(db, 'operarios', operarioId), updates);
+        logAudit({
+          user,
+          module: 'operarios',
+          action: 'Eliminó / Anuló registro de ausencia o falta',
+          details: `${op.name}: ${tipo || 'ausencia'} (${desde || 'N/A'})`,
+        });
+        return { ok: true };
+      } catch (error) {
+        console.error('Error al eliminar registro de ausencia:', error);
+        return { ok: false, error: error.message };
+      }
+    },
+    [operarios, user]
+  );
+
+  /**
+   * Modifica un registro de falta o ausencia (cambio de tipo ej. falta -> permiso/incapacidad, fecha o notas).
+   */
+  const editOperarioAusencia = useCallback(
+    async (operarioId, { recordIndex, isCurrent, tipo, desde, hasta, notas }) => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
+      const op = operarios.find((o) => o.id === operarioId);
+      if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
+
+      try {
+        const updates = {};
+        const todayStr = getTodayLocalDateStr();
+        const updatedRecord = {
+          tipo,
+          desde: desde || todayStr,
+          hasta: hasta || null,
+          notas: notas || '',
+          actualizadoPor: user?.name || 'Supervisor',
+          actualizadoAt: new Date().toISOString(),
+        };
+
+        if (isCurrent) {
+          updates.estado = {
+            ...op.estado,
+            ...updatedRecord,
+          };
+        }
+
+        const currentHist = [...(op.estadoHistorial || [])];
+        if (typeof recordIndex === 'number' && recordIndex >= 0 && recordIndex < currentHist.length) {
+          currentHist[recordIndex] = {
+            ...currentHist[recordIndex],
+            ...updatedRecord,
+          };
+          updates.estadoHistorial = currentHist;
+        }
+
+        await updateDoc(doc(db, 'operarios', operarioId), updates);
+        logAudit({
+          user,
+          module: 'operarios',
+          action: 'Modificó registro de ausencia o falta',
+          details: `${op.name}: ahora ${tipo} (${desde || 'N/A'})`,
+        });
+        return { ok: true };
+      } catch (error) {
+        console.error('Error al editar registro de ausencia:', error);
+        return { ok: false, error: error.message };
+      }
+    },
+    [operarios, user]
+  );
+
   // ============================================
   // SOLICITUDES Y AUTORIZACIÓN DE HORAS EXTRAS (ENCARGADOS & SUPERVISORES)
   // ============================================
@@ -1254,6 +1361,8 @@ export const OperariosProvider = ({ children }) => {
       authorizeMovimientoDestino,
       rejectMovimiento,
       setOperarioEstado,
+      deleteOperarioAusencia,
+      editOperarioAusencia,
       horasExtra,
       authorizeOvertimeTasks,
       verifyHorasExtra,
@@ -1284,6 +1393,8 @@ export const OperariosProvider = ({ children }) => {
       authorizeMovimientoDestino,
       rejectMovimiento,
       setOperarioEstado,
+      deleteOperarioAusencia,
+      editOperarioAusencia,
       horasExtra,
       authorizeOvertimeTasks,
       verifyHorasExtra,
