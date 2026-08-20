@@ -379,12 +379,23 @@ export const OperariosProvider = ({ children }) => {
    * queda registrada aparte, por fecha, en `horas_extra` (ver authorizeOvertimeTasks).
    */
   const updateOperarioSchedule = useCallback(async (operarioId, scheduleData) => {
-    if (!db) return;
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
     const op = operarios.find((o) => o.id === operarioId);
-    if (!op) return;
-    if (scheduleData.authorizedDate !== getTodayLocalDateStr()) {
+    if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
+
+    const todayStr = getTodayLocalDateStr();
+    const targetDate = scheduleData.authorizedDate || todayStr;
+
+    if (Number(scheduleData.overtimeHours) > 0) {
+      const eligibility = checkOvertimeEligibility(op, targetDate);
+      if (!eligibility.isEligible) {
+        return { ok: false, error: eligibility.reason };
+      }
+    }
+
+    if (scheduleData.authorizedDate !== todayStr) {
       logAudit({ user, module: 'operarios', action: 'Programó horario/horas extra para una fecha futura', details: `${op.name}: ${scheduleData.authorizedDate}` });
-      return;
+      return { ok: true };
     }
     try {
       await updateDoc(doc(db, 'operarios', operarioId), {
@@ -394,8 +405,10 @@ export const OperariosProvider = ({ children }) => {
         },
       });
       logAudit({ user, module: 'operarios', action: 'Actualizó horario/horas extra de un operario', details: op.name });
+      return { ok: true };
     } catch (error) {
       console.error('Error al actualizar horario del operario:', error);
+      return { ok: false, error: error.message };
     }
   }, [operarios, user]);
 
@@ -410,6 +423,13 @@ export const OperariosProvider = ({ children }) => {
     if (!db) return { ok: false, error: 'Firestore no inicializado' };
     const op = operarios.find((o) => o.id === operarioId);
     if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
+
+    if (Number(overtimeHours) > 0) {
+      const eligibility = checkOvertimeEligibility(op, authorizedDate);
+      if (!eligibility.isEligible) {
+        return { ok: false, error: eligibility.reason };
+      }
+    }
 
     const id = `HE-${Date.now()}`;
     const created = {
@@ -444,8 +464,8 @@ export const OperariosProvider = ({ children }) => {
   }, [operarios, user]);
 
   /**
-   * Calidad (o Admin) marca si las tareas asignadas durante el tiempo extra realmente se
-   * cumplieron. Exige notas cuando NO se cumplieron, para dejar constancia del motivo.
+   * Calidad (o Admin / Supervisor) marca si las tareas asignadas durante el tiempo extra realmente se
+   * cumplieron. Permite cambiar de opción o restablecer a pendiente en caso de error.
    */
   const verifyHorasExtra = useCallback(async (horasExtraId, { verificationStatus, verificationNotes }) => {
     if (!db) return { ok: false, error: 'Firestore no inicializado' };
@@ -453,14 +473,15 @@ export const OperariosProvider = ({ children }) => {
       return { ok: false, error: 'Indica qué tareas no se cumplieron.' };
     }
     try {
+      const isReset = verificationStatus === 'pendiente';
       await updateDoc(doc(db, 'horas_extra', horasExtraId), {
         verificationStatus,
-        verificationNotes: verificationNotes?.trim() || '',
-        verifiedBy: user?.name || null,
-        verifiedByRole: user?.roleType || null,
-        verifiedAt: new Date().toISOString(),
+        verificationNotes: isReset ? '' : (verificationNotes?.trim() || ''),
+        verifiedBy: isReset ? null : (user?.name || null),
+        verifiedByRole: isReset ? null : (user?.roleType || null),
+        verifiedAt: isReset ? null : new Date().toISOString(),
       });
-      logAudit({ user, module: 'operarios', action: 'Verificó cumplimiento de horas extra', details: `${horasExtraId}: ${verificationStatus}` });
+      logAudit({ user, module: 'operarios', action: isReset ? 'Restableció verificación de horas extra' : 'Verificó cumplimiento de horas extra', details: `${horasExtraId}: ${verificationStatus}` });
       return { ok: true };
     } catch (error) {
       console.error('Error al verificar horas extra:', error);
@@ -903,9 +924,12 @@ export const OperariosProvider = ({ children }) => {
     const op = operarios.find((o) => o.id === operarioId);
     if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
 
+    const targetDesde = desde || getTodayLocalDateStr();
+    const todayStr = getTodayLocalDateStr();
+
     const nuevoEstado = {
       tipo,
-      desde: desde || getTodayLocalDateStr(),
+      desde: targetDesde,
       hasta: hasta || null,
       notas: notas || '',
       registradoPor,
@@ -913,17 +937,40 @@ export const OperariosProvider = ({ children }) => {
     };
 
     try {
-      await updateDoc(doc(db, 'operarios', operarioId), {
+      const updates = {
         estado: nuevoEstado,
         estadoHistorial: [...(op.estadoHistorial || []), nuevoEstado],
-      });
+      };
+
+      // Si se marca como ausente (falta, permiso, etc.) para la fecha de hoy, restablecer horario
+      if (tipo !== 'activo') {
+        const isSaturday = new Date().getDay() === 6;
+        if (targetDesde <= todayStr && (!hasta || hasta >= todayStr)) {
+          updates.schedule = {
+            ...op.schedule,
+            startHour: 8,
+            endHour: isSaturday ? 13 : 18,
+            overtimeHours: 0,
+            authorizedBy: '',
+            authorizedDate: '',
+          };
+        }
+      }
+
+      await updateDoc(doc(db, 'operarios', operarioId), updates);
+
+      // Si se marcó como ausente, cancelar cualquier registro de horas extra activo para esa fecha
+      if (tipo !== 'activo') {
+        await cancelPendingHorasExtra(operarioId, targetDesde);
+      }
+
       logAudit({ user, module: 'operarios', action: 'Cambió el estado de disponibilidad de un colaborador', details: `${op.name}: ${tipo}` });
       return { ok: true };
     } catch (error) {
       console.error('Error al actualizar estado del colaborador:', error);
       return { ok: false, error: error.message };
     }
-  }, [operarios, user]);
+  }, [operarios, user, cancelPendingHorasExtra]);
 
   // ============================================
   // SOLICITUDES Y AUTORIZACIÓN DE HORAS EXTRAS (ENCARGADOS & SUPERVISORES)
@@ -1004,6 +1051,12 @@ export const OperariosProvider = ({ children }) => {
       if (!sol) return { ok: false, error: 'Solicitud no encontrada.' };
       const op = operarios.find((o) => o.id === sol.operarioId);
       if (!op) return { ok: false, error: 'Colaborador asociado no encontrado.' };
+
+      // Revalidar que el colaborador no haya incurrido en falta (penalización de 7 días) o ausencia
+      const eligibility = checkOvertimeEligibility(op, sol.fecha);
+      if (!eligibility.isEligible) {
+        return { ok: false, error: eligibility.reason };
+      }
 
       const reviewerName = user?.name || 'Supervisor';
       const todayStr = getTodayLocalDateStr();
@@ -1122,18 +1175,23 @@ export const OperariosProvider = ({ children }) => {
           motivoCancelacion: reason || '',
         });
 
-        if (sol.status === 'autorizada' && sol.fecha === todayStr && op) {
-          const isSaturday = new Date().getDay() === 6;
-          await updateDoc(doc(db, 'operarios', op.id), {
-            schedule: {
-              ...op.schedule,
-              startHour: 8,
-              endHour: isSaturday ? 13 : 18,
-              overtimeHours: 0,
-              authorizedBy: '',
-              authorizedDate: '',
-            },
-          });
+        if (sol.status === 'autorizada') {
+          // Cancelar también el registro correspondiente en la colección horas_extra
+          await cancelPendingHorasExtra(sol.operarioId, sol.fecha);
+
+          if (sol.fecha === todayStr && op) {
+            const isSaturday = new Date().getDay() === 6;
+            await updateDoc(doc(db, 'operarios', op.id), {
+              schedule: {
+                ...op.schedule,
+                startHour: 8,
+                endHour: isSaturday ? 13 : 18,
+                overtimeHours: 0,
+                authorizedBy: '',
+                authorizedDate: '',
+              },
+            });
+          }
         }
 
         logAudit({
@@ -1148,7 +1206,7 @@ export const OperariosProvider = ({ children }) => {
         return { ok: false, error: error.message };
       }
     },
-    [solicitudesHorasExtra, operarios, user]
+    [solicitudesHorasExtra, operarios, user, cancelPendingHorasExtra]
   );
 
   /**

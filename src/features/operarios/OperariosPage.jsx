@@ -9,7 +9,7 @@
  * @requires xlsx
  */
 
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -24,6 +24,7 @@ import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import { ROLE_TYPE_LABELS } from '../../data/usersData';
 import { PUESTO_LABELS, PUESTO_ICONS, PUESTO_BADGE_VARIANT, PUESTO_OPTIONS, DESIGN_PUESTOS } from '../../data/puestoConfig';
+import { ESTADO_LABELS, ESTADO_ICONS, ESTADO_BADGE_VARIANT, ESTADO_OPTIONS } from '../../data/estadoConfig';
 import useConfig from '../../hooks/useConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { triggerDailyRHNotification } from '../../services/rhNotificationService';
@@ -32,34 +33,6 @@ import useProgressiveList from '../../hooks/useProgressiveList';
 import PageHeader from '../../components/ui/PageHeader';
 import styles from './OperariosPage.module.css';
 
-// Etiquetas e iconos del estado de disponibilidad del colaborador
-const ESTADO_LABELS = {
-  activo: 'En Planta',
-  falta: 'Falta (Inasistencia)',
-  salida_campo: 'Salida Fuera / Actividad Externa',
-  incapacidad: 'Incapacidad Médica',
-  viaje: 'Viaje / Ensamble Foráneo',
-  actividad_externa: 'Comisión Externa',
-  vacaciones: 'Vacaciones / Permiso',
-};
-const ESTADO_ICONS = {
-  activo: '🟢',
-  falta: '🔴',
-  salida_campo: '🚗',
-  incapacidad: '🤒',
-  viaje: '✈️',
-  actividad_externa: '🏗️',
-  vacaciones: '🏖️',
-};
-const ESTADO_BADGE_VARIANT = {
-  activo: 'success',
-  falta: 'danger',
-  salida_campo: 'warning',
-  incapacidad: 'danger',
-  viaje: 'info',
-  actividad_externa: 'primary',
-  vacaciones: 'neutral',
-};
 const TIPO_MOV_LABELS = {
   prestamo: 'Préstamo Temporal',
   cambio_definitivo: 'Cambio Definitivo de Área',
@@ -116,8 +89,15 @@ const OperariosPage = () => {
 
   const fileInputRef = useRef(null);
   const [areaFilter, setAreaFilter] = useState('todas');
+  const [estadoFilter, setEstadoFilter] = useState('todos');
   const [nameSearch, setNameSearch] = useState('');
   const [sortOrder, setSortOrder] = useState('nombre-asc');
+
+  // Modal para consultar historial detallado de ausencias y faltas
+  const [absencesModal, setAbsencesModal] = useState({
+    isOpen: false,
+    selectedOperarioId: 'todos',
+  });
 
   // Barra de scroll horizontal duplicada arriba de la tabla: el navegador solo dibuja
   // la barra nativa hasta abajo de un contenedor con overflow-x, así que en una tabla
@@ -563,24 +543,87 @@ const OperariosPage = () => {
   };
 
   const filteredOperarios = sortOperarios(
-    (areaFilter === 'todas' ? operarios : operarios.filter((op) => op.currentArea === areaFilter)).filter((op) =>
-      (op.name || '').toLowerCase().includes(nameSearch.trim().toLowerCase())
-    )
+    operarios
+      .filter((op) => (areaFilter === 'todas' ? true : op.currentArea === areaFilter))
+      .filter((op) => {
+        if (estadoFilter === 'todos') return true;
+        if (estadoFilter === 'activo') return !op.estado?.tipo || op.estado.tipo === 'activo';
+        if (estadoFilter === 'ausentes') return op.estado?.tipo && op.estado.tipo !== 'activo';
+        return op.estado?.tipo === estadoFilter;
+      })
+      .filter((op) => (op.name || '').toLowerCase().includes(nameSearch.trim().toLowerCase()))
   );
 
   // Revela el padrón en tandas de 15 en vez de pintarlo completo de una vez — vuelve a
-  // empezar desde la primera tanda cuando cambia el filtro de área, la búsqueda o el orden.
+  // empezar desde la primera tanda cuando cambia el filtro de área, estado, búsqueda o el orden.
   const { visibleItems: visibleOperarios, hasMore: hasMoreOperarios, remaining: remainingOperarios, showMore: showMoreOperarios } = useProgressiveList(
     filteredOperarios,
-    { resetKey: `${areaFilter}-${nameSearch}-${sortOrder}` }
+    { resetKey: `${areaFilter}-${estadoFilter}-${nameSearch}-${sortOrder}` }
   );
 
   const prestadosCount = operarios.filter((op) => op.currentArea !== op.homeArea).length;
   
   const todayStr = getTodayLocalDateStr();
-  const overtimeCount = operarios.filter(
-    (op) => op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStr
-  ).length;
+  const absentCount = operarios.filter((op) => op.estado?.tipo && op.estado.tipo !== 'activo').length;
+  const overtimeCount = operarios.filter((op) => {
+    const activeTodayHE = horasExtra.find(
+      (h) => h.operarioId === op.id && h.authorizedDate === todayStr && h.verificationStatus !== 'cancelado'
+    );
+    const isOpActive = !op.estado?.tipo || op.estado.tipo === 'activo';
+    return isOpActive && (Boolean(activeTodayHE) || (op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStr));
+  }).length;
+
+  // Historial global y por colaborador de todas las ausencias y faltas registradas
+  const allAbsenceRecords = useMemo(() => {
+    const records = [];
+    operarios.forEach((op) => {
+      // Estado actual si está ausente hoy
+      if (op.estado && op.estado.tipo && op.estado.tipo !== 'activo') {
+        records.push({
+          id: `${op.id}-current`,
+          operarioId: op.id,
+          operarioName: op.name,
+          areaId: op.currentArea,
+          puesto: op.puesto || 'operario',
+          tipo: op.estado.tipo,
+          desde: op.estado.desde || todayStr,
+          hasta: op.estado.hasta || null,
+          notas: op.estado.notas || '',
+          registradoPor: op.estado.registradoPor || 'N/A',
+          registradoAt: op.estado.registradoAt || new Date().toISOString(),
+          isCurrent: true,
+        });
+      }
+      // Historial pasado
+      (op.estadoHistorial || []).forEach((hist, idx) => {
+        if (hist.tipo && hist.tipo !== 'activo') {
+          records.push({
+            id: `${op.id}-hist-${idx}`,
+            operarioId: op.id,
+            operarioName: op.name,
+            areaId: op.currentArea,
+            puesto: op.puesto || 'operario',
+            tipo: hist.tipo,
+            desde: hist.desde || (hist.registradoAt ? hist.registradoAt.split('T')[0] : null),
+            hasta: hist.hasta || null,
+            notas: hist.notas || '',
+            registradoPor: hist.registradoPor || 'N/A',
+            registradoAt: hist.registradoAt || null,
+            isCurrent: false,
+          });
+        }
+      });
+    });
+
+    // Ordenar del más reciente al más antiguo
+    records.sort((a, b) => {
+      const dateA = a.registradoAt || a.desde || '';
+      const dateB = b.registradoAt || b.desde || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    return records;
+  }, [operarios, todayStr]);
 
   const pendingMovimientos = movimientos.filter(
     (m) => m.status === 'pendiente_origen' || m.status === 'pendiente_destino'
@@ -619,8 +662,13 @@ const OperariosPage = () => {
         <Button variant="primary" size="md" onClick={handleOpenAddModal}>
           ➕ Nuevo Operario
         </Button>
-        <Button variant="secondary" size="md" onClick={handleUploadClick}>
-          📥 Cargar Excel
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={() => setAbsencesModal({ isOpen: true, selectedOperarioId: 'todos' })}
+          title="Consultar historial detallado de todas las faltas, incapacidades y ausencias registradas"
+        >
+          📋 Historial de Ausencias ({allAbsenceRecords.length})
         </Button>
         <Button
           variant="secondary"
@@ -664,7 +712,7 @@ const OperariosPage = () => {
       </PageHeader>
 
       {/* KPIs */}
-      <div className={styles.kpiGrid}>
+      <div className={styles.kpiGrid} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
         <Card variant="default">
           <div className={styles.kpiContent}>
             <span className={styles.kpiLabel}>Total de Operarios</span>
@@ -684,6 +732,19 @@ const OperariosPage = () => {
             <span className={styles.kpiLabel}>Con Tiempo Extra Autorizado</span>
             <h3 className={styles.kpiValue} style={{ color: 'var(--color-primary)' }}>
               {overtimeCount}
+            </h3>
+          </div>
+        </Card>
+        <Card
+          variant={absentCount > 0 ? 'danger' : 'default'}
+          style={{ cursor: 'pointer' }}
+          onClick={() => setEstadoFilter((prev) => (prev === 'ausentes' ? 'todos' : 'ausentes'))}
+          title="Clic para ver solo colaboradores ausentes hoy"
+        >
+          <div className={styles.kpiContent}>
+            <span className={styles.kpiLabel}>Personal Ausente Hoy</span>
+            <h3 className={styles.kpiValue} style={{ color: absentCount > 0 ? 'var(--color-alert)' : 'inherit' }}>
+              {absentCount}
             </h3>
           </div>
         </Card>
@@ -709,7 +770,7 @@ const OperariosPage = () => {
                     display: 'flex',
                     flexWrap: 'wrap',
                     alignItems: 'center',
-                    justify: 'space-between',
+                    justifyContent: 'space-between',
                     gap: '12px',
                     padding: '12px 16px',
                     backgroundColor: sol.status === 'pendiente' ? '#fffbeb' : '#f8fafc',
@@ -719,12 +780,6 @@ const OperariosPage = () => {
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <strong>{sol.operarioName}</strong>
-                      <span style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>
-                        ({getAreaName(sol.areaId)})
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '13px', color: 'var(--color-gray-800)' }}>
                       ⏱️ <strong>{sol.horas}h</strong> extra ({sol.bloque === 'matutino' ? '🌅 Matutino' : '🌆 Vespertino'}) para el 📅 <strong>{sol.fecha}</strong>
                     </div>
                     {sol.motivo && (
@@ -872,17 +927,24 @@ const OperariosPage = () => {
                   const isSat = new Date().getDay() === 6;
                   const defaultEnd = isSat ? 13 : 18;
 
-                  const hasOvertimeToday = op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStr;
-                  // Las autorizaciones para fechas FUTURAS no se guardan en op.schedule (ver
-                  // updateOperarioSchedule en OperariosContext.jsx: eso pisaría el horario de
-                  // HOY) — se consultan directo en horas_extra, el registro por fecha.
+                  const activeTodayHE = horasExtra.find(
+                    (h) => h.operarioId === op.id && h.authorizedDate === todayStr && h.verificationStatus !== 'cancelado'
+                  );
+                  const isOpActive = !op.estado?.tipo || op.estado.tipo === 'activo';
+                  const hasOvertimeToday = isOpActive && (Boolean(activeTodayHE) || (op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStr));
+                  const effectiveStartHour = activeTodayHE ? activeTodayHE.startHour : (hasOvertimeToday ? op.schedule.startHour : 8);
+                  const effectiveEndHour = activeTodayHE ? activeTodayHE.endHour : (hasOvertimeToday ? op.schedule.endHour : defaultEnd);
+                  const effectiveOvertimeHours = activeTodayHE ? activeTodayHE.overtimeHours : (hasOvertimeToday ? op.schedule.overtimeHours : 0);
+                  const effectiveAuthorizedBy = activeTodayHE ? activeTodayHE.authorizedBy : (op.schedule?.authorizedBy || 'Supervisor');
+
+                  // Las autorizaciones para fechas FUTURAS se consultan directo en horas_extra
                   const nextFutureHE = horasExtra
                     .filter((h) => h.operarioId === op.id && h.authorizedDate > todayStr && h.verificationStatus !== 'cancelado')
                     .sort((a, b) => a.authorizedDate.localeCompare(b.authorizedDate))[0];
                   const hasOvertimeFuture = Boolean(nextFutureHE);
 
-                  const startStr = formatHourLabel(hasOvertimeToday ? op.schedule.startHour : 8);
-                  const endStr = formatHourLabel(hasOvertimeToday ? op.schedule.endHour : defaultEnd);
+                  const startStr = formatHourLabel(hasOvertimeToday ? effectiveStartHour : 8);
+                  const endStr = formatHourLabel(hasOvertimeToday ? effectiveEndHour : defaultEnd);
 
                   return (
                     <tr key={op.id}>
@@ -907,9 +969,9 @@ const OperariosPage = () => {
                           {hasOvertimeToday && (
                             <div className={styles.overtimeBadgeWrapper}>
                               <Badge variant="warning" size="sm">
-                                +{op.schedule.overtimeHours}h Extra
+                                +{effectiveOvertimeHours}h Extra
                               </Badge>
-                              <span className={styles.authHint} title={`Autorizado por ${op.schedule.authorizedBy} para hoy (${op.schedule.authorizedDate})`}>
+                              <span className={styles.authHint} title={`Autorizado por ${effectiveAuthorizedBy} para hoy (${todayStr})`}>
                                 Autorizado
                               </span>
                             </div>
@@ -931,17 +993,39 @@ const OperariosPage = () => {
                         )}
                       </td>
                       <td data-label="Disponibilidad">
-                        <Badge
-                          variant={ESTADO_BADGE_VARIANT[op.estado?.tipo || 'activo']}
-                          title={getEstadoTooltip(op.estado)}
-                        >
-                          {ESTADO_ICONS[op.estado?.tipo || 'activo']} {ESTADO_LABELS[op.estado?.tipo || 'activo']}
-                        </Badge>
-                        {op.estado?.tipo && op.estado.tipo !== 'activo' && (
-                          <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', marginTop: '2px' }}>
-                            Hasta: {op.estado.hasta || 'sin fecha definida'}
-                          </div>
-                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <Badge
+                            variant={ESTADO_BADGE_VARIANT[op.estado?.tipo || 'activo']}
+                            title={getEstadoTooltip(op.estado)}
+                          >
+                            {ESTADO_ICONS[op.estado?.tipo || 'activo']} {ESTADO_LABELS[op.estado?.tipo || 'activo']}
+                          </Badge>
+                          {op.estado?.tipo && op.estado.tipo !== 'activo' && (
+                            <div style={{ fontSize: '10px', color: 'var(--color-gray-400)' }}>
+                              Hasta: {op.estado.hasta || 'sin fecha definida'}
+                            </div>
+                          )}
+                          {((op.estadoHistorial && op.estadoHistorial.some(h => h.tipo && h.tipo !== 'activo')) || (op.estado?.tipo && op.estado.tipo !== 'activo')) && (
+                            <button
+                              type="button"
+                              onClick={() => setAbsencesModal({ isOpen: true, selectedOperarioId: op.id })}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'var(--color-primary)',
+                                fontSize: '10px',
+                                textDecoration: 'underline',
+                                cursor: 'pointer',
+                                padding: 0,
+                                textAlign: 'left',
+                                marginTop: '2px',
+                              }}
+                              title="Ver historial de ausencias y faltas de este colaborador"
+                            >
+                              📜 Ver historial
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td data-label="Acciones" className={styles.stickyActionsCell}>
                         <div className={styles.actionsCell}>
@@ -1531,6 +1615,103 @@ const OperariosPage = () => {
                 onClick={handleConfirmClearAll}
               >
                 Vaciar Todo
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* MODAL: HISTORIAL DE AUSENCIAS Y FALTAS */}
+      {absencesModal.isOpen && (
+        <Modal
+          isOpen={absencesModal.isOpen}
+          onClose={() => setAbsencesModal({ isOpen: false, selectedOperarioId: 'todos' })}
+          title="📋 Historial de Ausencias, Faltas e Incapacidades"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ minWidth: '220px', flex: 1 }}>
+                <Select
+                  label="Filtrar por Colaborador"
+                  value={absencesModal.selectedOperarioId}
+                  onChange={(e) => setAbsencesModal((prev) => ({ ...prev, selectedOperarioId: e.target.value }))}
+                  options={[
+                    { value: 'todos', label: 'Todos los Colaboradores' },
+                    ...operarios.map((op) => ({ value: op.id, label: `${op.name} (${getAreaName(op.currentArea)})` })),
+                  ]}
+                />
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--color-gray-600)', alignSelf: 'flex-end', paddingBottom: '6px' }}>
+                Total de registros: <strong>
+                  {allAbsenceRecords.filter(r => absencesModal.selectedOperarioId === 'todos' || r.operarioId === absencesModal.selectedOperarioId).length}
+                </strong>
+              </div>
+            </div>
+
+            <div style={{ maxHeight: '420px', overflowY: 'auto', border: '1px solid var(--color-gray-200)', borderRadius: '8px' }}>
+              {allAbsenceRecords.filter(r => absencesModal.selectedOperarioId === 'todos' || r.operarioId === absencesModal.selectedOperarioId).length === 0 ? (
+                <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--color-gray-500)' }}>
+                  🟢 No hay registros de ausencias ni faltas para la selección actual.
+                </div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--color-gray-100)', zIndex: 1 }}>
+                    <tr>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Fecha / Periodo</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Colaborador</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Tipo de Ausencia</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Motivo / Notas</th>
+                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Registrado por</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allAbsenceRecords
+                      .filter(r => absencesModal.selectedOperarioId === 'todos' || r.operarioId === absencesModal.selectedOperarioId)
+                      .map((r) => (
+                        <tr key={r.id} style={{ borderBottom: '1px solid var(--color-gray-200)', backgroundColor: r.isCurrent ? '#fff5f5' : 'transparent' }}>
+                          <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                            <strong>{r.desde || 'N/A'}</strong>
+                            {r.hasta && r.hasta !== r.desde && <span style={{ color: 'var(--color-gray-500)' }}> al {r.hasta}</span>}
+                            {r.isCurrent && (
+                              <Badge variant="danger" size="sm" style={{ display: 'block', width: 'fit-content', marginTop: '2px' }}>
+                                Vigente Hoy
+                              </Badge>
+                            )}
+                          </td>
+                          <td style={{ padding: '8px 10px' }}>
+                            <strong>{r.operarioName}</strong>
+                            <div style={{ fontSize: '10px', color: 'var(--color-gray-500)' }}>{getAreaName(r.areaId)}</div>
+                          </td>
+                          <td style={{ padding: '8px 10px' }}>
+                            <Badge variant={ESTADO_BADGE_VARIANT[r.tipo] || 'warning'} size="sm">
+                              {ESTADO_ICONS[r.tipo]} {ESTADO_LABELS[r.tipo] || r.tipo}
+                            </Badge>
+                          </td>
+                          <td style={{ padding: '8px 10px', color: r.notas ? 'var(--color-gray-800)' : 'var(--color-gray-400)' }}>
+                            {r.notas || 'Sin notas'}
+                          </td>
+                          <td style={{ padding: '8px 10px', fontSize: '11px', color: 'var(--color-gray-600)' }}>
+                            {r.registradoPor || 'Sistema'}
+                            {r.registradoAt && (
+                              <div style={{ fontSize: '9px', color: 'var(--color-gray-400)' }}>
+                                {new Date(r.registradoAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className={styles.modalActions}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setAbsencesModal({ isOpen: false, selectedOperarioId: 'todos' })}
+              >
+                Cerrar
               </Button>
             </div>
           </div>

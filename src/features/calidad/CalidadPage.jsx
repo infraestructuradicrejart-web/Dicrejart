@@ -200,6 +200,7 @@ const CalidadPage = () => {
     editInspeccion,
     deleteInspeccion,
     saveEvaluacion,
+    deleteEvaluacion,
     addEvidenceToInspeccion,
     removeEvidenceFromInspeccion,
   } = useCalidad();
@@ -250,6 +251,16 @@ const CalidadPage = () => {
     gameName: '',
   });
 
+  // Estado para la confirmación de eliminación de calificación de desempeño por error
+  const [deleteEvalConfirm, setDeleteEvalConfirm] = useState({
+    isOpen: false,
+    evalId: null,
+    collaboratorName: '',
+    blockName: '',
+    date: '',
+    score: null,
+  });
+
   // Foto de evidencia mostrada en grande dentro del modal de vista previa
   const [photoPreview, setPhotoPreview] = useState(null);
   const [isSubmittingInspection, setIsSubmittingInspection] = useState(false);
@@ -260,6 +271,8 @@ const CalidadPage = () => {
     block: null,
     score: '10',
     notes: '',
+    isPastBlockEdit: false,
+    existingEval: null,
   });
 
   const { operarios, blockDuration, updateBlockDuration, horasExtra, verifyHorasExtra, correctHorasExtraSchedule } = useOperarios();
@@ -844,7 +857,8 @@ const CalidadPage = () => {
 
   // Handlers para Evaluaciones
   const handleOpenEvalModal = (collaborator, block, existingEval, isPastBlock = false) => {
-    if (collaborator.estado?.tipo !== 'activo') {
+    // Si no hay evaluación previa y el colaborador no está activo, se bloquea la creación
+    if (collaborator.estado?.tipo !== 'activo' && !existingEval) {
       const estadoNombre = ESTADO_AUSENCIA_DESCRIP[collaborator.estado?.tipo] || collaborator.estado?.tipo || 'Ausente';
       toast.warning(`No se puede evaluar el desempeño de ${collaborator.name}. Estado actual: ${estadoNombre}. Solo el personal "En Planta" es evaluable.`);
       return;
@@ -857,6 +871,7 @@ const CalidadPage = () => {
       score: existingEval ? String(existingEval.score) : '10',
       notes: existingEval ? existingEval.notes : '',
       isPastBlockEdit: Boolean(isPastBlock),
+      existingEval: existingEval || null,
     });
   };
 
@@ -868,7 +883,47 @@ const CalidadPage = () => {
       score: '10',
       notes: '',
       isPastBlockEdit: false,
+      existingEval: null,
     });
+  };
+
+  const handleRequestDeleteEval = (existingEval, collaborator, block) => {
+    setDeleteEvalConfirm({
+      isOpen: true,
+      evalId: existingEval?.id || null,
+      collaboratorName: collaborator?.name || 'Colaborador',
+      blockName: block?.name || 'Bloque',
+      date: selectedDate,
+      score: existingEval?.score ?? 'N/A',
+    });
+  };
+
+  const handleCloseDeleteEvalConfirm = () => {
+    setDeleteEvalConfirm({
+      isOpen: false,
+      evalId: null,
+      collaboratorName: '',
+      blockName: '',
+      date: '',
+      score: null,
+    });
+  };
+
+  const handleConfirmDeleteEval = async () => {
+    if (!deleteEvalConfirm.evalId) return;
+
+    const res = await deleteEvaluacion(
+      deleteEvalConfirm.evalId,
+      `Eliminada por error para ${deleteEvalConfirm.collaboratorName} en bloque ${deleteEvalConfirm.blockName} (${deleteEvalConfirm.date})`
+    );
+
+    if (res && res.ok) {
+      toast.success(`🗑️ Calificación de ${deleteEvalConfirm.collaboratorName} eliminada correctamente.`);
+      handleCloseDeleteEvalConfirm();
+      handleCloseEvalModal();
+    } else {
+      toast.danger(res?.error || 'No se pudo eliminar la calificación.');
+    }
   };
 
   const handleSaveEval = async (e) => {
@@ -907,6 +962,15 @@ const CalidadPage = () => {
       return;
     }
     toast.success('✅ Tareas de tiempo extra marcadas como cumplidas.');
+  };
+
+  const handleResetHorasExtraVerification = async (horasExtraId) => {
+    const res = await verifyHorasExtra(horasExtraId, { verificationStatus: 'pendiente', verificationNotes: '' });
+    if (!res.ok) {
+      toast.danger(res.error || 'No se pudo restablecer la verificación.');
+      return;
+    }
+    toast.info('↩ Verificación de tiempo extra restablecida a pendiente.');
   };
 
   const handleOpenHorasExtraRejectModal = (horasExtraId) => {
@@ -2033,16 +2097,51 @@ const CalidadPage = () => {
                                         </button>
                                       </div>
                                     ) : (
-                                      <span
-                                        title={h.verificationNotes ? `${h.verificationNotes} — ${h.verifiedBy}` : h.verifiedBy}
-                                        style={{
-                                          fontSize: '10.5px',
-                                          fontWeight: 700,
-                                          color: h.verificationStatus === 'cumplido' ? '#15803d' : 'var(--color-alert)',
-                                        }}
-                                      >
-                                        {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
-                                      </span>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                        <span
+                                          title={h.verificationNotes ? `${h.verificationNotes} — ${h.verifiedBy}` : h.verifiedBy}
+                                          style={{
+                                            fontSize: '10.5px',
+                                            fontWeight: 700,
+                                            color: h.verificationStatus === 'cumplido' ? '#15803d' : 'var(--color-alert)',
+                                          }}
+                                        >
+                                          {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
+                                        </span>
+                                        {h.verificationStatus === 'no_cumplido' && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                                            style={{ fontSize: '10px', fontWeight: 600, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                                            title="Cambiar a Cumplió (en caso de error)"
+                                          >
+                                            🔄 Cambiar a Cumplió
+                                          </button>
+                                        )}
+                                        {h.verificationStatus === 'cumplido' && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                                            style={{ fontSize: '10px', fontWeight: 600, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                                            title="Cambiar a No Cumplió (en caso de error)"
+                                          >
+                                            🔄 Cambiar a No Cumplió
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleResetHorasExtraVerification(h.id)}
+                                          style={{ fontSize: '10px', color: 'var(--color-gray-600)', background: 'none', border: '1px solid var(--color-gray-300)', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                                          title="Restablecer a Pendiente"
+                                        >
+                                          ↩ Pendiente
+                                        </button>
+                                      </div>
+                                    )}
+                                    {h.verificationStatus === 'no_cumplido' && h.verificationNotes && (
+                                      <div style={{ marginTop: '2px', fontSize: '10.5px', color: 'var(--color-gray-700)' }}>
+                                        Comentario: {h.verificationNotes}
+                                      </div>
                                     )}
                                     {/* Corregir el horario REAL es un concepto aparte de verificar si se
                                         hicieron las tareas — se muestra sin importar verificationStatus. */}
@@ -2135,13 +2234,13 @@ const CalidadPage = () => {
                                       type="button"
                                       className={styles.scoreContainer}
                                       onClick={() => handleOpenEvalModal(op, block, existingEval, isPastBlock)}
-                                      title={isPastBlock ? "Clic para editar calificación/observaciones de bloque previo (Registra alerta y bitácora con hora y autor)" : "Clic para editar observaciones"}
+                                      title={isPastBlock ? "Clic para editar o eliminar calificación/observaciones de bloque previo (Registra alerta y bitácora)" : "Clic para editar o eliminar calificación"}
                                     >
                                       <Badge variant={getScoreVariant(existingEval.score)}>
                                         ⭐ {existingEval.score} / 10
                                       </Badge>
                                       {isPastBlock && (
-                                        <span style={{ fontSize: '11px', display: 'inline-block', marginTop: '2px' }} title="Bloque previo - Clic para editar">
+                                        <span style={{ fontSize: '11px', display: 'inline-block', marginTop: '2px' }} title="Bloque previo - Clic para editar/eliminar">
                                           ✏️
                                         </span>
                                       )}
@@ -2152,17 +2251,34 @@ const CalidadPage = () => {
                                       )}
                                     </button>
                                   ) : (
-                                    <div
-                                      className={styles.scoreContainerDisabled}
-                                      title={`No editable: El colaborador está ${op.estado?.tipo}`}
+                                    <button
+                                      type="button"
+                                      className={styles.scoreContainer}
+                                      style={{
+                                        borderColor: '#fca5a5',
+                                        backgroundColor: 'rgba(239, 68, 68, 0.06)',
+                                        cursor: 'pointer',
+                                      }}
+                                      onClick={() => handleOpenEvalModal(op, block, existingEval, isPastBlock)}
+                                      title={`Colaborador ausente (${ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || op.estado?.tipo}). Clic para revisar o eliminar calificación asignada por error.`}
                                     >
-                                      <Badge variant={getScoreVariant(existingEval.score)}>
-                                        ⭐ {existingEval.score} / 10
-                                      </Badge>
-                                      <span className={styles.evalNote} title={existingEval.notes}>
-                                        {existingEval.notes}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                                        <Badge variant={getScoreVariant(existingEval.score)}>
+                                          ⭐ {existingEval.score} / 10
+                                        </Badge>
+                                        <span style={{ fontSize: '11px', color: '#dc2626' }} title="Colaborador ausente con calificación - Clic para eliminar/revisar">
+                                          ⚠️
+                                        </span>
+                                      </div>
+                                      <span style={{ fontSize: '10px', color: '#dc2626', fontWeight: 600, display: 'block', marginTop: '2px' }}>
+                                        🚫 {ESTADO_AUSENCIA_DESCRIP[op.estado?.tipo] || 'Ausente'} (Clic para eliminar)
                                       </span>
-                                    </div>
+                                      {existingEval.notes && (
+                                        <span className={styles.evalNote} title={existingEval.notes}>
+                                          {existingEval.notes}
+                                        </span>
+                                      )}
+                                    </button>
                                   )
                                 ) : isOpAbsent ? (
                                   blockIndex === firstValidBlockIndex ? (
@@ -2317,21 +2433,71 @@ const CalidadPage = () => {
                         )}
                       </div>
                       <div style={{ color: 'var(--color-gray-700)', marginBottom: '6px' }}>{h.overtimeTasks}</div>
-                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleVerifyHorasExtraCumplido(h.id)}
-                          style={{ fontSize: '10.5px', fontWeight: 700, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
-                        >
-                          ✅ Cumplió
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenHorasExtraRejectModal(h.id)}
-                          style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
-                        >
-                          ❌ No Cumplió
-                        </button>
+                      {h.verificationStatus === 'pendiente' ? (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                            style={{ fontSize: '10.5px', fontWeight: 700, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                          >
+                            ✅ Cumplió
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                            style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer' }}
+                          >
+                            ❌ No Cumplió
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                          <span
+                            title={h.verificationNotes ? `${h.verificationNotes} — ${h.verifiedBy}` : h.verifiedBy}
+                            style={{
+                              fontSize: '10.5px',
+                              fontWeight: 700,
+                              color: h.verificationStatus === 'cumplido' ? '#15803d' : 'var(--color-alert)',
+                            }}
+                          >
+                            {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
+                          </span>
+                          {h.verificationStatus === 'no_cumplido' && (
+                            <button
+                              type="button"
+                              onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                              style={{ fontSize: '10px', fontWeight: 600, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                              title="Cambiar a Cumplió (en caso de error)"
+                            >
+                              🔄 Cambiar a Cumplió
+                            </button>
+                          )}
+                          {h.verificationStatus === 'cumplido' && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                              style={{ fontSize: '10px', fontWeight: 600, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                              title="Cambiar a No Cumplió (en caso de error)"
+                            >
+                              🔄 Cambiar a No Cumplió
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleResetHorasExtraVerification(h.id)}
+                            style={{ fontSize: '10px', color: 'var(--color-gray-600)', background: 'none', border: '1px solid var(--color-gray-300)', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                            title="Restablecer a Pendiente"
+                          >
+                            ↩ Pendiente
+                          </button>
+                        </div>
+                      )}
+                      {h.verificationStatus === 'no_cumplido' && h.verificationNotes && (
+                        <div style={{ marginBottom: '4px', fontSize: '10.5px', color: 'var(--color-gray-700)' }}>
+                          Comentario: {h.verificationNotes}
+                        </div>
+                      )}
+                      <div style={{ marginTop: '2px' }}>
                         <button
                           type="button"
                           onClick={() => handleOpenScheduleCorrectionModal(h)}
@@ -2364,6 +2530,17 @@ const CalidadPage = () => {
                 </p>
                 <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#612500' }}>
                   El sistema emitirá una alerta y registrará en bitácora la hora exacta ({new Date().toLocaleTimeString('es-MX')}) y el responsable ({user?.name || 'Usuario'}).
+                </p>
+              </div>
+            )}
+
+            {evalModal.collaborator?.estado?.tipo && evalModal.collaborator.estado.tipo !== 'activo' && (
+              <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px' }}>
+                <p style={{ margin: 0, fontSize: '12px', color: '#991b1b', fontWeight: 'bold' }}>
+                  🚫 COLABORADOR AUSENTE ({ESTADO_AUSENCIA_DESCRIP[evalModal.collaborator.estado.tipo] || evalModal.collaborator.estado.tipo})
+                </p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#b91c1c' }}>
+                  Este colaborador no se encuentra "En Planta". Si esta calificación se registró por error (por ejemplo, porque el colaborador faltó), puedes eliminarla con el botón rojo abajo.
                 </p>
               </div>
             )}
@@ -2410,15 +2587,61 @@ const CalidadPage = () => {
               />
             </div>
 
-            <div className={styles.modalActions}>
-              <Button type="button" variant="secondary" onClick={handleCloseEvalModal}>
-                Cancelar
-              </Button>
-              <Button type="submit" variant="primary">
-                Guardar Evaluación
-              </Button>
+            <div className={styles.modalActions} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '8px' }}>
+              <div>
+                {evalModal.existingEval && (
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    onClick={() => handleRequestDeleteEval(evalModal.existingEval, evalModal.collaborator, evalModal.block)}
+                  >
+                    🗑️ Eliminar Calificación
+                  </Button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Button type="button" variant="secondary" onClick={handleCloseEvalModal}>
+                  Cancelar
+                </Button>
+                <Button type="submit" variant="primary">
+                  Guardar Evaluación
+                </Button>
+              </div>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* MODAL: CONFIRMACIÓN DE ELIMINACIÓN DE CALIFICACIÓN */}
+      {deleteEvalConfirm.isOpen && (
+        <Modal
+          isOpen={deleteEvalConfirm.isOpen}
+          onClose={handleCloseDeleteEvalConfirm}
+          title="🗑️ Eliminar Calificación Registrada por Error"
+        >
+          <div className={styles.modalForm}>
+            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '12px', marginBottom: '14px' }}>
+              <p style={{ margin: 0, fontSize: '13px', color: '#991b1b', fontWeight: 'bold' }}>
+                ¿Deseas eliminar esta calificación registrada por error?
+              </p>
+              <p style={{ margin: '6px 0 0 0', fontSize: '12px', color: '#7f1d1d' }}>
+                Se eliminará la calificación de <strong>⭐ {deleteEvalConfirm.score} / 10</strong> para <strong>{deleteEvalConfirm.collaboratorName}</strong> en el bloque <strong>{deleteEvalConfirm.blockName}</strong> ({deleteEvalConfirm.date}).
+              </p>
+              <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: '#b91c1c' }}>
+                Esta acción removerá el registro de desempeño de la base de datos y quedará registrado en la bitácora de auditoría.
+              </p>
+            </div>
+
+            <div className={styles.modalActions} style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <Button type="button" variant="secondary" onClick={handleCloseDeleteEvalConfirm}>
+                Cancelar
+              </Button>
+              <Button type="button" variant="danger" onClick={handleConfirmDeleteEval}>
+                Sí, Eliminar Calificación
+              </Button>
+            </div>
+          </div>
         </Modal>
       )}
 

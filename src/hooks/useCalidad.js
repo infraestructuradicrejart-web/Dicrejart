@@ -16,7 +16,8 @@ import { CalidadContext } from '../context/CalidadContext';
  *   addInspeccion: function,
  *   editInspeccion: function,
  *   deleteInspeccion: function,
- *   saveEvaluacion: function
+ *   saveEvaluacion: function,
+ *   deleteEvaluacion: function
  * }}
  */
 const useCalidad = () => {

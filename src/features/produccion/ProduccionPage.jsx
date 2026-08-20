@@ -31,6 +31,7 @@ import { getOvertimeBlocks, formatHourLabel, buildHalfHourOptions, buildOvertime
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { checkOvertimeEligibility } from '../../utils/overtimeRules';
 import { ROLE_TYPES } from '../../data/usersData';
+import { ESTADO_LABELS, ESTADO_ICONS, ESTADO_BADGE_VARIANT } from '../../data/estadoConfig';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import ProductoTerminadoPanel from './ProductoTerminadoPanel';
@@ -394,6 +395,12 @@ const ProduccionPage = () => {
     const res = await verifyHorasExtra(horasExtraId, { verificationStatus: 'cumplido', verificationNotes: '' });
     if (!res.ok) { toast.danger(res.error || 'No se pudo registrar la verificación.'); return; }
     toast.success('✅ Tareas de tiempo extra marcadas como cumplidas.');
+  };
+
+  const handleResetHorasExtraVerification = async (horasExtraId) => {
+    const res = await verifyHorasExtra(horasExtraId, { verificationStatus: 'pendiente', verificationNotes: '' });
+    if (!res.ok) { toast.danger(res.error || 'No se pudo restablecer la verificación.'); return; }
+    toast.info('↩ Verificación de tiempo extra restablecida a pendiente.');
   };
 
   const handleOpenHorasExtraRejectModal = (horasExtraId) => {
@@ -2331,16 +2338,19 @@ const ProduccionPage = () => {
                 // fecha, dejando un horario viejo pegado como si fuera el de hoy.
                 const isSatToday = new Date().getDay() === 6;
                 const defaultEndToday = isSatToday ? 13 : 18;
-                const hasOvertimeToday = op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === getTodayLocalDateStr();
-                const startStr = formatHourLabel(hasOvertimeToday ? op.schedule.startHour : 8);
-                const endStr = formatHourLabel(hasOvertimeToday ? op.schedule.endHour : defaultEndToday);
-                // Solo las horas extra del DÍA EN CURSO (no canceladas): las pendientes siguen
-                // mostrando los botones de verificar, y las ya verificadas muestran el resultado
-                // y el comentario, en vez de desaparecer de la vista al verificarse. El histórico
-                // de días anteriores se consulta desde Operarios, no aquí.
+                const todayStrProd = getTodayLocalDateStr();
                 const opRecentHEs = horasExtra.filter(
-                  (h) => h.operarioId === op.id && h.authorizedDate === getTodayLocalDateStr() && h.verificationStatus !== 'cancelado'
+                  (h) => h.operarioId === op.id && h.authorizedDate === todayStrProd && h.verificationStatus !== 'cancelado'
                 );
+                const activeTodayHE = opRecentHEs[0];
+                const isOpActive = !op.estado?.tipo || op.estado.tipo === 'activo';
+                const hasOvertimeToday = isOpActive && (Boolean(activeTodayHE) || (op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStrProd));
+                const effectiveStartHour = activeTodayHE ? activeTodayHE.startHour : (hasOvertimeToday ? op.schedule.startHour : 8);
+                const effectiveEndHour = activeTodayHE ? activeTodayHE.endHour : (hasOvertimeToday ? op.schedule.endHour : defaultEndToday);
+                const effectiveOvertimeHours = activeTodayHE ? activeTodayHE.overtimeHours : (hasOvertimeToday ? op.schedule.overtimeHours : 0);
+
+                const startStr = formatHourLabel(hasOvertimeToday ? effectiveStartHour : 8);
+                const endStr = formatHourLabel(hasOvertimeToday ? effectiveEndHour : defaultEndToday);
                 const isExpanded = expandedOvertimeOperarios.has(op.id);
 
                 return (
@@ -2352,14 +2362,21 @@ const ProduccionPage = () => {
                     }}
                   >
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
-                      <strong>{op.name || 'Sin Nombre'}</strong>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <strong>{op.name || 'Sin Nombre'}</strong>
+                        {op.estado?.tipo && op.estado.tipo !== 'activo' && (
+                          <Badge variant={ESTADO_BADGE_VARIANT[op.estado.tipo] || 'danger'} size="sm">
+                            {ESTADO_ICONS[op.estado.tipo] || '🚫'} {ESTADO_LABELS[op.estado.tipo] || 'Ausente'}
+                          </Badge>
+                        )}
+                      </div>
                       <span style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>
                         ⏰ {startStr} - {endStr}
                         {op.currentArea !== op.homeArea && ' (prestado)'}
                       </span>
                       {hasOvertimeToday && (
                         <Badge variant="warning" size="sm" style={{ width: 'fit-content' }}>
-                          +{op.schedule.overtimeHours}h Extra hoy
+                          +{effectiveOvertimeHours}h Extra hoy
                         </Badge>
                       )}
 
@@ -2434,15 +2451,45 @@ const ProduccionPage = () => {
                                   // verificationNotes), en vez de que el registro desaparezca sin dejar
                                   // rastro visible para el área/colaborador.
                                   <div style={{ marginBottom: '4px' }}>
-                                    <span
-                                      title={h.verificationNotes ? `${h.verificationNotes} — ${h.verifiedBy}` : h.verifiedBy}
-                                      style={{
-                                        fontSize: '10.5px', fontWeight: 700,
-                                        color: h.verificationStatus === 'cumplido' ? '#15803d' : 'var(--color-alert)',
-                                      }}
-                                    >
-                                      {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
-                                    </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '2px' }}>
+                                      <span
+                                        title={h.verificationNotes ? `${h.verificationNotes} — ${h.verifiedBy}` : h.verifiedBy}
+                                        style={{
+                                          fontSize: '10.5px', fontWeight: 700,
+                                          color: h.verificationStatus === 'cumplido' ? '#15803d' : 'var(--color-alert)',
+                                        }}
+                                      >
+                                        {h.verificationStatus === 'cumplido' ? '✅ Cumplido' : '❌ No Cumplido'} — {h.verifiedBy}
+                                      </span>
+                                      {h.verificationStatus === 'no_cumplido' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleVerifyHorasExtraCumplido(h.id)}
+                                          style={{ fontSize: '10px', fontWeight: 600, color: '#15803d', background: 'none', border: '1px solid #15803d', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                                          title="Cambiar a Cumplió (en caso de error)"
+                                        >
+                                          🔄 Cambiar a Cumplió
+                                        </button>
+                                      )}
+                                      {h.verificationStatus === 'cumplido' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenHorasExtraRejectModal(h.id)}
+                                          style={{ fontSize: '10px', fontWeight: 600, color: 'var(--color-alert)', background: 'none', border: '1px solid var(--color-alert)', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                                          title="Cambiar a No Cumplió (en caso de error)"
+                                        >
+                                          🔄 Cambiar a No Cumplió
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleResetHorasExtraVerification(h.id)}
+                                        style={{ fontSize: '10px', color: 'var(--color-gray-600)', background: 'none', border: '1px solid var(--color-gray-300)', borderRadius: '4px', padding: '1px 5px', cursor: 'pointer' }}
+                                        title="Restablecer a Pendiente"
+                                      >
+                                        ↩ Pendiente
+                                      </button>
+                                    </div>
                                     {h.verificationStatus === 'no_cumplido' && h.verificationNotes && (
                                       <div style={{ marginTop: '2px', fontSize: '10.5px', color: 'var(--color-gray-700)' }}>
                                         Comentario: {h.verificationNotes}

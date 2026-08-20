@@ -61,9 +61,17 @@ export const checkOvertimeEligibility = (operario, targetDateStr = getTodayLocal
   // Filtrar todos los registros de falta
   const faltas = todosLosEstados.filter((est) => est.tipo === 'falta');
 
+  const todayStr = getTodayLocalDateStr();
+
   for (const faltaRecord of faltas) {
     const fechaFaltaStr = faltaRecord.desde || (faltaRecord.registradoAt ? faltaRecord.registradoAt.split('T')[0] : null);
     if (!fechaFaltaStr) continue;
+
+    // Si la falta fue para hoy y el colaborador está en estado 'activo' (En Planta),
+    // significa que la falta fue corregida o que el colaborador está presente hoy
+    if (fechaFaltaStr === todayStr && operario.estado?.tipo === 'activo') {
+      continue;
+    }
 
     const fechaFaltaObj = new Date(`${fechaFaltaStr}T00:00:00`);
     const diffTime = targetDateObj.getTime() - fechaFaltaObj.getTime();

@@ -417,6 +417,52 @@ export const CalidadProvider = ({ children }) => {
   );
 
   /**
+   * Elimina una evaluación de desempeño específica (por ejemplo, si fue capturada por error
+   * o si el colaborador faltó / estaba ausente).
+   * @param {string} evaluacionId
+   * @param {string} reason
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  const deleteEvaluacion = useCallback(
+    async (evaluacionId, reason = '') => {
+      if (!db) return { ok: false, error: 'Firestore no inicializado' };
+      if (!evaluacionId) return { ok: false, error: 'ID de evaluación no especificado' };
+
+      try {
+        const evalRef = doc(db, 'evaluaciones', evaluacionId);
+        const evalSnap = await getDoc(evalRef);
+        let evalData = null;
+        if (evalSnap.exists()) {
+          evalData = evalSnap.data();
+        } else {
+          evalData = evaluaciones.find((e) => e.id === evaluacionId);
+        }
+
+        await deleteDoc(evalRef);
+
+        const opId = evalData?.operarioId || 'N/A';
+        const blkId = evalData?.blockId || 'N/A';
+        const score = evalData?.score ?? 'N/A';
+        const date = evalData?.date || 'N/A';
+        const details = `Operario: ${opId}, Bloque: ${blkId}, Fecha: ${date}, Score: ${score}${reason ? `, Motivo: ${reason}` : ''}`;
+
+        logAudit({
+          user,
+          module: 'calidad',
+          action: '🗑️ Eliminó calificación de desempeño (por error)',
+          details,
+        });
+
+        return { ok: true };
+      } catch (error) {
+        console.error('Error al eliminar evaluación en Firestore:', error);
+        return { ok: false, error: error.message };
+      }
+    },
+    [evaluaciones, user]
+  );
+
+  /**
    * Busca evaluaciones de desempeño ("calificaciones") cuyo operarioId ya no exista en
    * el padrón actual de operarios — huérfanas de un colaborador eliminado antes de que
    * `deleteOperario`/`clearAllOperarios` limpiaran también la colección "evaluaciones".
@@ -467,6 +513,7 @@ export const CalidadProvider = ({ children }) => {
       editInspeccion,
       deleteInspeccion,
       saveEvaluacion,
+      deleteEvaluacion,
       addEvidenceToInspeccion,
       removeEvidenceFromInspeccion,
       findOrphanedEvaluaciones,
@@ -479,6 +526,7 @@ export const CalidadProvider = ({ children }) => {
       editInspeccion,
       deleteInspeccion,
       saveEvaluacion,
+      deleteEvaluacion,
       addEvidenceToInspeccion,
       removeEvidenceFromInspeccion,
       findOrphanedEvaluaciones,
