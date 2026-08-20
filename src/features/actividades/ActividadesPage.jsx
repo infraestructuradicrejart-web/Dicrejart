@@ -335,7 +335,12 @@ const ActividadesPage = () => {
     });
 
     return groups;
-  }, [filteredActividades, operarios]);
+    // dynamicAreas (no getAreaName, que se recrea en cada render y volvería inútil el
+    // memo) — sin esto, si un área se renombraba mientras alguien veía la pestaña "Por
+    // Operario", el nombre de área mostrado en cada grupo se quedaba pegado al anterior
+    // hasta que algo más disparara el recálculo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredActividades, operarios, dynamicAreas]);
 
   // ============================================
   // ANIMACIONES

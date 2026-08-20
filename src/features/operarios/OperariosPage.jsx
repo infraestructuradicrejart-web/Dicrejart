@@ -674,18 +674,23 @@ const OperariosPage = () => {
           variant="secondary"
           size="md"
           onClick={async () => {
-            const res = await triggerDailyRHNotification({
-              operarios,
-              horasExtra,
-              generalConfig,
-              updateGeneralConfig,
-              force: true,
-              user
-            });
-            if (res && res.ok) {
-              toast.success(`📧 Reporte a RH (10:00 AM) preparado para ${res.emailTarget}. Ausencias registradas hoy: ${res.absentCount}.`);
-            } else {
-              toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+            try {
+              const res = await triggerDailyRHNotification({
+                operarios,
+                horasExtra,
+                generalConfig,
+                updateGeneralConfig,
+                force: true,
+                user
+              });
+              if (res && res.ok) {
+                toast.success(`📧 Reporte a RH (10:00 AM) preparado para ${res.emailTarget}. Ausencias registradas hoy: ${res.absentCount}.`);
+              } else {
+                toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+              }
+            } catch (error) {
+              console.error('Error al probar el envío de RH:', error);
+              toast.danger(`No se pudo generar el reporte: ${error.message}`);
             }
           }}
           title="Preparar / Enviar reporte de ausencias de personal para Recursos Humanos (10:00 AM)"
