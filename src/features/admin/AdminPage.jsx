@@ -129,7 +129,7 @@ const AdminPage = () => {
   // ============================================
   const { operarios, horasExtra, blockDuration, updateBlockDuration } = useOperarios();
   const { findOrphanedEvaluaciones, deleteOrphanedEvaluaciones } = useCalidad();
-  const { users, addUser, updateUser, deleteUser, resetUserPassword, updateUserPermission, resetUserPermission } = useAuth();
+  const { user, users, addUser, updateUser, deleteUser, resetUserPassword, updateUserPermission, resetUserPermission } = useAuth();
   const { limits, updateLimit, generalConfig, updateGeneralConfig, auditLog } = useConfig();
   const { areas: dynamicAreas, addArea, updateArea, deleteArea } = useAreas();
   const toast = useToast();
