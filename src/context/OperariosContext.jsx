@@ -30,7 +30,7 @@ import { AuthContext } from './AuthContext';
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
 import { getTodayLocalDateStr } from '../utils/dateUtils';
-import { triggerDailyRHNotification, triggerRHOvertimeNotification } from '../services/rhNotificationService';
+import { triggerDailyRHNotification, triggerRHOvertimeNotification, triggerRHWeeklyOvertimeSummary } from '../services/rhNotificationService';
 import { checkOvertimeEligibility, calculateScheduleFromOvertime } from '../utils/overtimeRules';
 
 export const OperariosContext = createContext(null);
@@ -246,11 +246,50 @@ export const OperariosProvider = ({ children }) => {
       }
     };
 
+    // ============================================
+    // TERCERA NOTIFICACIÓN A RH: RESUMEN SEMANAL DE HORAS EXTRA (miércoles 18:00)
+    // ============================================
+    // La semana de horas extra de Dicrejart corre de jueves a miércoles (ver
+    // getOvertimeWeekRange en dateUtils.js), así que el corte y el envío del resumen
+    // siempre caen el mismo día: miércoles.
+    const checkAndTriggerRHWeeklySummary = async () => {
+      const currentGeneralConfig = generalConfigRef.current;
+      if (!currentGeneralConfig) return;
+      if (currentGeneralConfig.notificarResumenSemanalRH === false) return;
+
+      const todayStr = getTodayLocalDateStr();
+      if (currentGeneralConfig.lastRHWeeklySummaryDate === todayStr) return;
+
+      const now = new Date();
+      if (now.getDay() !== 3) return; // 3 = miércoles
+
+      const targetTimeStr = currentGeneralConfig.horaResumenSemanalRH || '18:00';
+      const [targetHours, targetMinutes] = targetTimeStr.split(':').map(Number);
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+      const isPastTargetTime = currentHours > targetHours || (currentHours === targetHours && currentMinutes >= targetMinutes);
+
+      if (isPastTargetTime) {
+        const result = await triggerRHWeeklyOvertimeSummary({
+          horasExtra: horasExtraRef.current,
+          generalConfig: currentGeneralConfig,
+          updateGeneralConfig,
+          force: false,
+        });
+
+        if (result && result.ok) {
+          console.log(`📧 [Dicrejart RH Notification System] Resumen semanal de horas extra enviado (${result.weekStart} al ${result.weekEnd}): ${result.totalHoras}h entre ${result.totalColaboradores} colaborador(es).`);
+        }
+      }
+    };
+
     checkAndTriggerRHNotification();
     checkAndTriggerRHOvertimeNotification();
+    checkAndTriggerRHWeeklySummary();
     const intervalId = setInterval(() => {
       checkAndTriggerRHNotification();
       checkAndTriggerRHOvertimeNotification();
+      checkAndTriggerRHWeeklySummary();
     }, 60000);
 
     return () => clearInterval(intervalId);

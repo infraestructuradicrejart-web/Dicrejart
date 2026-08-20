@@ -55,6 +55,9 @@ export const DEFAULT_GENERAL_CONFIG = {
   horaNotificacionHorasExtraRHSemana: '17:30',
   horaNotificacionHorasExtraRHSabado: '12:00',
   lastRHOvertimeNotificationDate: '',
+  notificarResumenSemanalRH: true,
+  horaResumenSemanalRH: '18:00',
+  lastRHWeeklySummaryDate: '',
 };
 
 export const ConfigProvider = ({ children }) => {

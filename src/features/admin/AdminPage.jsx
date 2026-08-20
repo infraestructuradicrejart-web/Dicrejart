@@ -24,8 +24,9 @@ import useConfig from '../../hooks/useConfig';
 import { ROLE_TYPES, ROLE_TYPE_LABELS } from '../../data/usersData';
 import useAreas from '../../hooks/useAreas';
 import PageHeader from '../../components/ui/PageHeader';
-import { triggerDailyRHNotification, triggerRHOvertimeNotification } from '../../services/rhNotificationService';
+import { triggerDailyRHNotification, triggerRHOvertimeNotification, triggerRHWeeklyOvertimeSummary } from '../../services/rhNotificationService';
 import { canAccessSection, isReadOnlySection } from '../../utils/roleAccess';
+import { getOvertimeWeekRange } from '../../utils/dateUtils';
 import styles from './AdminPage.module.css';
 
 /**
@@ -130,6 +131,7 @@ const AdminPage = () => {
   const { operarios, horasExtra, blockDuration, updateBlockDuration } = useOperarios();
   const { findOrphanedEvaluaciones, deleteOrphanedEvaluaciones } = useCalidad();
   const { user, users, addUser, updateUser, deleteUser, resetUserPassword, updateUserPermission, resetUserPermission } = useAuth();
+  const currentOvertimeWeek = getOvertimeWeekRange();
   const { limits, updateLimit, generalConfig, updateGeneralConfig, auditLog } = useConfig();
   const { areas: dynamicAreas, addArea, updateArea, deleteArea } = useAreas();
   const toast = useToast();
@@ -797,6 +799,85 @@ const AdminPage = () => {
                 </div>
               </div>
 
+              {/* Opción RH-3: Resumen semanal de horas extra (jueves a miércoles) */}
+              <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-3)', backgroundColor: 'var(--color-gray-50)', borderRadius: '8px', border: '1px solid var(--color-gray-200)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div>
+                    <strong style={{ fontSize: '14px', color: 'var(--color-dark)' }}>📅 Resumen Semanal de Horas Extra</strong>
+                    <p style={{ fontSize: '12px', color: 'var(--color-gray-600)', margin: '2px 0 0 0' }}>
+                      Envía el total de horas extra acumuladas por colaborador cada miércoles a las 18:00 — la semana de horas extra corre de jueves a miércoles.
+                    </p>
+                    <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', margin: '4px 0 0 0' }}>
+                      Semana en curso: {currentOvertimeWeek.start} al {currentOvertimeWeek.end}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${generalConfig.notificarResumenSemanalRH !== false ? styles.toggleActive : ''}`}
+                    onClick={() => {
+                      const nextVal = generalConfig.notificarResumenSemanalRH === false;
+                      updateGeneralConfig('notificarResumenSemanalRH', nextVal);
+                      toast.info(nextVal ? 'Resumen semanal de horas extra activado.' : 'Resumen semanal de horas extra desactivado.');
+                    }}
+                  >
+                    <span className={styles.toggleKnob} />
+                  </button>
+                </div>
+
+                <div>
+                  <label htmlFor="hora-resumen-semanal-input" style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--color-dark)' }}>
+                    Hora Envío (Miércoles):
+                  </label>
+                  <input
+                    id="hora-resumen-semanal-input"
+                    type="time"
+                    value={generalConfig.horaResumenSemanalRH || '18:00'}
+                    onChange={(e) => updateGeneralConfig('horaResumenSemanalRH', e.target.value)}
+                    style={{
+                      width: '140px',
+                      padding: '6px 8px',
+                      fontSize: '13px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--color-gray-300)',
+                      marginTop: '4px',
+                      textAlign: 'center'
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', paddingTop: '8px', borderTop: '1px dashed var(--color-gray-300)' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>
+                    Último envío: {generalConfig.lastRHWeeklySummaryDate ? `Enviado hoy (${generalConfig.lastRHWeeklySummaryDate})` : 'Pendiente hoy'}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const res = await triggerRHWeeklyOvertimeSummary({
+                          horasExtra,
+                          generalConfig,
+                          updateGeneralConfig,
+                          force: true,
+                          user,
+                        });
+                        if (res && res.ok) {
+                          toast.success(`📧 Resumen semanal preparado correctamente (${res.totalHoras}h entre ${res.totalColaboradores} colaborador(es), semana ${res.weekStart} al ${res.weekEnd}). Destinatario: ${res.emailTarget}.`);
+                          setRhPreviewModal({ isOpen: true, notifRecord: res.record });
+                        } else {
+                          toast.danger(res?.error || res?.reason || 'No se pudo generar el resumen.');
+                        }
+                      } catch (error) {
+                        console.error('Error al probar el resumen semanal de RH:', error);
+                        toast.danger(`No se pudo generar el resumen: ${error.message}`);
+                      }
+                    }}
+                  >
+                    📧 Probar / Enviar Ahora
+                  </Button>
+                </div>
+              </div>
+
               {/* Opción 5: Límites dinámicos de historial en memoria */}
               <div className={styles.settingGroup}>
                 <div className={styles.settingInfo}>
@@ -1451,23 +1532,36 @@ const AdminPage = () => {
         </Modal>
       )}
 
-      {/* MODAL: VISTA PREVIA DE NOTIFICACIÓN A RH (10:00 AM o correo de horas extra) */}
+      {/* MODAL: VISTA PREVIA DE NOTIFICACIÓN A RH (10:00 AM, horas extra o resumen semanal) */}
       {rhPreviewModal.isOpen && rhPreviewModal.notifRecord && (
         <Modal
           isOpen={rhPreviewModal.isOpen}
           onClose={() => setRhPreviewModal({ isOpen: false, notifRecord: null })}
-          title={rhPreviewModal.notifRecord.type === 'horas_extra' ? '📧 Relación de Horas Extra para RH' : '📧 Reporte Diario para Recursos Humanos (RH)'}
+          title={
+            rhPreviewModal.notifRecord.type === 'horas_extra' ? '📧 Relación de Horas Extra para RH'
+              : rhPreviewModal.notifRecord.type === 'resumen_semanal' ? '📧 Resumen Semanal de Horas Extra para RH'
+              : '📧 Reporte Diario para Recursos Humanos (RH)'
+          }
           size="lg"
         >
           <div style={{ padding: '4px 0' }}>
             <div style={{ padding: '12px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '16px', fontSize: '13px' }}>
               <p style={{ margin: '0 0 4px 0' }}><strong>Destinatario RH:</strong> <span style={{ color: '#2563eb', fontWeight: 'bold' }}>{rhPreviewModal.notifRecord.emailRH}</span></p>
-              <p style={{ margin: '0 0 4px 0' }}><strong>Fecha:</strong> {rhPreviewModal.notifRecord.date}</p>
-              <p style={{ margin: '0 0 4px 0' }}><strong>Total Horas Extra Autorizadas:</strong> <Badge variant={rhPreviewModal.notifRecord.horasExtraCount > 0 ? 'warning' : 'neutral'}>{rhPreviewModal.notifRecord.horasExtraCount || 0} autorización(es)</Badge></p>
-              {rhPreviewModal.notifRecord.type !== 'horas_extra' && (
+              {rhPreviewModal.notifRecord.type === 'resumen_semanal' ? (
                 <>
-                  <p style={{ margin: '0 0 4px 0' }}><strong>Total Personal Ausente:</strong> <Badge variant={rhPreviewModal.notifRecord.absentCount > 0 ? 'danger' : 'success'}>{rhPreviewModal.notifRecord.absentCount} colaborador(es)</Badge></p>
-                  <p style={{ margin: 0 }}><strong>Verificaciones/Correcciones de Días Anteriores:</strong> <Badge variant={rhPreviewModal.notifRecord.verifiedPreviousDaysCount > 0 ? 'danger' : 'neutral'}>{rhPreviewModal.notifRecord.verifiedPreviousDaysCount || 0} registro(s)</Badge></p>
+                  <p style={{ margin: '0 0 4px 0' }}><strong>Semana:</strong> {rhPreviewModal.notifRecord.weekStart} al {rhPreviewModal.notifRecord.weekEnd}</p>
+                  <p style={{ margin: 0 }}><strong>Total Acumulado:</strong> <Badge variant={rhPreviewModal.notifRecord.totalHoras > 0 ? 'warning' : 'neutral'}>{rhPreviewModal.notifRecord.totalHoras}h entre {rhPreviewModal.notifRecord.totalColaboradores} colaborador(es)</Badge></p>
+                </>
+              ) : (
+                <>
+                  <p style={{ margin: '0 0 4px 0' }}><strong>Fecha:</strong> {rhPreviewModal.notifRecord.date}</p>
+                  <p style={{ margin: '0 0 4px 0' }}><strong>Total Horas Extra Autorizadas:</strong> <Badge variant={rhPreviewModal.notifRecord.horasExtraCount > 0 ? 'warning' : 'neutral'}>{rhPreviewModal.notifRecord.horasExtraCount || 0} autorización(es)</Badge></p>
+                  {rhPreviewModal.notifRecord.type !== 'horas_extra' && (
+                    <>
+                      <p style={{ margin: '0 0 4px 0' }}><strong>Total Personal Ausente:</strong> <Badge variant={rhPreviewModal.notifRecord.absentCount > 0 ? 'danger' : 'success'}>{rhPreviewModal.notifRecord.absentCount} colaborador(es)</Badge></p>
+                      <p style={{ margin: 0 }}><strong>Verificaciones/Correcciones de Días Anteriores:</strong> <Badge variant={rhPreviewModal.notifRecord.verifiedPreviousDaysCount > 0 ? 'danger' : 'neutral'}>{rhPreviewModal.notifRecord.verifiedPreviousDaysCount || 0} registro(s)</Badge></p>
+                    </>
+                  )}
                 </>
               )}
             </div>

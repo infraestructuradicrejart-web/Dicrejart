@@ -31,7 +31,7 @@ import useProduccion from '../../hooks/useProduccion';
 import useCalidad from '../../hooks/useCalidad';
 import useActividades from '../../hooks/useActividades';
 import useOperarios from '../../hooks/useOperarios';
-import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { getTodayLocalDateStr, getOvertimeWeekRange } from '../../utils/dateUtils';
 import { PRIORITY_LABELS } from '../../data/actividadesData';
 import PageHeader from '../../components/ui/PageHeader';
 import { addPdfTable } from '../../utils/pdfTable';
@@ -71,11 +71,64 @@ const ReportesPage = () => {
   const [isExportingPDF, setIsExportingPDF] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
 
+  // Navegación de semanas para el resumen de horas extra (jueves a miércoles) — 0 =
+  // semana en curso, negativo = semanas anteriores, positivo = futuras (si ya se
+  // programaron horas extra por adelantado)
+  const [overtimeWeekOffset, setOvertimeWeekOffset] = useState(0);
+
   const toast = useToast();
   const { historialProduccion, juegos } = useProduccion();
   const { inspecciones } = useCalidad();
   const { actividades } = useActividades();
-  const { operarios } = useOperarios();
+  const { operarios, horasExtra } = useOperarios();
+
+  // ============================================
+  // RESUMEN SEMANAL DE HORAS EXTRA (Jueves a Miércoles)
+  // ============================================
+  const overtimeWeekRange = React.useMemo(() => {
+    const base = new Date(`${getTodayLocalDateStr()}T00:00:00`);
+    base.setDate(base.getDate() + overtimeWeekOffset * 7);
+    return getOvertimeWeekRange(getTodayLocalDateStr(base));
+  }, [overtimeWeekOffset]);
+
+  const weeklyOvertimeList = horasExtra.filter(
+    (he) => he.authorizedDate >= overtimeWeekRange.start
+      && he.authorizedDate <= overtimeWeekRange.end
+      && he.verificationStatus !== 'cancelado'
+  );
+
+  // Agrupado por operario (sumando todas sus autorizaciones de la semana) y luego por área
+  const overtimeByArea = React.useMemo(() => {
+    const byOperario = new Map();
+    weeklyOvertimeList.forEach((he) => {
+      if (!byOperario.has(he.operarioId)) {
+        byOperario.set(he.operarioId, {
+          operarioId: he.operarioId,
+          operarioName: he.operarioName,
+          operarioPuesto: he.operarioPuesto || 'N/A',
+          areaId: he.areaId || 'N/A',
+          totalHours: 0,
+          authCount: 0,
+        });
+      }
+      const entry = byOperario.get(he.operarioId);
+      entry.totalHours += Number(he.overtimeHours) || 0;
+      entry.authCount += 1;
+    });
+
+    const byArea = new Map();
+    Array.from(byOperario.values()).forEach((entry) => {
+      if (!byArea.has(entry.areaId)) byArea.set(entry.areaId, []);
+      byArea.get(entry.areaId).push(entry);
+    });
+    byArea.forEach((list) => list.sort((a, b) => b.totalHours - a.totalHours));
+
+    return Array.from(byArea.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [weeklyOvertimeList]);
+
+  const overtimeWeekTotalHoras = weeklyOvertimeList.reduce((sum, he) => sum + (Number(he.overtimeHours) || 0), 0);
+  const overtimeWeekTotalColaboradores = new Set(weeklyOvertimeList.map((he) => he.operarioId)).size;
+  const getAreaLabel = (areaId) => AREAS.find((a) => a.id === areaId)?.name || areaId;
 
   // ============================================
   // PROCESAMIENTO DE DATOS PARA GRÁFICAS
@@ -591,6 +644,84 @@ const ReportesPage = () => {
           {isExportingPDF ? 'Generando...' : '📄 Exportar PDF'}
         </Button>
       </PageHeader>
+
+      {/* ============================================
+          RESUMEN SEMANAL DE HORAS EXTRA (Jueves a Miércoles)
+          ============================================ */}
+      <motion.div variants={itemVariants}>
+        <Card variant="default" style={{ marginBottom: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: 'var(--space-3)' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 'var(--h3-size)', color: 'var(--color-secondary)' }}>🕒 Resumen Semanal de Horas Extra</h3>
+              <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: 'var(--color-gray-500)' }}>
+                La semana de horas extra corre de jueves a miércoles.
+              </p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <Button variant="secondary" size="sm" onClick={() => setOvertimeWeekOffset((prev) => prev - 1)}>
+                ◀ Semana Anterior
+              </Button>
+              <strong style={{ fontSize: '13px', color: 'var(--color-dark)', whiteSpace: 'nowrap' }}>
+                {overtimeWeekRange.start} al {overtimeWeekRange.end}
+              </strong>
+              <Button variant="secondary" size="sm" onClick={() => setOvertimeWeekOffset((prev) => prev + 1)}>
+                Semana Siguiente ▶
+              </Button>
+              {overtimeWeekOffset !== 0 && (
+                <Button variant="primary" size="sm" onClick={() => setOvertimeWeekOffset(0)}>
+                  📍 Semana Actual
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: 'var(--space-4)' }}>
+            <span style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', backgroundColor: '#fef3c7', color: '#92400e', fontWeight: 'bold' }}>
+              Total: {overtimeWeekTotalHoras}h
+            </span>
+            <span style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', backgroundColor: 'var(--color-gray-100)', color: 'var(--color-gray-600)', fontWeight: 'bold' }}>
+              {overtimeWeekTotalColaboradores} colaborador(es)
+            </span>
+          </div>
+
+          {overtimeByArea.length === 0 ? (
+            <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: 'var(--space-4) 0' }}>
+              No se registraron horas extra en esta semana.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+              {overtimeByArea.map(([areaId, entries]) => (
+                <div key={areaId}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: 'var(--color-gray-700)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                    {getAreaLabel(areaId)}
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {entries.map((e) => (
+                      <div
+                        key={e.operarioId}
+                        style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--color-gray-200)',
+                          backgroundColor: 'var(--color-gray-50)', fontSize: '13px',
+                        }}
+                      >
+                        <span>
+                          <strong>{e.operarioName}</strong>
+                          <span style={{ color: 'var(--color-gray-500)', marginLeft: '6px' }}>({e.operarioPuesto})</span>
+                        </span>
+                        <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <span style={{ color: 'var(--color-gray-500)', fontSize: '12px' }}>{e.authCount} autorización(es)</span>
+                          <strong style={{ color: '#92400e' }}>{e.totalHours}h</strong>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </motion.div>
 
       {/* ============================================
           BARRA DE FILTROS

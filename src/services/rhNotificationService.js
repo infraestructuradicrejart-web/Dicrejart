@@ -8,7 +8,7 @@
 
 import { doc, setDoc, collection, addDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { getTodayLocalDateStr } from '../utils/dateUtils';
+import { getTodayLocalDateStr, getOvertimeWeekRange } from '../utils/dateUtils';
 import { getOvertimeBlocks, formatHourLabel } from '../utils/overtimeUtils';
 import { logAudit } from '../utils/auditLog';
 
@@ -491,6 +491,218 @@ export const triggerRHOvertimeNotification = async ({
     };
   } catch (error) {
     console.error('Error al enviar notificación de horas extra a RH:', error);
+    return { ok: false, error: error.message };
+  }
+};
+
+/**
+ * Genera el cuerpo en texto y HTML del resumen SEMANAL de horas extra — la semana de
+ * horas extra de Dicrejart corre de jueves a miércoles (no lunes-domingo), ver
+ * getOvertimeWeekRange en dateUtils.js. Agrupa por área y, dentro de cada área, por
+ * colaborador, sumando sus horas extra acumuladas en la semana.
+ */
+export const buildRHWeeklyOvertimeSummaryEmailContent = (weeklyHorasExtra, weekStart, weekEnd, emailRH) => {
+  const formatFecha = (dateStr) => new Date(`${dateStr}T00:00:00`).toLocaleDateString('es-MX', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  const subject = `[Dicrejart System] Resumen Semanal de Horas Extra - ${weekStart} al ${weekEnd}`;
+
+  // Agrupar por operario (sumando todas sus autorizaciones de la semana)
+  const byOperario = new Map();
+  weeklyHorasExtra.forEach((he) => {
+    if (!byOperario.has(he.operarioId)) {
+      byOperario.set(he.operarioId, {
+        operarioId: he.operarioId,
+        operarioName: he.operarioName,
+        operarioPuesto: he.operarioPuesto || 'N/A',
+        areaId: he.areaId || 'N/A',
+        totalHours: 0,
+        authCount: 0,
+      });
+    }
+    const entry = byOperario.get(he.operarioId);
+    entry.totalHours += Number(he.overtimeHours) || 0;
+    entry.authCount += 1;
+  });
+
+  // Agrupar esos totales por área, orden descendente de horas dentro de cada área
+  const byArea = new Map();
+  Array.from(byOperario.values()).forEach((entry) => {
+    if (!byArea.has(entry.areaId)) byArea.set(entry.areaId, []);
+    byArea.get(entry.areaId).push(entry);
+  });
+  byArea.forEach((list) => list.sort((a, b) => b.totalHours - a.totalHours));
+
+  const totalHorasGeneral = Array.from(byOperario.values()).reduce((sum, e) => sum + e.totalHours, 0);
+  const totalColaboradores = byOperario.size;
+
+  let textLines = [
+    `=============================================================`,
+    `DICREJART - RESUMEN SEMANAL DE HORAS EXTRA`,
+    `=============================================================`,
+    `Semana: ${formatFecha(weekStart)} al ${formatFecha(weekEnd)}`,
+    `Destinatario RH: ${emailRH || 'Por definir (No configurado)'}`,
+    `Total de horas extra acumuladas: ${totalHorasGeneral}h entre ${totalColaboradores} colaborador(es)`,
+    `-------------------------------------------------------------`,
+    ``,
+  ];
+
+  if (totalColaboradores === 0) {
+    textLines.push(`No se registraron horas extra esta semana.`);
+  } else {
+    Array.from(byArea.entries()).forEach(([areaId, entries]) => {
+      textLines.push(`ÁREA: ${areaId}`);
+      entries.forEach((e) => {
+        textLines.push(`  • ${e.operarioName} (${e.operarioPuesto}, ID: ${e.operarioId}): ${e.totalHours}h en ${e.authCount} autorización(es)`);
+      });
+      textLines.push(``);
+    });
+  }
+
+  textLines.push(`Este correo fue generado automáticamente por el Sistema Integral Dicrejart.`);
+  const bodyText = textLines.join('\n');
+
+  const areaRowsHtml = totalColaboradores === 0
+    ? `<tr><td colspan="4" style="padding: 16px; text-align: center; color: #6b7280; background-color: #f9fafb;">No se registraron horas extra esta semana.</td></tr>`
+    : Array.from(byArea.entries()).map(([areaId, entries]) => entries.map((e, i) => `
+      <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
+        ${i === 0 ? `<td rowspan="${entries.length}" style="padding: 10px; border-bottom: 1px solid #e5e7eb; border-right: 1px solid #e5e7eb; font-weight: bold; color: #1f2937; vertical-align: top; text-transform: uppercase; font-size: 12px;">${areaId}</td>` : ''}
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #1f2937;">${e.operarioName} <br/><span style="font-size:11px; color:#6b7280; font-weight:normal;">${e.operarioPuesto} — ID: ${e.operarioId}</span></td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 700; text-align: center;">${e.totalHours}h</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280; text-align: center;">${e.authCount}</td>
+      </tr>
+    `).join('')).join('');
+
+  const bodyHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background-color: #ffffff;">
+      <div style="background-color: #1e293b; color: #ffffff; padding: 20px; text-align: center;">
+        <h2 style="margin: 0; font-size: 20px; font-weight: bold;">DICREJART - Control de Calidad y Operarios</h2>
+        <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Resumen Semanal de Horas Extra (Jueves a Miércoles)</p>
+      </div>
+      <div style="padding: 20px;">
+        <p style="font-size: 14px; color: #374151;"><strong>Semana:</strong> ${formatFecha(weekStart)} al ${formatFecha(weekEnd)}</p>
+        <p style="font-size: 14px; color: #374151;"><strong>Destinatario RH:</strong> <span style="color: #2563eb;">${emailRH || 'Por definir'}</span></p>
+        <p style="font-size: 14px; color: #374151;"><strong>Total Acumulado:</strong> <span style="background-color: #fef3c7; color: #92400e; padding: 3px 8px; border-radius: 4px; font-weight: bold;">${totalHorasGeneral}h entre ${totalColaboradores} colaborador(es)</span></p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+          <thead>
+            <tr style="background-color: #f3f4f6; color: #374151; font-size: 12px; text-transform: uppercase;">
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Área</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Colaborador</th>
+              <th style="padding: 10px; text-align: center; border-bottom: 2px solid #d1d5db;">Horas Extra</th>
+              <th style="padding: 10px; text-align: center; border-bottom: 2px solid #d1d5db;">Autorizaciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${areaRowsHtml}
+          </tbody>
+        </table>
+      </div>
+      <div style="background-color: #f9fafb; padding: 12px 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; text-align: center;">
+        Generado automáticamente por el Sistema Dicrejart. Corte semanal de horas extra: jueves a miércoles.
+      </div>
+    </div>
+  `;
+
+  return { subject, bodyText, bodyHtml };
+};
+
+/**
+ * Dispara o simula el envío del resumen semanal de horas extra a RH (programado para los
+ * miércoles, o manual). Usa su propio candado atómico (`lastRHWeeklySummaryDate`) para no
+ * interferir con las otras dos notificaciones de RH.
+ */
+export const triggerRHWeeklyOvertimeSummary = async ({
+  horasExtra = [],
+  generalConfig = {},
+  updateGeneralConfig = null,
+  force = false,
+  user = null,
+  weekRange = null,
+}) => {
+  const todayStr = getTodayLocalDateStr();
+
+  if (!force) {
+    if (generalConfig.notificarResumenSemanalRH === false) {
+      return { ok: false, reason: 'Resumen semanal de horas extra desactivado en la configuración.' };
+    }
+
+    if (!db) return { ok: false, reason: 'Firestore no está inicializado.' };
+
+    try {
+      await runTransaction(db, async (tx) => {
+        const configRef = doc(db, 'config', 'general');
+        const snap = await tx.get(configRef);
+        const currentLastDate = snap.exists() ? snap.data().lastRHWeeklySummaryDate : null;
+        if (currentLastDate === todayStr) {
+          throw new Error('ALREADY_SENT');
+        }
+        tx.set(configRef, { lastRHWeeklySummaryDate: todayStr }, { merge: true });
+      });
+    } catch (error) {
+      if (error.message === 'ALREADY_SENT') {
+        return { ok: false, reason: 'El resumen semanal ya fue enviado el día de hoy.' };
+      }
+      console.error('Error al reclamar el envío del resumen semanal a RH:', error);
+      return { ok: false, error: error.message };
+    }
+  }
+
+  const { start, end } = weekRange || getOvertimeWeekRange(todayStr);
+  const weeklyList = horasExtra.filter((he) => he.authorizedDate >= start && he.authorizedDate <= end && he.verificationStatus !== 'cancelado');
+  const emailTarget = generalConfig.emailRH || 'recursoshumanos@dicrejart.com (Por definir)';
+
+  const { subject, bodyText, bodyHtml } = buildRHWeeklyOvertimeSummaryEmailContent(weeklyList, start, end, emailTarget);
+
+  const totalHoras = weeklyList.reduce((sum, he) => sum + (Number(he.overtimeHours) || 0), 0);
+  const totalColaboradores = new Set(weeklyList.map((he) => he.operarioId)).size;
+
+  const notifId = `NOTIF-RH-WK-${Date.now()}`;
+  const notifRecord = {
+    id: notifId,
+    type: 'resumen_semanal',
+    date: todayStr,
+    weekStart: start,
+    weekEnd: end,
+    timestamp: new Date().toISOString(),
+    emailRH: emailTarget,
+    totalHoras,
+    totalColaboradores,
+    status: 'enviado',
+    subject,
+    bodyText,
+    bodyHtml,
+    enviadoPor: user ? user.name : (force ? 'Administrador' : 'Sistema Programado (Miércoles)'),
+  };
+
+  try {
+    if (db) {
+      await addDoc(collection(db, 'notificaciones_rh'), notifRecord);
+
+      if (!force && updateGeneralConfig) {
+        await updateGeneralConfig('lastRHWeeklySummaryDate', todayStr);
+      }
+    }
+
+    logAudit({
+      user: user || { name: 'Sistema Programado (Miércoles)', roleType: 'system' },
+      module: 'operarios',
+      action: 'Generó resumen semanal de horas extra a RH',
+      details: `Semana ${start} al ${end}: ${totalHoras}h entre ${totalColaboradores} colaborador(es)`,
+    });
+
+    return {
+      ok: true,
+      weekStart: start,
+      weekEnd: end,
+      totalHoras,
+      totalColaboradores,
+      emailTarget,
+      record: notifRecord,
+    };
+  } catch (error) {
+    console.error('Error al enviar resumen semanal de horas extra a RH:', error);
     return { ok: false, error: error.message };
   }
 };
