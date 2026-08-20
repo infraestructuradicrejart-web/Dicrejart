@@ -468,7 +468,10 @@ export const triggerRHOvertimeNotification = async ({
     if (db) {
       await addDoc(collection(db, 'notificaciones_rh'), notifRecord);
 
-      if (updateGeneralConfig) {
+      // Igual que en triggerDailyRHNotification: solo se reclama el candado del día si NO
+      // fue un test forzado, para que probar el botón "Enviar Ahora" no bloquee el envío
+      // automático real programado para más tarde ese mismo día.
+      if (!force && updateGeneralConfig) {
         await updateGeneralConfig('lastRHOvertimeNotificationDate', todayStr);
       }
     }
@@ -623,8 +626,12 @@ export const triggerDailyRHNotification = async ({
       // Guardar el registro de la notificación en Firestore para auditoría de RH
       await addDoc(collection(db, 'notificaciones_rh'), notifRecord);
 
-      // Registrar la fecha del último envío en la configuración general si no fue un test forzado
-      if (updateGeneralConfig) {
+      // Registrar la fecha del último envío en la configuración general SOLO si no fue un
+      // test forzado ("📧 Probar / Enviar Ahora" desde Admin) — antes esto se guardaba
+      // siempre, así que probar el botón en pleno día "reclamaba" el candado del envío
+      // automático de HOY, y el disparo real programado (10:00 AM) ya no se enviaba
+      // después porque veía el día ya marcado como enviado.
+      if (!force && updateGeneralConfig) {
         await updateGeneralConfig('lastRHNotificationDate', todayStr);
       }
     }
