@@ -77,7 +77,7 @@
   justify-content: space-between;
   align-items: center;
   padding: var(--space-4);
-  background-color: rgba(255, 255, 255, 0.7);
+  background-color: var(--card-bg, rgba(255, 255, 255, 0.7));
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--color-gray-200);
@@ -132,10 +132,10 @@
 }
 
 .palletItemList {
-  background-color: rgba(255, 255, 255, 0.45);
+  background-color: var(--color-gray-100, rgba(255, 255, 255, 0.45));
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--color-gray-200);
   border-radius: var(--radius-md);
   padding: var(--space-3);
   margin-bottom: var(--space-4);
@@ -216,10 +216,10 @@
   gap: var(--space-2);
   font-size: var(--small-size);
   color: var(--color-gray-700);
-  background-color: rgba(255, 255, 255, 0.45);
+  background-color: var(--color-gray-100, rgba(255, 255, 255, 0.45));
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--color-gray-200);
   padding: var(--space-3);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-4);

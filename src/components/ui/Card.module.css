@@ -60,7 +60,7 @@
    ============================================ */
 
 .variant-highlight {
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: var(--card-highlight-bg, rgba(255, 255, 255, 0.9));
   border: 2px solid var(--color-primary);
   border-color: var(--color-primary);
   box-shadow: 0 0 0 1px var(--color-primary);
@@ -71,7 +71,7 @@
    ============================================ */
 
 .variant-success {
-  background-color: rgba(240, 253, 244, 0.9); /* Verde muy claro */
+  background-color: var(--card-success-bg, rgba(240, 253, 244, 0.9));
   border-color: var(--color-success);
   box-shadow: 0 0 0 1px var(--color-success);
 }
@@ -81,7 +81,7 @@
    ============================================ */
 
 .variant-warning {
-  background-color: rgba(255, 251, 235, 0.9); /* Ámbar muy claro */
+  background-color: var(--card-warning-bg, rgba(255, 251, 235, 0.9));
   border-color: var(--color-warning);
   box-shadow: 0 0 0 1px var(--color-warning);
 }
@@ -91,7 +91,7 @@
    ============================================ */
 
 .variant-danger {
-  background-color: rgba(254, 242, 242, 0.9); /* Rojo muy claro */
+  background-color: var(--card-danger-bg, rgba(254, 242, 242, 0.9));
   border-color: var(--color-alert);
   box-shadow: 0 0 0 1px var(--color-alert);
 }

@@ -30,12 +30,17 @@
 
   /* Superficies UI */
   --card-bg: rgba(255, 255, 255, 0.92);
+  --card-highlight-bg: rgba(255, 255, 255, 0.92);
+  --card-success-bg: rgba(240, 253, 244, 0.9);
+  --card-warning-bg: rgba(255, 251, 235, 0.9);
+  --card-danger-bg: rgba(254, 242, 242, 0.9);
   --modal-bg: #FFFFFF;
   --input-bg: #FFFFFF;
   --dropdown-bg: #FFFFFF;
   --table-header-bg: #F3F4F6;
   --table-row-hover: #F9FAFB;
   --backdrop-shape-opacity: 0.14;
+  --heading-secondary: #330066;
 
   /* Colores funcionales (semántica de UI, apoyados en la paleta complementaria) */
   --color-success: #10B981;
@@ -221,9 +226,14 @@
   --color-white: #1a1728;
   --color-light: #12101c;
   --color-dark: #f8fafc;
+  --heading-secondary: #c4b5fd;
 
-  /* Superficies UI */
+  /* Superficies UI y Variantes de Tarjetas en Modo Oscuro */
   --card-bg: rgba(26, 23, 40, 0.92);
+  --card-highlight-bg: rgba(36, 25, 30, 0.92);
+  --card-success-bg: rgba(16, 185, 129, 0.14);
+  --card-warning-bg: rgba(255, 204, 0, 0.13);
+  --card-danger-bg: rgba(220, 38, 38, 0.15);
   --modal-bg: #1c182c;
   --input-bg: #151322;
   --dropdown-bg: #1c182c;

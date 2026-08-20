@@ -25,7 +25,7 @@
 .title {
   font-size: var(--h1-size);
   font-weight: var(--h1-weight);
-  color: var(--color-secondary);
+  color: var(--heading-secondary, var(--color-dark));
   margin-bottom: var(--space-1);
 }
 
@@ -86,7 +86,8 @@
 
 .kpiIcon {
   font-size: 32px;
-  background: var(--color-gray-50);
+  background: var(--color-gray-100);
+  border: 1px solid var(--color-gray-200);
   width: 56px;
   height: 56px;
   border-radius: var(--radius-md);
@@ -134,7 +135,7 @@
 .chartTitle {
   font-size: var(--h3-size);
   font-weight: var(--h3-weight);
-  color: var(--color-secondary);
+  color: var(--heading-secondary, var(--color-dark));
   margin-bottom: var(--space-4);
 }
 
