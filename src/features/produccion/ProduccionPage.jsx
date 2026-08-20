@@ -28,7 +28,7 @@ import useProgressiveList from '../../hooks/useProgressiveList';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection, canAccessSection } from '../../utils/roleAccess';
 import { getOvertimeBlocks, formatHourLabel, buildHalfHourOptions, buildOvertimeCountOptions } from '../../utils/overtimeUtils';
-import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { getTodayLocalDateStr, getOvertimeWeekRange } from '../../utils/dateUtils';
 import { checkOvertimeEligibility } from '../../utils/overtimeRules';
 import { ROLE_TYPES } from '../../data/usersData';
 import { ESTADO_LABELS, ESTADO_ICONS, ESTADO_BADGE_VARIANT } from '../../data/estadoConfig';
@@ -209,6 +209,7 @@ const ProduccionPage = () => {
   });
   const [showMaterialesHistorial, setShowMaterialesHistorial] = useState(false);
   const [isExportingMaterialPdf, setIsExportingMaterialPdf] = useState(false);
+  const [isExportingHorasExtraPdf, setIsExportingHorasExtraPdf] = useState(false);
 
   const toast = useToast();
 
@@ -1218,6 +1219,165 @@ const ProduccionPage = () => {
       toast.danger('No se pudo generar el PDF. Intenta de nuevo.');
     } finally {
       setIsExportingMaterialPdf(false);
+    }
+  };
+
+  /**
+   * Exporta a PDF las horas extra autorizadas de ESTA área en la semana de horas extra en
+   * curso (jueves a miércoles, ver getOvertimeWeekRange) — con fines de control para el
+   * supervisor/encargado del área. Solo incluye horario autorizado y total de horas (no
+   * correcciones de horario real ni verificación de cumplimiento).
+   */
+  const handleExportHorasExtraAreaPdf = async () => {
+    setIsExportingHorasExtraPdf(true);
+    try {
+      const { start, end } = getOvertimeWeekRange();
+      const areaRecords = horasExtra
+        .filter((h) => h.areaId === areaId && h.authorizedDate >= start && h.authorizedDate <= end && h.verificationStatus !== 'cancelado')
+        .sort((a, b) => (a.authorizedDate === b.authorizedDate
+          ? String(a.operarioName).localeCompare(String(b.operarioName))
+          : a.authorizedDate.localeCompare(b.authorizedDate)));
+
+      const { default: jsPDF } = await import('jspdf');
+      const { rasterizeImage, logoUrl } = await import('../../utils/pdfBranding');
+
+      const MARGIN = 14;
+      const WIDTH = 182;
+      const SECONDARY = [51, 0, 102];
+      const PRIMARY = [255, 51, 0];
+      const BORDER = [209, 213, 219];
+      const STRIPE = [243, 244, 246];
+      const DARK = [27, 27, 27];
+
+      const logoImg = await rasterizeImage(logoUrl);
+
+      const doc = new jsPDF();
+      const areaName = activeArea?.name || areaId;
+
+      const drawHeader = () => {
+        const logoH = 15;
+        const logoW = logoH * (logoImg.width / logoImg.height);
+        doc.addImage(logoImg.dataUrl, 'PNG', MARGIN, 8, logoW, logoH);
+
+        const boxX = MARGIN + WIDTH - 70;
+        doc.setDrawColor(...BORDER);
+        doc.rect(boxX, 9, 70, 20);
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(...SECONDARY);
+        doc.text('HORAS EXTRA AUTORIZADAS', boxX + 35, 15, { align: 'center' });
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(...DARK);
+        doc.text(`Área: ${areaName}`, boxX + 35, 21, { align: 'center' });
+        doc.text(`Semana: ${start} al ${end}`, boxX + 35, 26, { align: 'center' });
+
+        doc.setDrawColor(...PRIMARY);
+        doc.setLineWidth(1);
+        doc.line(MARGIN, 33, MARGIN + WIDTH, 33);
+        doc.setLineWidth(0.2);
+      };
+
+      const colWidths = [22, 50, 28, 38, 16, 28];
+      const headers = ['Fecha', 'Colaborador', 'Bloque', 'Horario', 'Horas', 'Autorizó'];
+      const rowH = 7;
+
+      const drawTableHeader = (yPos) => {
+        doc.setFillColor(...SECONDARY);
+        doc.rect(MARGIN, yPos, WIDTH, rowH, 'F');
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 255, 255);
+        let cx = MARGIN;
+        headers.forEach((h, i) => {
+          doc.text(h, cx + 2, yPos + rowH - 2.3);
+          cx += colWidths[i];
+        });
+        return yPos + rowH;
+      };
+
+      const describeBloque = (h) => {
+        if (h.authorizedDate && new Date(`${h.authorizedDate}T00:00:00`).getDay() === 0) return 'Domingo';
+        const { earlyHours, lateHours } = getOvertimeBlocks(h.startHour, h.endHour, h.authorizedDate);
+        if (earlyHours > 0 && lateHours > 0) return 'Mat. + Vesp.';
+        if (earlyHours > 0) return 'Matutino';
+        if (lateHours > 0) return 'Vespertino';
+        return '—';
+      };
+
+      drawHeader();
+      let y = drawTableHeader(42);
+
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(8);
+      let totalHoras = 0;
+
+      if (areaRecords.length === 0) {
+        doc.setDrawColor(...BORDER);
+        doc.rect(MARGIN, y, WIDTH, rowH);
+        doc.setTextColor(...DARK);
+        doc.text('No se autorizaron horas extra en esta área durante la semana en curso.', MARGIN + 2, y + rowH - 2.3);
+        y += rowH;
+      }
+
+      areaRecords.forEach((h, idx) => {
+        if (y > 275) {
+          doc.addPage();
+          drawHeader();
+          y = drawTableHeader(42);
+          doc.setFont(undefined, 'normal');
+          doc.setFontSize(8);
+        }
+        if (idx % 2 === 1) {
+          doc.setFillColor(...STRIPE);
+          doc.rect(MARGIN, y, WIDTH, rowH, 'F');
+        }
+        doc.setDrawColor(...BORDER);
+        doc.rect(MARGIN, y, WIDTH, rowH);
+        let cx = MARGIN;
+        colWidths.forEach((w) => {
+          cx += w;
+          doc.line(cx, y, cx, y + rowH);
+        });
+
+        doc.setTextColor(...DARK);
+        cx = MARGIN;
+        doc.text(h.authorizedDate || '—', cx + 2, y + rowH - 2.3); cx += colWidths[0];
+        doc.text(String(h.operarioName || '—'), cx + 2, y + rowH - 2.3, { maxWidth: colWidths[1] - 4 }); cx += colWidths[1];
+        doc.text(describeBloque(h), cx + 2, y + rowH - 2.3); cx += colWidths[2];
+        doc.text(`${formatHourLabel(h.startHour)}-${formatHourLabel(h.endHour)}`, cx + 2, y + rowH - 2.3); cx += colWidths[3];
+        doc.text(String(h.overtimeHours ?? '—'), cx + 2, y + rowH - 2.3); cx += colWidths[4];
+        doc.text(String(h.authorizedBy || '—'), cx + 2, y + rowH - 2.3, { maxWidth: colWidths[5] - 4 });
+        y += rowH;
+        totalHoras += Number(h.overtimeHours) || 0;
+      });
+
+      if (y > 275) {
+        doc.addPage();
+        drawHeader();
+        y = 42;
+      }
+      doc.setFillColor(...STRIPE);
+      doc.rect(MARGIN, y, WIDTH, rowH, 'F');
+      doc.setDrawColor(...BORDER);
+      doc.rect(MARGIN, y, WIDTH, rowH);
+      doc.setFont(undefined, 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...SECONDARY);
+      doc.text(`Total: ${totalHoras}h en ${areaRecords.length} autorización(es)`, MARGIN + 2, y + rowH - 2.3);
+      y += rowH + 8;
+
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      doc.text(`Generado el ${new Date().toLocaleString('es-MX')} por ${user?.name || 'Usuario'} — Sistema Dicrejart`, MARGIN, 290);
+
+      doc.save(`HorasExtra_${areaName.replace(/\s+/g, '-')}_${start}_a_${end}.pdf`);
+    } catch (error) {
+      console.error('Error al generar el PDF de horas extra del área:', error);
+      toast.danger('No se pudo generar el PDF. Intenta de nuevo.');
+    } finally {
+      setIsExportingHorasExtraPdf(false);
     }
   };
 
@@ -2319,6 +2479,16 @@ const ProduccionPage = () => {
             <h3 className={styles.sectionTitle} style={{ margin: 0 }}>
               👥 Personal del Área
             </h3>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={handleExportHorasExtraAreaPdf}
+              isLoading={isExportingHorasExtraPdf}
+              title="Descarga las horas extra autorizadas de esta área en la semana en curso (jueves a miércoles)"
+            >
+              📄 Exportar Horas Extra (PDF)
+            </Button>
           </div>
 
           {operadoresDisponibles.length === 0 ? (
