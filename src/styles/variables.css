@@ -42,6 +42,13 @@
   --backdrop-shape-opacity: 0.14;
   --heading-secondary: #330066;
 
+  /* Botones secundarios */
+  --btn-secondary-bg: var(--color-secondary);
+  --btn-secondary-hover: #2f2660;
+  --btn-secondary-active: #251d4a;
+  --btn-secondary-border: transparent;
+  --btn-secondary-color: var(--color-white);
+
   /* Colores funcionales (semántica de UI, apoyados en la paleta complementaria) */
   --color-success: #10B981;
   --color-warning: #FFCC00;
@@ -226,7 +233,18 @@
   --color-white: #1a1728;
   --color-light: #12101c;
   --color-dark: #f8fafc;
+  
+  /* En Modo Oscuro, el color secundario y títulos son un lavanda/púrpura luminoso de alta legibilidad */
+  --color-secondary: #c4b5fd;
+  --color-area-herreria: #a855f7;
   --heading-secondary: #c4b5fd;
+
+  /* Botones secundarios en Modo Oscuro (Púrpura vibrante con alto contraste) */
+  --btn-secondary-bg: #6d28d9;
+  --btn-secondary-hover: #7c3aed;
+  --btn-secondary-active: #5b21b6;
+  --btn-secondary-border: #8b5cf6;
+  --btn-secondary-color: #ffffff;
 
   /* Superficies UI y Variantes de Tarjetas en Modo Oscuro */
   --card-bg: rgba(26, 23, 40, 0.92);

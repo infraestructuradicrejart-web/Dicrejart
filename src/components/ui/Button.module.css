@@ -63,21 +63,22 @@
 }
 
 /* ============================================
-   VARIANTE: SECONDARY (Azul oscuro)
+   VARIANTE: SECONDARY (Púrpura / Violeta de Marca)
    ============================================ */
 
 .variant-secondary {
-  background-color: var(--color-secondary);
-  color: var(--color-white);
+  background-color: var(--btn-secondary-bg, var(--color-secondary));
+  color: var(--btn-secondary-color, var(--color-white));
+  border: 1px solid var(--btn-secondary-border, transparent);
   
   /* Hover */
   &:hover:not(:disabled) {
-    background-color: #2f2660; /* Más oscuro */
+    background-color: var(--btn-secondary-hover, #2f2660);
   }
   
   /* Active/Press */
   &:active:not(:disabled) {
-    background-color: #251d4a; /* Aún más oscuro */
+    background-color: var(--btn-secondary-active, #251d4a);
   }
 }
 
