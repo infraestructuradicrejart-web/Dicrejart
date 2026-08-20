@@ -469,8 +469,18 @@ const OperariosPage = () => {
   const handleSubmitEstado = async (e) => {
     e.preventDefault();
     const { operario, tipo, desde, hasta, notas } = estadoModal;
+    const todayStr = getTodayLocalDateStr();
 
-    const result = await setOperarioEstado(operario.id, { tipo, desde, hasta: hasta || null, notas }, user?.name || 'Usuario');
+    const result = await setOperarioEstado(
+      operario.id,
+      {
+        tipo,
+        desde: tipo === 'activo' ? todayStr : (desde || todayStr),
+        hasta: tipo === 'activo' ? null : (hasta || null),
+        notas,
+      },
+      user?.name || 'Usuario'
+    );
 
     if (result.ok) {
       toast.success(`Estado de ${operario.name} actualizado a "${ESTADO_LABELS[tipo]}".`);

@@ -1867,7 +1867,15 @@ const CalidadPage = () => {
                     <input
                       type="date"
                       className={styles.dateInput}
-                      style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--color-gray-300)', fontWeight: 'bold' }}
+                      style={{
+                        padding: '6px 10px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-gray-300)',
+                        backgroundColor: 'var(--input-bg, var(--color-white))',
+                        color: 'var(--color-dark)',
+                        fontWeight: 'bold',
+                        colorScheme: 'dark',
+                      }}
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
                     />

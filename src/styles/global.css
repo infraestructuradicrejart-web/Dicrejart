@@ -395,6 +395,51 @@ select optgroup {
 
 input[type="date"],
 input[type="datetime-local"],
-input[type="time"] {
-  color-scheme: light dark;
+input[type="time"],
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="email"],
+input[type="search"],
+textarea,
+select {
+  background-color: var(--input-bg, var(--color-white));
+  color: var(--color-dark);
+}
+
+[data-theme="dark"] input[type="date"],
+[data-theme="dark"] input[type="datetime-local"],
+[data-theme="dark"] input[type="time"],
+.dark-theme input[type="date"],
+.dark-theme input[type="datetime-local"],
+.dark-theme input[type="time"] {
+  color-scheme: dark !important;
+  background-color: var(--input-bg, #151322) !important;
+  color: var(--color-dark, #f8fafc) !important;
+  border-color: var(--color-gray-300) !important;
+}
+
+[data-theme="dark"] input[type="text"],
+[data-theme="dark"] input[type="number"],
+[data-theme="dark"] input[type="password"],
+[data-theme="dark"] input[type="email"],
+[data-theme="dark"] input[type="search"],
+[data-theme="dark"] textarea,
+[data-theme="dark"] select,
+.dark-theme input[type="text"],
+.dark-theme input[type="number"],
+.dark-theme input[type="password"],
+.dark-theme input[type="email"],
+.dark-theme input[type="search"],
+.dark-theme textarea,
+.dark-theme select {
+  background-color: var(--input-bg, #151322) !important;
+  color: var(--color-dark, #f8fafc) !important;
+  border-color: var(--color-gray-300) !important;
+}
+
+[data-theme="dark"] ::-webkit-calendar-picker-indicator,
+.dark-theme ::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  cursor: pointer;
 }

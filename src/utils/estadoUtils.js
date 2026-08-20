@@ -11,6 +11,8 @@
  * @author Dicrejart Dev Team
  */
 
+import { getTodayLocalDateStr } from './dateUtils';
+
 /**
  * Reconstruye qué estado tenía un colaborador en `dateStr`, recorriendo su historial
  * cronológico y quedándose con la última entrada de ausencia vigente ese día.
@@ -23,9 +25,10 @@
 export const getEstadoOnDate = (op, dateStr) => {
   if (!op) return null;
 
-  // Si el colaborador está actualmente en 'activo' y la fecha consultada es hoy o futura:
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (op.estado?.tipo === 'activo' && dateStr >= (op.estado.desde || todayStr)) {
+  const todayStr = getTodayLocalDateStr();
+
+  // Si el colaborador está actualmente en 'activo' y se consulta hoy o cualquier fecha futura:
+  if (op.estado?.tipo === 'activo' && (dateStr >= todayStr || dateStr >= (op.estado.desde || todayStr))) {
     return null;
   }
 
@@ -64,13 +67,9 @@ export const getEstadoOnDate = (op, dateStr) => {
     }
   }
 
-  // Si el estado actual vigente es 'activo' y se registró con fecha posterior a la ausencia encontrada
-  if (op.estado?.tipo === 'activo' && activeAbsence) {
-    const activoRegAt = op.estado.registradoAt || '';
-    const absenceRegAt = activeAbsence.registradoAt || '';
-    if (activoRegAt && absenceRegAt && activoRegAt >= absenceRegAt && dateStr >= (op.estado.desde || '')) {
-      return null;
-    }
+  // Si el estado actual vigente es 'activo', hoy no puede haber ausencia
+  if (op.estado?.tipo === 'activo' && dateStr === todayStr) {
+    return null;
   }
 
   return activeAbsence && activeAbsence.tipo !== 'activo' ? activeAbsence : null;

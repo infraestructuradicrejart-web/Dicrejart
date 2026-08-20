@@ -838,13 +838,13 @@ export const OperariosProvider = ({ children }) => {
     const op = operarios.find((o) => o.id === operarioId);
     if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
 
-    const targetDesde = desde || getTodayLocalDateStr();
     const todayStr = getTodayLocalDateStr();
+    const targetDesde = tipo === 'activo' ? todayStr : (desde || todayStr);
 
     const nuevoEstado = {
       tipo,
       desde: targetDesde,
-      hasta: hasta || null,
+      hasta: tipo === 'activo' ? null : (hasta || null),
       notas: notas || '',
       registradoPor,
       registradoAt: new Date().toISOString(),
@@ -853,10 +853,10 @@ export const OperariosProvider = ({ children }) => {
     try {
       let nextHistorial = [...(op.estadoHistorial || [])];
 
-      // Si se rectifica o cambia a 'activo', anular cualquier falta previa asociada para desbloquear de inmediato
-      if (tipo === 'activo' && op.estado && op.estado.tipo === 'falta') {
+      // Si se rectifica o cambia a 'activo', anular cualquier falta o ausencia previa no concluida
+      if (tipo === 'activo') {
         nextHistorial = nextHistorial.map((h) => {
-          if (h.tipo === 'falta' && (h.desde === targetDesde || h.desde === op.estado.desde)) {
+          if (h && h.tipo !== 'activo' && (!h.hasta || h.hasta >= todayStr || h.tipo === 'falta' || h.desde === targetDesde)) {
             return { ...h, anulado: true, notas: h.notas ? `${h.notas} (Corregido a En Planta)` : 'Corregido a En Planta' };
           }
           return h;
