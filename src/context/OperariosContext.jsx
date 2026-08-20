@@ -1117,6 +1117,14 @@ export const OperariosProvider = ({ children }) => {
           notasRevision: notes || '',
         });
 
+        // Cancela cualquier autorización previa vigente de ese colaborador para esa misma
+        // fecha antes de crear la nueva — sin esto, si ya existía una autorización directa
+        // (o de otra solicitud) para el mismo día, quedaban DOS registros activos
+        // simultáneos (duplicados) para la misma persona y fecha: se contaban doble en el
+        // reporte a RH, en el resumen semanal y en el PDF por área. Mismo candado que ya
+        // usa handleSaveSchedule en ProduccionPage.jsx para la autorización directa.
+        await cancelPendingHorasExtra(op.id, sol.fecha);
+
         const heId = `HE-${Date.now()}`;
         await setDoc(doc(db, 'horas_extra', heId), {
           id: heId,
@@ -1162,7 +1170,7 @@ export const OperariosProvider = ({ children }) => {
         return { ok: false, error: error.message };
       }
     },
-    [solicitudesHorasExtra, operarios, user]
+    [solicitudesHorasExtra, operarios, user, cancelPendingHorasExtra]
   );
 
   /**
@@ -1263,6 +1271,7 @@ export const OperariosProvider = ({ children }) => {
       const newBloque = bloque || sol.bloque;
       const newStartHour = newBloque === 'domingo' ? Number(startHour) : null;
       const newEndHour = newBloque === 'domingo' ? Number(endHour) : null;
+      const newMotivo = motivo || sol.motivo;
 
       if (op && newFecha !== sol.fecha) {
         const eligibility = checkOvertimeEligibility(op, newFecha);
@@ -1278,28 +1287,63 @@ export const OperariosProvider = ({ children }) => {
           bloque: newBloque,
           startHour: newStartHour,
           endHour: newEndHour,
-          motivo: motivo || sol.motivo,
+          motivo: newMotivo,
           modificadoPor: user?.name || 'Usuario',
           modificadoAt: new Date().toISOString(),
         });
 
         const todayStr = getTodayLocalDateStr();
-        if (sol.status === 'autorizada' && newFecha === todayStr && op) {
-          const isSaturday = new Date().getDay() === 6;
+        if (sol.status === 'autorizada' && op) {
+          // Ojo: isSaturday se calcula sobre newFecha (la fecha que en verdad se está
+          // autorizando), no sobre "hoy" — antes esto solo corría cuando newFecha era
+          // exactamente hoy, así que usar new Date().getDay() coincidía por casualidad;
+          // al extender esta sincronización a cualquier fecha (ver abajo), había que
+          // corregirlo para no calcular mal la jornada base (8-13 sábado vs 8-18) de una
+          // fecha distinta a la actual.
+          const isSaturday = new Date(`${newFecha}T00:00:00`).getDay() === 6;
           const baseEnd = isSaturday ? 13 : 18;
           const scheduleCalc = newBloque === 'domingo'
             ? calculateScheduleFromOvertime(newStartHour, newEndHour, newHoras, 'domingo')
             : calculateScheduleFromOvertime(8, baseEnd, newHoras, newBloque);
 
-          await updateDoc(doc(db, 'operarios', op.id), {
-            schedule: {
-              ...op.schedule,
+          // Sincroniza el registro real en `horas_extra` (fuente de verdad para el
+          // reporte a RH, el resumen semanal, el PDF por área y la verificación de
+          // Calidad) — antes esta función solo actualizaba la solicitud y, si la fecha
+          // era hoy, el horario "vigente" del operario, pero NUNCA el registro de
+          // horas_extra ya creado al autorizar, así que se quedaba con los datos viejos
+          // (fecha/horas/horario) sin importar cuánto se editara la solicitud después.
+          const linkedHE = horasExtra.find((h) => h.solicitudId === sol.id && h.verificationStatus !== 'cancelado');
+          if (linkedHE) {
+            await updateDoc(doc(db, 'horas_extra', linkedHE.id), {
+              authorizedDate: newFecha,
               startHour: scheduleCalc.startHour,
               endHour: scheduleCalc.endHour,
               overtimeHours: scheduleCalc.overtimeHours,
-              authorizedDate: newFecha,
-            },
-          });
+              overtimeTasks: newMotivo || 'Horas extras autorizadas',
+              // Los términos autorizados cambiaron — cualquier verificación de
+              // cumplimiento previa describiría un horario que ya no es el vigente, así
+              // que se reinicia para que Calidad la revise de nuevo con los datos
+              // correctos, en vez de dejar una verificación "cumplido"/"no cumplido"
+              // que ya no corresponde a lo realmente autorizado.
+              verificationStatus: 'pendiente',
+              verificationNotes: '',
+              verifiedBy: null,
+              verifiedByRole: null,
+              verifiedAt: null,
+            });
+          }
+
+          if (newFecha === todayStr) {
+            await updateDoc(doc(db, 'operarios', op.id), {
+              schedule: {
+                ...op.schedule,
+                startHour: scheduleCalc.startHour,
+                endHour: scheduleCalc.endHour,
+                overtimeHours: scheduleCalc.overtimeHours,
+                authorizedDate: newFecha,
+              },
+            });
+          }
         }
 
         logAudit({
@@ -1314,7 +1358,7 @@ export const OperariosProvider = ({ children }) => {
         return { ok: false, error: error.message };
       }
     },
-    [solicitudesHorasExtra, operarios, user]
+    [solicitudesHorasExtra, operarios, user, horasExtra]
   );
 
   // ============================================
