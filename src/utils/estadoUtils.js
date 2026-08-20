@@ -13,33 +13,67 @@
 
 /**
  * Reconstruye qué estado tenía un colaborador en `dateStr`, recorriendo su historial
- * cronológico y quedándose con la última entrada cuyo rango (`desde`-`hasta`) cubre esa
- * fecha. `falta` es un marcador de un solo día (cubre únicamente `desde`, igual que su
- * restablecimiento automático al día siguiente, ver evaluateAndResetExpiredEstado).
+ * cronológico y quedándose con la última entrada de ausencia vigente ese día.
+ * Si el colaborador está 'activo' o la ausencia ya terminó / no cubre `dateStr`, retorna null.
  *
  * @param {{estado?: Object, estadoHistorial?: Array<Object>}} op - Operario
  * @param {string} dateStr - Fecha a consultar, formato YYYY-MM-DD
  * @returns {Object|null} La entrada de ausencia vigente ese día, o null si estaba activo
  */
 export const getEstadoOnDate = (op, dateStr) => {
+  if (!op) return null;
+
+  // Si el colaborador está actualmente en 'activo' y la fecha consultada es hoy o futura:
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (op.estado?.tipo === 'activo' && dateStr >= (op.estado.desde || todayStr)) {
+    return null;
+  }
+
   const raw = [...(op?.estadoHistorial || [])];
   if (op?.estado && op.estado.desde) raw.push(op.estado);
 
   const entries = raw
-    .filter((e) => e && e.desde)
-    .sort((a, b) => (a.desde === b.desde
-      ? String(a.registradoAt || '').localeCompare(String(b.registradoAt || ''))
-      : a.desde.localeCompare(b.desde)));
+    .filter((e) => e && e.desde && !e.anulado && !e.eliminado)
+    .sort((a, b) => {
+      if (a.desde === b.desde) {
+        return String(a.registradoAt || '').localeCompare(String(b.registradoAt || ''));
+      }
+      return a.desde.localeCompare(b.desde);
+    });
 
-  let active = null;
+  let activeAbsence = null;
   for (const entry of entries) {
     if (entry.desde > dateStr) break;
-    const coversDate = entry.tipo === 'falta'
-      ? entry.desde === dateStr
-      : (!entry.hasta || entry.hasta >= dateStr);
-    active = coversDate ? entry : null;
+
+    // Si se registró un cambio a 'activo', limpia cualquier ausencia previa
+    if (entry.tipo === 'activo') {
+      activeAbsence = null;
+      continue;
+    }
+
+    // Una ausencia cubre dateStr si tiene rango [desde, hasta] y dateStr cae dentro,
+    // o si no tiene 'hasta' y dateStr coincide exactamente con 'desde'
+    const coversDate = entry.hasta
+      ? (dateStr >= entry.desde && dateStr <= entry.hasta)
+      : (dateStr === entry.desde);
+
+    if (coversDate) {
+      activeAbsence = entry;
+    } else if (entry.hasta && dateStr > entry.hasta) {
+      activeAbsence = null;
+    }
   }
-  return active;
+
+  // Si el estado actual vigente es 'activo' y se registró con fecha posterior a la ausencia encontrada
+  if (op.estado?.tipo === 'activo' && activeAbsence) {
+    const activoRegAt = op.estado.registradoAt || '';
+    const absenceRegAt = activeAbsence.registradoAt || '';
+    if (activoRegAt && absenceRegAt && activoRegAt >= absenceRegAt && dateStr >= (op.estado.desde || '')) {
+      return null;
+    }
+  }
+
+  return activeAbsence && activeAbsence.tipo !== 'activo' ? activeAbsence : null;
 };
 
 /**
