@@ -229,6 +229,8 @@
 
 [data-theme="dark"],
 .dark-theme {
+  color-scheme: dark;
+
   /* Fondos y Neutros con tonalidad Deep Violet (#330066) */
   --color-white: #1a1728;
   --color-light: #12101c;

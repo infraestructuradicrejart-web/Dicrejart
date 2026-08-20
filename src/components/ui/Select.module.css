@@ -80,6 +80,17 @@
   padding: var(--space-3) var(--space-7) var(--space-3) var(--space-3);
 }
 
+.select option {
+  background-color: var(--dropdown-bg, #1c182c);
+  color: var(--color-dark, #f8fafc);
+  padding: 8px 12px;
+}
+
+.select optgroup {
+  background-color: var(--dropdown-bg, #1c182c);
+  color: var(--color-gray-500, #9e97bd);
+}
+
 .select:disabled {
   color: var(--color-gray-500);
   cursor: not-allowed;

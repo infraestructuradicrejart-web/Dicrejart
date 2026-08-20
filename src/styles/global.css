@@ -371,3 +371,30 @@ pre {
     container-type: inline-size;
   }
 }
+
+/* ============================================
+   ELEMENTOS DE FORMULARIO NATIVOS (SELECT, OPTION, DATE)
+   ============================================ */
+select {
+  color-scheme: light dark;
+}
+
+select option,
+select optgroup {
+  background-color: var(--dropdown-bg, #ffffff);
+  color: var(--color-dark, #1f2937);
+}
+
+[data-theme="dark"] select option,
+[data-theme="dark"] select optgroup,
+.dark-theme select option,
+.dark-theme select optgroup {
+  background-color: var(--dropdown-bg, #1c182c);
+  color: var(--color-dark, #f8fafc);
+}
+
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"] {
+  color-scheme: light dark;
+}

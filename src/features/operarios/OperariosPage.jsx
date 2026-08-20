@@ -897,9 +897,9 @@ const OperariosPage = () => {
                     justifyContent: 'space-between',
                     gap: '12px',
                     padding: '12px 16px',
-                    backgroundColor: sol.status === 'pendiente' ? '#fffbeb' : '#f8fafc',
+                    backgroundColor: sol.status === 'pendiente' ? 'var(--card-warning-bg)' : 'var(--color-gray-100)',
                     borderRadius: '8px',
-                    border: sol.status === 'pendiente' ? '1px solid #fde68a' : '1px solid #e2e8f0',
+                    border: sol.status === 'pendiente' ? '1px solid rgba(255, 204, 0, 0.4)' : '1px solid var(--color-gray-200)',
                   }}
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>

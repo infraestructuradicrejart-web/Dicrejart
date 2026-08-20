@@ -2322,9 +2322,9 @@ const CalidadPage = () => {
                                       type="button"
                                       className={`${styles.calificarBtn}`}
                                       style={{
-                                        backgroundColor: '#fffbe6',
-                                        color: '#d48806',
-                                        borderColor: '#ffe58f',
+                                        backgroundColor: 'var(--card-warning-bg, rgba(255, 204, 0, 0.15))',
+                                        color: 'var(--color-warning, #eab308)',
+                                        borderColor: 'rgba(255, 204, 0, 0.3)',
                                         fontSize: '13px',
                                         padding: '4px 10px',
                                         borderRadius: '6px',
@@ -2532,22 +2532,22 @@ const CalidadPage = () => {
         >
           <form onSubmit={handleSaveEval} className={styles.modalForm}>
             {evalModal.isPastBlockEdit && (
-              <div style={{ backgroundColor: '#fffbe6', border: '1px solid #ffe58f', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px' }}>
-                <p style={{ margin: 0, fontSize: '12px', color: '#873800', fontWeight: 'bold' }}>
+              <div style={{ backgroundColor: 'var(--card-warning-bg, rgba(255, 204, 0, 0.15))', border: '1px solid rgba(255, 204, 0, 0.4)', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px' }}>
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--color-warning, #eab308)', fontWeight: 'bold' }}>
                   ⚠️ AVISO DE AUDITORÍA: Estás modificando un bloque de tiempo previo ({evalModal.block?.name} — Fecha {selectedDate}).
                 </p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#612500' }}>
+                <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--color-gray-600)' }}>
                   El sistema emitirá una alerta y registrará en bitácora la hora exacta ({new Date().toLocaleTimeString('es-MX')}) y el responsable ({user?.name || 'Usuario'}).
                 </p>
               </div>
             )}
 
             {evalModal.collaborator && getEstadoOnDate(evalModal.collaborator, selectedDate) && (
-              <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px' }}>
-                <p style={{ margin: 0, fontSize: '12px', color: '#991b1b', fontWeight: 'bold' }}>
+              <div style={{ backgroundColor: 'var(--card-danger-bg, rgba(220, 38, 38, 0.15))', border: '1px solid rgba(220, 38, 38, 0.4)', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px' }}>
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--color-alert, #ef4444)', fontWeight: 'bold' }}>
                   🚫 COLABORADOR AUSENTE EL {selectedDate} ({ESTADO_AUSENCIA_DESCRIP[getEstadoOnDate(evalModal.collaborator, selectedDate)?.tipo] || getEstadoOnDate(evalModal.collaborator, selectedDate)?.tipo})
                 </p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#b91c1c' }}>
+                <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--color-gray-600)' }}>
                   Este colaborador no se encontraba "En Planta" esa fecha. Si esta calificación se registró por error (por ejemplo, porque el colaborador faltó), puedes eliminarla con el botón rojo abajo.
                 </p>
               </div>

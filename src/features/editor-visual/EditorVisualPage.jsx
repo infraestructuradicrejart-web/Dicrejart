@@ -1027,29 +1027,29 @@ const EditorVisualPage = ({ standalone = false }) => {
               style={{
                 padding: '8px 12px',
                 borderRadius: '6px',
-                border: '1px solid var(--color-gray-700)',
-                backgroundColor: 'var(--color-dark)',
-                color: 'white',
+                border: '1px solid var(--color-gray-300)',
+                backgroundColor: 'var(--input-bg, var(--color-white))',
+                color: 'var(--color-dark)',
                 minWidth: '200px',
                 cursor: 'pointer',
               }}
             >
-              <option value="">Seleccionar Proyecto...</option>
+              <option value="" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>Seleccionar Proyecto...</option>
               {proyectos.filter((p) => p.status !== 'completado').length > 0 && (
-                <optgroup label="⚡ Proyectos Activos" style={{ backgroundColor: 'var(--color-dark)', color: 'white' }}>
+                <optgroup label="⚡ Proyectos Activos" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
                   {proyectos
                     .filter((p) => p.status !== 'completado')
                     .map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
+                      <option key={p.id} value={p.id} style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>{p.name}</option>
                     ))}
                 </optgroup>
               )}
               {proyectos.filter((p) => p.status === 'completado').length > 0 && (
-                <optgroup label="📁 Historial (Finalizados)" style={{ backgroundColor: 'var(--color-dark)', color: 'white' }}>
+                <optgroup label="📁 Historial (Finalizados)" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
                   {proyectos
                     .filter((p) => p.status === 'completado')
                     .map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} (Completado)</option>
+                      <option key={p.id} value={p.id} style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>{p.name} (Completado)</option>
                     ))}
                 </optgroup>
               )}

@@ -2022,8 +2022,8 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                   key={sol.id}
                   style={{
                     display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
-                    gap: '8px', padding: '12px 16px', background: sol.status === 'pendiente' ? '#fffbeb' : '#f8fafc',
-                    borderRadius: '8px', border: sol.status === 'pendiente' ? '1px solid #fde68a' : '1px solid #e2e8f0',
+                    gap: '8px', padding: '12px 16px', background: sol.status === 'pendiente' ? 'var(--card-warning-bg)' : 'var(--color-gray-100)',
+                    borderRadius: '8px', border: sol.status === 'pendiente' ? '1px solid rgba(255, 204, 0, 0.4)' : '1px solid var(--color-gray-200)',
                   }}
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -3201,7 +3201,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
                       </div>
                     )}
                     {lateHours > 0 && (
-                      <div style={{ fontSize: '13px', padding: '8px 10px', backgroundColor: '#fff7ed', borderRadius: '6px', border: '1px solid #fed7aa' }}>
+                      <div style={{ fontSize: '13px', padding: '8px 10px', backgroundColor: 'rgba(255, 153, 51, 0.12)', borderRadius: '6px', border: '1px solid rgba(255, 153, 51, 0.3)', color: 'var(--color-dark)' }}>
                         🌆 <strong>Bloque Vespertino:</strong> {lateHours}h ({lateRange})
                       </div>
                     )}
