@@ -31,6 +31,7 @@ import useActividades from '../../hooks/useActividades';
 import useOperarios from '../../hooks/useOperarios';
 import { CalidadContext } from '../../context/CalidadContext';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { isOperarioAusenteEnFecha } from '../../utils/overtimeRules';
 import styles from './Dashboard.module.css';
 
 /**
@@ -94,7 +95,7 @@ const Dashboard = () => {
 
   // Personal: ausencias activas hoy (mismo criterio que rhNotificationService.js) y
   // horas extra que aún no verifica nadie (cumplido/no cumplido)
-  const ausenciasHoy = operarios.filter((op) => op.estado && op.estado.tipo !== 'activo').length;
+  const ausenciasHoy = operarios.filter((op) => isOperarioAusenteEnFecha(op.estado, todayStr)).length;
   const horasExtraPendientes = horasExtra.filter((h) => h.verificationStatus === 'pendiente').length;
 
   // Compara el Índice de Calidad contra la Tolerancia de Calidad Exigida configurada

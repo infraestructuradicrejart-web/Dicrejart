@@ -10,6 +10,7 @@ import { doc, setDoc, collection, addDoc, runTransaction } from 'firebase/firest
 import { db } from '../config/firebase';
 import { getTodayLocalDateStr, getOvertimeWeekRange } from '../utils/dateUtils';
 import { getOvertimeBlocks, formatHourLabel } from '../utils/overtimeUtils';
+import { isOperarioAusenteEnFecha } from '../utils/overtimeRules';
 import { logAudit } from '../utils/auditLog';
 
 /** Describe en texto el/los bloque(s) de tiempo extra de una autorización (matutino y/o vespertino, o domingo completo). */
@@ -757,8 +758,8 @@ export const triggerDailyRHNotification = async ({
     }
   }
 
-  // Filtrar colaboradores ausentes (diferentes de 'activo')
-  const absentList = operarios.filter((op) => op.estado && op.estado.tipo !== 'activo');
+  // Filtrar colaboradores ausentes (diferentes de 'activo' en la fecha de hoy)
+  const absentList = operarios.filter((op) => isOperarioAusenteEnFecha(op.estado, todayStr));
   // Horas extra autorizadas HOY (se excluyen las canceladas, ver cancelPendingHorasExtra
   // en OperariosContext.jsx — un registro cancelado ya no representa una autorización vigente)
   const horasExtraList = horasExtra.filter((he) => he.authorizedDate === todayStr && he.verificationStatus !== 'cancelado');

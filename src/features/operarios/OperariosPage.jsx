@@ -27,6 +27,7 @@ import { PUESTO_LABELS, PUESTO_ICONS, PUESTO_BADGE_VARIANT, PUESTO_OPTIONS, DESI
 import { ESTADO_LABELS, ESTADO_ICONS, ESTADO_BADGE_VARIANT, ESTADO_OPTIONS } from '../../data/estadoConfig';
 import useConfig from '../../hooks/useConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { isOperarioAusenteEnFecha } from '../../utils/overtimeRules';
 import { triggerDailyRHNotification } from '../../services/rhNotificationService';
 import { formatHourLabel } from '../../utils/overtimeUtils';
 import useProgressiveList from '../../hooks/useProgressiveList';
@@ -627,12 +628,12 @@ const OperariosPage = () => {
   const prestadosCount = operarios.filter((op) => op.currentArea !== op.homeArea).length;
   
   const todayStr = getTodayLocalDateStr();
-  const absentCount = operarios.filter((op) => op.estado?.tipo && op.estado.tipo !== 'activo').length;
+  const absentCount = operarios.filter((op) => isOperarioAusenteEnFecha(op.estado, todayStr)).length;
   const overtimeCount = operarios.filter((op) => {
     const activeTodayHE = horasExtra.find(
       (h) => h.operarioId === op.id && h.authorizedDate === todayStr && h.verificationStatus !== 'cancelado'
     );
-    const isOpActive = !op.estado?.tipo || op.estado.tipo === 'activo';
+    const isOpActive = !op.estado?.tipo || op.estado.tipo === 'activo' || !isOperarioAusenteEnFecha(op.estado, todayStr);
     return isOpActive && (Boolean(activeTodayHE) || (op.schedule?.overtimeHours > 0 && op.schedule?.authorizedDate === todayStr));
   }).length;
 
@@ -640,23 +641,28 @@ const OperariosPage = () => {
   const allAbsenceRecords = useMemo(() => {
     const records = [];
     operarios.forEach((op) => {
-      // Estado actual si está ausente hoy
+      // Estado actual si está ausente o tiene registro activo
       if (op.estado && op.estado.tipo && op.estado.tipo !== 'activo') {
-        records.push({
-          id: `${op.id}-current`,
-          operarioId: op.id,
-          operarioName: op.name,
-          areaId: op.currentArea,
-          puesto: op.puesto || 'operario',
-          tipo: op.estado.tipo,
-          desde: op.estado.desde || todayStr,
-          hasta: op.estado.hasta || null,
-          notas: op.estado.notas || '',
-          registradoPor: op.estado.registradoPor || 'N/A',
-          registradoAt: op.estado.registradoAt || new Date().toISOString(),
-          isCurrent: true,
-          recordIndex: -1,
-        });
+        const alreadyInHist = (op.estadoHistorial || []).some(
+          (h) => h.tipo === op.estado.tipo && (h.desde === op.estado.desde || h.registradoAt === op.estado.registradoAt)
+        );
+        if (!alreadyInHist) {
+          records.push({
+            id: `${op.id}-current`,
+            operarioId: op.id,
+            operarioName: op.name,
+            areaId: op.currentArea,
+            puesto: op.puesto || 'operario',
+            tipo: op.estado.tipo,
+            desde: op.estado.desde || todayStr,
+            hasta: op.estado.hasta || null,
+            notas: op.estado.notas || '',
+            registradoPor: op.estado.registradoPor || 'N/A',
+            registradoAt: op.estado.registradoAt || new Date().toISOString(),
+            isCurrent: true,
+            recordIndex: -1,
+          });
+        }
       }
       // Historial pasado
       (op.estadoHistorial || []).forEach((hist, idx) => {
@@ -1111,39 +1117,45 @@ const OperariosPage = () => {
                         )}
                       </td>
                       <td data-label="Disponibilidad">
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                          <Badge
-                            variant={ESTADO_BADGE_VARIANT[op.estado?.tipo || 'activo']}
-                            title={getEstadoTooltip(op.estado)}
-                          >
-                            {ESTADO_ICONS[op.estado?.tipo || 'activo']} {ESTADO_LABELS[op.estado?.tipo || 'activo']}
-                          </Badge>
-                          {op.estado?.tipo && op.estado.tipo !== 'activo' && (
-                            <div style={{ fontSize: '10px', color: 'var(--color-gray-400)' }}>
-                              Hasta: {op.estado.hasta || 'sin fecha definida'}
+                        {(() => {
+                          const isAusenteHoy = isOperarioAusenteEnFecha(op.estado, todayStr);
+                          const currentTipo = isAusenteHoy ? (op.estado?.tipo || 'activo') : 'activo';
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <Badge
+                                variant={ESTADO_BADGE_VARIANT[currentTipo]}
+                                title={isAusenteHoy ? getEstadoTooltip(op.estado) : 'En Planta (Activo)'}
+                              >
+                                {ESTADO_ICONS[currentTipo]} {ESTADO_LABELS[currentTipo]}
+                              </Badge>
+                              {isAusenteHoy && op.estado?.hasta && (
+                                <div style={{ fontSize: '10px', color: 'var(--color-gray-400)' }}>
+                                  Hasta: {op.estado.hasta}
+                                </div>
+                              )}
+                              {((op.estadoHistorial && op.estadoHistorial.some((h) => h.tipo && h.tipo !== 'activo')) || (op.estado?.tipo && op.estado.tipo !== 'activo')) && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAbsencesModal({ isOpen: true, selectedOperarioId: op.id })}
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: 'var(--color-primary)',
+                                    fontSize: '10px',
+                                    textDecoration: 'underline',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                    textAlign: 'left',
+                                    marginTop: '2px',
+                                  }}
+                                  title="Ver historial de ausencias y faltas de este colaborador"
+                                >
+                                  📜 Ver historial
+                                </button>
+                              )}
                             </div>
-                          )}
-                          {((op.estadoHistorial && op.estadoHistorial.some(h => h.tipo && h.tipo !== 'activo')) || (op.estado?.tipo && op.estado.tipo !== 'activo')) && (
-                            <button
-                              type="button"
-                              onClick={() => setAbsencesModal({ isOpen: true, selectedOperarioId: op.id })}
-                              style={{
-                                background: 'transparent',
-                                border: 'none',
-                                color: 'var(--color-primary)',
-                                fontSize: '10px',
-                                textDecoration: 'underline',
-                                cursor: 'pointer',
-                                padding: 0,
-                                textAlign: 'left',
-                                marginTop: '2px',
-                              }}
-                              title="Ver historial de ausencias y faltas de este colaborador"
-                            >
-                              📜 Ver historial
-                            </button>
-                          )}
-                        </div>
+                          );
+                        })()}
                       </td>
                       <td data-label="Acciones" className={styles.stickyActionsCell}>
                         <div className={styles.actionsCell}>

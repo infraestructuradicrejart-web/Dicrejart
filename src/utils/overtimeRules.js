@@ -21,9 +21,30 @@ export const AUSENCIA_TITULOS = {
 };
 
 /**
+ * Determina si un colaborador está ausente en una fecha específica (por falta, incapacidad, vacaciones, etc.)
+ * Si no tiene fecha 'hasta', una falta o salida de campo es solo para ese día ('desde'), no indefinida.
+ */
+export const isOperarioAusenteEnFecha = (estado, targetDateStr = getTodayLocalDateStr()) => {
+  if (!estado || !estado.tipo || estado.tipo === 'activo') return false;
+  const desde = estado.desde || targetDateStr;
+  const hasta = estado.hasta;
+  if (hasta) {
+    return targetDateStr >= desde && targetDateStr <= hasta;
+  }
+  // Si no tiene fecha 'hasta':
+  // Para falta o salida a campo aplica únicamente en el día de la inasistencia (desde)
+  if (estado.tipo === 'falta' || estado.tipo === 'salida_campo') {
+    return targetDateStr === desde;
+  }
+  // Para incapacidad o vacaciones sin 'hasta', aplica a partir de 'desde'
+  return targetDateStr >= desde;
+};
+
+/**
  * Evalúa si un colaborador es elegible para solicitar o realizar horas extras en la fecha solicitada.
  * Regla de Inasistencia: Si el colaborador registró una 'falta' dentro de los 7 días naturales
  * anteriores a targetDateStr, queda BLOQUEADO AUTOMÁTICAMENTE para horas extras durante esos 7 días.
+ * Si la falta fue corregida o eliminada (colaborador en estado 'activo'), se desbloquea de inmediato.
  *
  * @param {Object} operario - Objeto completo del colaborador
  * @param {string} targetDateStr - Fecha para la cual se piden horas extras (YYYY-MM-DD)
@@ -36,41 +57,44 @@ export const checkOvertimeEligibility = (operario, targetDateStr = getTodayLocal
 
   const targetDateObj = new Date(`${targetDateStr}T00:00:00`);
 
-  // 1. Verificar si tiene un estado activo de ausencia directa en la fecha solicitada
-  if (operario.estado && operario.estado.tipo && operario.estado.tipo !== 'activo') {
+  // 1. Verificar si tiene una ausencia activa en la fecha solicitada
+  if (isOperarioAusenteEnFecha(operario.estado, targetDateStr)) {
     const tipo = operario.estado.tipo;
-    const desde = operario.estado.desde || getTodayLocalDateStr();
+    const desde = operario.estado.desde || targetDateStr;
     const hasta = operario.estado.hasta;
 
-    // Si la fecha solicitada cae dentro del periodo de ausencia
-    const isAbsenceActive = !hasta ? targetDateStr >= desde : (targetDateStr >= desde && targetDateStr <= hasta);
-
-    if (isAbsenceActive) {
-      return {
-        isEligible: false,
-        reason: `⛔ No disponible: El colaborador está registrado como ${AUSENCIA_TITULOS[tipo] || tipo} (${operario.estado.notas || 'Sin notas'})`,
-        blockedUntil: hasta || 'Indefinido',
-      };
-    }
+    return {
+      isEligible: false,
+      reason: `⛔ No disponible: El colaborador está registrado como ${AUSENCIA_TITULOS[tipo] || tipo} (${operario.estado.notas || 'Sin notas'})`,
+      blockedUntil: hasta || desde,
+    };
   }
 
-  // 2. Reorganizar historial de estados para buscar faltas registradas
+  // 2. Si el colaborador está actualmente en 'activo' (En Planta) y fue corregido de un error,
+  // solo se consideran faltas no anuladas ni rectificadas
   const historial = operario.estadoHistorial || [];
-  const todosLosEstados = operario.estado ? [...historial, operario.estado] : historial;
-
-  // Filtrar todos los registros de falta
-  const faltas = todosLosEstados.filter((est) => est.tipo === 'falta');
+  const faltas = (operario.estado && operario.estado.tipo !== 'activo' && operario.estado.tipo === 'falta')
+    ? [...historial.filter((h) => h && h.tipo === 'falta'), operario.estado]
+    : historial.filter((h) => h && h.tipo === 'falta');
 
   const todayStr = getTodayLocalDateStr();
 
   for (const faltaRecord of faltas) {
+    if (faltaRecord.anulado || faltaRecord.eliminado) continue;
     const fechaFaltaStr = faltaRecord.desde || (faltaRecord.registradoAt ? faltaRecord.registradoAt.split('T')[0] : null);
     if (!fechaFaltaStr) continue;
 
-    // Si la falta fue para hoy y el colaborador está en estado 'activo' (En Planta),
-    // significa que la falta fue corregida o que el colaborador está presente hoy
-    if (fechaFaltaStr === todayStr && operario.estado?.tipo === 'activo') {
-      continue;
+    // Si el estado actual es 'activo' y se corrigió con fecha posterior o igual al registro de la falta
+    if (operario.estado?.tipo === 'activo') {
+      const fechaActivoStr = operario.estado.desde || (operario.estado.registradoAt ? operario.estado.registradoAt.split('T')[0] : todayStr);
+      if (
+        fechaActivoStr >= fechaFaltaStr &&
+        operario.estado.registradoAt &&
+        faltaRecord.registradoAt &&
+        operario.estado.registradoAt >= faltaRecord.registradoAt
+      ) {
+        continue;
+      }
     }
 
     const fechaFaltaObj = new Date(`${fechaFaltaStr}T00:00:00`);

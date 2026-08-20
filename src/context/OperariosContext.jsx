@@ -847,9 +847,21 @@ export const OperariosProvider = ({ children }) => {
     };
 
     try {
+      let nextHistorial = [...(op.estadoHistorial || [])];
+
+      // Si se rectifica o cambia a 'activo', anular cualquier falta previa asociada para desbloquear de inmediato
+      if (tipo === 'activo' && op.estado && op.estado.tipo === 'falta') {
+        nextHistorial = nextHistorial.map((h) => {
+          if (h.tipo === 'falta' && (h.desde === targetDesde || h.desde === op.estado.desde)) {
+            return { ...h, anulado: true, notas: h.notas ? `${h.notas} (Corregido a En Planta)` : 'Corregido a En Planta' };
+          }
+          return h;
+        });
+      }
+
       const updates = {
         estado: nuevoEstado,
-        estadoHistorial: [...(op.estadoHistorial || []), nuevoEstado],
+        estadoHistorial: [...nextHistorial, nuevoEstado],
       };
 
       // Si se marca como ausente (falta, permiso, etc.) para la fecha de hoy, restablecer horario
@@ -896,8 +908,8 @@ export const OperariosProvider = ({ children }) => {
         const updates = {};
         const todayStr = getTodayLocalDateStr();
 
-        // 1. Si es el estado actual vigente
-        if (isCurrent) {
+        // 1. Si es el estado actual vigente o coincide con la ausencia a eliminar
+        if (isCurrent || (op.estado && (op.estado.desde === desde || op.estado.tipo === tipo))) {
           updates.estado = {
             tipo: 'activo',
             desde: todayStr,
@@ -957,7 +969,7 @@ export const OperariosProvider = ({ children }) => {
           actualizadoAt: new Date().toISOString(),
         };
 
-        if (isCurrent) {
+        if (isCurrent || (op.estado && op.estado.desde === desde)) {
           updates.estado = {
             ...op.estado,
             ...updatedRecord,
