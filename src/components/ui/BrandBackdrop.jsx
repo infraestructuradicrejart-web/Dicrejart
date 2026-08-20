@@ -210,7 +210,7 @@ const BrandBackdrop = ({ section }) => {
           <BrandShape
             shape={piece.shape}
             color={piece.color}
-            style={{ width: '100%', height: '100%', opacity: 0.15 }}
+            style={{ width: '100%', height: '100%', opacity: 'var(--backdrop-shape-opacity, 0.15)' }}
           />
         </div>
       ))}

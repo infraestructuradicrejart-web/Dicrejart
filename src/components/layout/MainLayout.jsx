@@ -16,6 +16,7 @@ import useIsMobile from '../../hooks/useIsMobile';
 // Importar componentes de layout
 import UserMenu from './UserMenu';
 import Sidebar from './Sidebar';
+import ThemeToggle from '../ui/ThemeToggle';
 import BrandBackdrop from '../ui/BrandBackdrop';
 import CornerMascot from '../ui/CornerMascot';
 
@@ -165,16 +166,18 @@ const MainLayout = ({
       </button>
 
       {/* ============================================
-          Círculo de sesión activa — todo lo que queda de la antigua barra
-          superior, flotando fijo en la esquina superior derecha.
+          Controles flotantes superiores (Botón de Modo Oscuro + Menú de Usuario)
           ============================================ */}
-      <UserMenu
-        userName={userName}
-        userEmail={userEmail}
-        user={user}
-        onLogout={handleLogout}
-        onNavigate={handleNavigate}
-      />
+      <div className={styles.topRightControls}>
+        <ThemeToggle variant="button" />
+        <UserMenu
+          userName={userName}
+          userEmail={userEmail}
+          user={user}
+          onLogout={handleLogout}
+          onNavigate={handleNavigate}
+        />
+      </div>
 
       {/* GIDI, la mascota de Dicrejart, estática en la esquina inferior derecha. */}
       <CornerMascot />

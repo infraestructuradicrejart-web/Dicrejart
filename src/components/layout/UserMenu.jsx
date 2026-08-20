@@ -12,6 +12,7 @@
 import React, { useState } from 'react';
 import PropTypes from 'prop-types';
 import { motion } from 'framer-motion';
+import ThemeToggle from '../ui/ThemeToggle';
 import styles from './UserMenu.module.css';
 
 /**
@@ -80,6 +81,10 @@ const UserMenu = ({ userName = 'Administrador', userEmail = '', user = null, onL
               ⚙️ Configuración
             </button>
           )}
+
+          <div style={{ padding: '4px 8px' }}>
+            <ThemeToggle variant="switch" />
+          </div>
 
           <div className={styles['dropdown-divider']} />
 

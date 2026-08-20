@@ -14,12 +14,13 @@
   display: block;
   padding: var(--space-4);
 
-  /* Estilos: ligeramente translúcida para dejar entrever el fondo de marca */
-  background-color: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  /* Estilos: translúcida para dejar entrever el fondo de marca */
+  background-color: var(--card-bg, rgba(255, 255, 255, 0.92));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--color-gray-200);
   border-radius: var(--radius-lg);
+  color: var(--color-dark);
 
   /* Sombra */
   box-shadow: var(--shadow-md);
@@ -50,7 +51,7 @@
    ============================================ */
 
 .variant-default {
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: var(--card-bg, rgba(255, 255, 255, 0.92));
   border-color: var(--color-gray-200);
 }
 

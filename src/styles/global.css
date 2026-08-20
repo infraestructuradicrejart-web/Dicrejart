@@ -53,7 +53,8 @@ body {
   font-weight: var(--body-weight);
   line-height: var(--body-line-height);
   color: var(--color-dark);
-  background-color: var(--color-white);
+  background-color: var(--color-gray-50);
+  transition: background-color 0.25s ease, color 0.25s ease;
   
   /* Antialiasing para mejor renderización de texto */
   -webkit-font-smoothing: antialiased;

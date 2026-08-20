@@ -17,6 +17,7 @@ import { DicrejartLoadingScreen } from './components/ui/LoadingScreen';
 import Spinner from './components/ui/Spinner';
 
 // Importar contextos de autenticación, notificaciones y operarios, y guardas de rutas
+import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { ConfigProvider } from './context/ConfigContext';
@@ -342,17 +343,18 @@ function App() {
 
   return (
     <Router>
-      <ToastProvider>
-        <AuthProvider>
-          <ConfigProvider>
-            <AreasProvider>
-              <OperariosProvider>
-                <ProduccionProvider>
-                  <MaterialesProvider>
-                  <CalidadProvider>
-                    <ActividadesProvider>
-                      <ComprasProvider>
-                        <ChatProvider>
+      <ThemeProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <ConfigProvider>
+              <AreasProvider>
+                <OperariosProvider>
+                  <ProduccionProvider>
+                    <MaterialesProvider>
+                    <CalidadProvider>
+                      <ActividadesProvider>
+                        <ComprasProvider>
+                          <ChatProvider>
                         {/* Suspense único a este nivel: cubre también las rutas anidadas dentro
                             de AppContent, ya que un límite de Suspense atrapa cualquier
                             componente lazy() en todo su subárbol sin importar la profundidad.
@@ -422,6 +424,7 @@ function App() {
           </ConfigProvider>
         </AuthProvider>
       </ToastProvider>
+      </ThemeProvider>
     </Router>
   );
 }

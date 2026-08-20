@@ -6,10 +6,8 @@
  */
 
 .container {
-  position: fixed;
-  top: var(--space-4);
-  right: var(--space-5);
-  z-index: 100;
+  position: relative;
+  display: inline-flex;
 }
 
 .user-button {
@@ -24,7 +22,7 @@
   transition: all var(--transition-normal) ease;
 
   &:focus {
-    outline: 2px solid var(--color-white);
+    outline: 2px solid var(--color-primary);
     outline-offset: 2px;
   }
 }
@@ -64,12 +62,12 @@
   top: 100%;
   right: 0;
   margin-top: var(--space-2);
-  background-color: var(--color-white);
+  background-color: var(--dropdown-bg, var(--color-white));
   border: 1px solid var(--color-gray-200);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   z-index: 200;
-  min-width: 200px;
+  min-width: 220px;
   overflow: hidden;
 }
 

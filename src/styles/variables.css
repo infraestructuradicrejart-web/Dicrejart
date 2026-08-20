@@ -28,6 +28,15 @@
   --color-light: #F5F5F5;
   --color-white: #FFFFFF;
 
+  /* Superficies UI */
+  --card-bg: rgba(255, 255, 255, 0.92);
+  --modal-bg: #FFFFFF;
+  --input-bg: #FFFFFF;
+  --dropdown-bg: #FFFFFF;
+  --table-header-bg: #F3F4F6;
+  --table-row-hover: #F9FAFB;
+  --backdrop-shape-opacity: 0.14;
+
   /* Colores funcionales (semántica de UI, apoyados en la paleta complementaria) */
   --color-success: #10B981;
   --color-warning: #FFCC00;
@@ -201,3 +210,43 @@
   /* Desktop grande */
   --desktop-lg: 1536px;
 }
+
+/* ============================================
+   MODO OSCURO - MANUAL DE IDENTIDAD DICREJART
+   ============================================ */
+
+[data-theme="dark"],
+.dark-theme {
+  /* Fondos y Neutros con tonalidad Deep Violet (#330066) */
+  --color-white: #1a1728;
+  --color-light: #12101c;
+  --color-dark: #f8fafc;
+
+  /* Superficies UI */
+  --card-bg: rgba(26, 23, 40, 0.92);
+  --modal-bg: #1c182c;
+  --input-bg: #151322;
+  --dropdown-bg: #1c182c;
+  --table-header-bg: #171424;
+  --table-row-hover: #231f36;
+  --backdrop-shape-opacity: 0.20;
+
+  /* Grises invertidos con matiz violeta profundo de identidad */
+  --color-gray-50: #0f0d18;
+  --color-gray-100: #171424;
+  --color-gray-200: #29243d;
+  --color-gray-300: #3d3759;
+  --color-gray-400: #736b94;
+  --color-gray-500: #9e97bd;
+  --color-gray-600: #c5bfe0;
+  --color-gray-700: #e2dff2;
+  --color-gray-800: #f8f7fc;
+
+  /* Sombras oscuras con sutil resplandor violeta perimetral */
+  --shadow-xs: 0 1px 3px 0 rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 2px 8px 0 rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(153, 51, 255, 0.1);
+  --shadow-md: 0 4px 14px 0 rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(153, 51, 255, 0.15);
+  --shadow-lg: 0 8px 24px 0 rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(153, 51, 255, 0.2);
+  --shadow-xl: 0 12px 32px 0 rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(153, 51, 255, 0.25);
+}
+

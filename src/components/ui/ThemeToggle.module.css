@@ -1,0 +1,120 @@
+/**
+ * @file ThemeToggle.module.css
+ * @description Estilos para el botón interactivo de alternancia de Modo Claro / Modo Oscuro
+ * Basado en la identidad de marca Dicrejart con sutiles resplandores violeta/naranja.
+ * @author Dicrejart Dev Team
+ */
+
+.toggleButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--color-gray-300);
+  background: var(--color-white);
+  color: var(--color-dark);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  outline: none;
+  transition: all var(--transition-normal) var(--ease-out);
+  overflow: hidden;
+  user-select: none;
+}
+
+.toggleButton:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-primary);
+}
+
+.toggleButton:active {
+  transform: translateY(0) scale(0.95);
+}
+
+/* Modo claro: toque naranja / amarillo solar */
+:global([data-theme="light"]) .toggleButton {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #e5e7eb;
+}
+
+:global([data-theme="light"]) .toggleButton:hover {
+  box-shadow: 0 4px 14px rgba(255, 153, 51, 0.35);
+  border-color: var(--color-princeton-orange);
+}
+
+/* Modo oscuro: toque violeta profundo / resplandor lunar */
+:global([data-theme="dark"]) .toggleButton {
+  background: rgba(30, 27, 44, 0.95);
+  border-color: #3b3554;
+  color: #fbbf24;
+}
+
+:global([data-theme="dark"]) .toggleButton:hover {
+  box-shadow: 0 4px 16px rgba(153, 51, 255, 0.4);
+  border-color: var(--color-purple-x11);
+}
+
+.iconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* Variante tipo Switch horizontal (para usar dentro del UserMenu o settings) */
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  gap: 12px;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast) var(--ease-out);
+}
+
+.switchRow:hover {
+  background-color: var(--color-gray-100);
+}
+
+.switchPill {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 9999px;
+  background-color: var(--color-gray-300);
+  transition: background-color var(--transition-normal) var(--ease-out);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+}
+
+:global([data-theme="dark"]) .switchPill {
+  background-color: var(--color-secondary);
+  box-shadow: 0 0 8px rgba(153, 51, 255, 0.5);
+}
+
+.switchKnob {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform var(--transition-normal) var(--ease-out);
+}
+
+:global([data-theme="dark"]) .switchKnob {
+  transform: translateX(20px);
+  background-color: #1e1b29;
+  color: #fbbf24;
+}

@@ -20,10 +20,22 @@
   /* Ancho completo */
   width: 100%;
 
-  /* Fondo base claro */
+  /* Fondo base dinámico */
   background-color: var(--color-gray-50);
   position: relative;
   overflow: hidden;
+  transition: background-color var(--transition-normal) var(--ease-out);
+}
+
+/* Controles superiores flotantes (Botón Modo Oscuro + UserMenu) */
+.topRightControls {
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-5);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 /* Botón para abrir/cerrar el sidebar en mobile. En desktop el sidebar siempre
