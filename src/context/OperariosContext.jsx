@@ -7,7 +7,7 @@
  * @requires firebase/firestore
  */
 
-import React, { createContext, useState, useEffect, useCallback, useMemo, useContext, useRef } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useMemo, useContext } from 'react';
 import PropTypes from 'prop-types';
 import {
   collection,
@@ -30,7 +30,6 @@ import { AuthContext } from './AuthContext';
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
 import { getTodayLocalDateStr } from '../utils/dateUtils';
-import { triggerDailyRHNotification, triggerRHOvertimeNotification, triggerRHWeeklyOvertimeSummary } from '../services/rhNotificationService';
 import { checkOvertimeEligibility, calculateScheduleFromOvertime } from '../utils/overtimeRules';
 
 export const OperariosContext = createContext(null);
@@ -149,151 +148,23 @@ export const OperariosProvider = ({ children }) => {
   // verifyAreaAuthorizer valida, con la contraseña real de un tercero, que tenga
   // autoridad (Admin, Encargado o Supervisor) sobre un área específica
   const { verifyAreaAuthorizer, user } = useContext(AuthContext) || {};
-  const { limits, generalConfig, updateGeneralConfig } = useContext(ConfigContext) || {};
+  const { limits } = useContext(ConfigContext) || {};
   const movimientosPersonalLimit = limits?.movimientosPersonalLimit || DEFAULT_LIMITS.movimientosPersonalLimit;
   const horasExtraLimit = limits?.horasExtraLimit || DEFAULT_LIMITS.horasExtraLimit;
   
   const { resolveAreaId } = useAreas();
 
   // ============================================
-  // PROGRAMACIÓN AUTOMÁTICA DE NOTIFICACIÓN A RH (10:00 AM)
+  // NOTIFICACIONES PROGRAMADAS DE RH (10:00 AM faltas, horas extra, resumen semanal)
   // ============================================
-  // Refs en vez de leer operarios/horasExtra/generalConfig directo del closure: esos
-  // arrays/objeto cambian de referencia con CUALQUIER escritura en tiempo real a esas
-  // colecciones (muy frecuente en horas pico), y antes este efecto los tenía como
-  // dependencias — se destruía y volvía a crear el intervalo (disparando además un chequeo
-  // INMEDIATO extra, ver línea de abajo) decenas de veces por minuto. Con refs, el efecto
-  // se monta una sola vez y el setInterval de 1 min siempre lee el valor más reciente.
-  const operariosRef = useRef(operarios);
-  const horasExtraRef = useRef(horasExtra);
-  const generalConfigRef = useRef(generalConfig);
-  useEffect(() => { operariosRef.current = operarios; }, [operarios]);
-  useEffect(() => { horasExtraRef.current = horasExtra; }, [horasExtra]);
-  useEffect(() => { generalConfigRef.current = generalConfig; }, [generalConfig]);
-
-  useEffect(() => {
-    if (!db) return;
-
-    const checkAndTriggerRHNotification = async () => {
-      const currentOperarios = operariosRef.current;
-      const currentGeneralConfig = generalConfigRef.current;
-      if (!currentOperarios.length || !currentGeneralConfig) return;
-
-      const todayStr = getTodayLocalDateStr();
-      if (currentGeneralConfig.notificarFaltasRH === false) return;
-      if (currentGeneralConfig.lastRHNotificationDate === todayStr) return;
-
-      const now = new Date();
-      const currentHours = now.getHours();
-      const currentMinutes = now.getMinutes();
-
-      const [targetHours, targetMinutes] = (currentGeneralConfig.horaNotificacionRH || '10:00').split(':').map(Number);
-      const isPastTargetTime = currentHours > targetHours || (currentHours === targetHours && currentMinutes >= targetMinutes);
-
-      if (isPastTargetTime) {
-        // El reclamo atómico del día (transacción, ver triggerDailyRHNotification) es lo
-        // que en verdad evita el envío duplicado — esto solo reduce cuántas veces se
-        // intenta de más por sesión, no es la protección principal.
-        const result = await triggerDailyRHNotification({
-          operarios: currentOperarios,
-          horasExtra: horasExtraRef.current,
-          generalConfig: currentGeneralConfig,
-          updateGeneralConfig,
-          force: false,
-        });
-
-        if (result && result.ok) {
-          console.log(`📧 [Dicrejart RH Notification System] Reporte de faltas generado a las 10:00 AM para ${result.emailTarget} (${result.absentCount} ausencias).`);
-        }
-      }
-    };
-
-    // ============================================
-    // SEGUNDA NOTIFICACIÓN A RH: SOLO HORAS EXTRA (L-V 17:30, sábado 12:00, sin domingo)
-    // ============================================
-    const checkAndTriggerRHOvertimeNotification = async () => {
-      const currentGeneralConfig = generalConfigRef.current;
-      if (!currentGeneralConfig) return;
-      if (currentGeneralConfig.notificarHorasExtraRH === false) return;
-
-      const todayStr = getTodayLocalDateStr();
-      if (currentGeneralConfig.lastRHOvertimeNotificationDate === todayStr) return;
-
-      const now = new Date();
-      const dayOfWeek = now.getDay(); // 0=domingo, 6=sábado
-      if (dayOfWeek === 0) return; // sin envío los domingos
-
-      const targetTimeStr = dayOfWeek === 6
-        ? (currentGeneralConfig.horaNotificacionHorasExtraRHSabado || '12:00')
-        : (currentGeneralConfig.horaNotificacionHorasExtraRHSemana || '17:30');
-      const [targetHours, targetMinutes] = targetTimeStr.split(':').map(Number);
-      const currentHours = now.getHours();
-      const currentMinutes = now.getMinutes();
-      const isPastTargetTime = currentHours > targetHours || (currentHours === targetHours && currentMinutes >= targetMinutes);
-
-      if (isPastTargetTime) {
-        const result = await triggerRHOvertimeNotification({
-          horasExtra: horasExtraRef.current,
-          generalConfig: currentGeneralConfig,
-          updateGeneralConfig,
-          force: false,
-          horaLabel: targetTimeStr,
-        });
-
-        if (result && result.ok) {
-          console.log(`📧 [Dicrejart RH Notification System] Relación de horas extra enviada a las ${targetTimeStr} para ${result.emailTarget} (${result.horasExtraCount} autorización(es)).`);
-        }
-      }
-    };
-
-    // ============================================
-    // TERCERA NOTIFICACIÓN A RH: RESUMEN SEMANAL DE HORAS EXTRA (miércoles 18:00)
-    // ============================================
-    // La semana de horas extra de Dicrejart corre de jueves a miércoles (ver
-    // getOvertimeWeekRange en dateUtils.js), así que el corte y el envío del resumen
-    // siempre caen el mismo día: miércoles.
-    const checkAndTriggerRHWeeklySummary = async () => {
-      const currentGeneralConfig = generalConfigRef.current;
-      if (!currentGeneralConfig) return;
-      if (currentGeneralConfig.notificarResumenSemanalRH === false) return;
-
-      const todayStr = getTodayLocalDateStr();
-      if (currentGeneralConfig.lastRHWeeklySummaryDate === todayStr) return;
-
-      const now = new Date();
-      if (now.getDay() !== 3) return; // 3 = miércoles
-
-      const targetTimeStr = currentGeneralConfig.horaResumenSemanalRH || '18:00';
-      const [targetHours, targetMinutes] = targetTimeStr.split(':').map(Number);
-      const currentHours = now.getHours();
-      const currentMinutes = now.getMinutes();
-      const isPastTargetTime = currentHours > targetHours || (currentHours === targetHours && currentMinutes >= targetMinutes);
-
-      if (isPastTargetTime) {
-        const result = await triggerRHWeeklyOvertimeSummary({
-          horasExtra: horasExtraRef.current,
-          generalConfig: currentGeneralConfig,
-          updateGeneralConfig,
-          force: false,
-        });
-
-        if (result && result.ok) {
-          console.log(`📧 [Dicrejart RH Notification System] Resumen semanal de horas extra enviado (${result.weekStart} al ${result.weekEnd}): ${result.totalHoras}h entre ${result.totalColaboradores} colaborador(es).`);
-        }
-      }
-    };
-
-    checkAndTriggerRHNotification();
-    checkAndTriggerRHOvertimeNotification();
-    checkAndTriggerRHWeeklySummary();
-    const intervalId = setInterval(() => {
-      checkAndTriggerRHNotification();
-      checkAndTriggerRHOvertimeNotification();
-      checkAndTriggerRHWeeklySummary();
-    }, 60000);
-
-    return () => clearInterval(intervalId);
-  }, [updateGeneralConfig]);
+  // El disparo automático de estos tres correos vivía aquí antes (un setInterval que
+  // revisaba la hora cada minuto), pero SOLO corría mientras alguien tuviera la app
+  // abierta en el navegador — si nadie la tenía abierta a la hora programada, el correo
+  // simplemente no salía. Ahora ese chequeo corre en el servidor cada 10 minutos
+  // (Cloud Function programada `rhScheduledNotificationsCheck` en functions/index.js),
+  // sin depender de ningún navegador. El botón "Probar / Enviar Ahora" en Admin sigue
+  // funcionando igual (llama a triggerDailyRHNotification/triggerRHOvertimeNotification/
+  // triggerRHWeeklyOvertimeSummary directo, con force:true) para pruebas manuales.
 
   // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE

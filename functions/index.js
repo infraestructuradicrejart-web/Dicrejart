@@ -687,3 +687,315 @@ exports.resolveRequisicionByToken = onRequest(
     }
   }
 );
+
+// ============================================================
+// NOTIFICACIONES PROGRAMADAS DE RH (servidor — no depende de ningún navegador abierto)
+// ============================================================
+/**
+ * Antes, el disparo automático de los tres correos a RH (faltas 10:00 AM, horas extra
+ * 17:30 L-V/12:00 sábado, resumen semanal miércoles 18:00) vivía en OperariosContext.jsx
+ * del cliente: un setInterval que revisaba la hora cada minuto MIENTRAS alguien tuviera
+ * la app abierta en el navegador. Si nadie la tenía abierta justo a esa hora, el correo
+ * simplemente no salía. Esta función corre en el servidor cada 10 minutos (Cloud
+ * Scheduler) e implementa el mismo chequeo — comparar la hora actual contra la
+ * configurada en config/general — pero de forma garantizada, sin depender de ningún
+ * navegador. El botón "Probar / Enviar Ahora" en Admin sigue disparando el envío desde el
+ * cliente (rhNotificationService.js, con force:true) para pruebas manuales; esto solo
+ * reemplaza el disparo automático.
+ */
+
+const { onSchedule } = require('firebase-functions/v2/scheduler');
+
+const RH_TIMEZONE = 'America/Mexico_City';
+
+/** Fecha local YYYY-MM-DD en la zona horaria de Dicrejart, sin importar en qué zona corra el servidor. */
+const getMexicoDateStr = (date = new Date()) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: RH_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+
+/** Hora, minuto y día de la semana (0=domingo) actuales en la zona horaria de Dicrejart. */
+const getMexicoTimeParts = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: RH_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short',
+  }).formatToParts(date);
+  const map = {};
+  parts.forEach((p) => { map[p.type] = p.value; });
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    hours: Number(map.hour === '24' ? '0' : map.hour),
+    minutes: Number(map.minute),
+    dayOfWeek: weekdayMap[map.weekday],
+  };
+};
+
+// ---- Cálculo de fechas puro (Date.UTC en todo momento) — nunca mezclar con
+// getMexicoDateStr/getMexicoTimeParts (esas sí necesitan proyectar una fecha/hora al huso
+// de México; esto es aritmética de calendario que debe dar el mismo resultado sin
+// importar en qué huso horario corra el servidor). ----
+const parseDateStrUTC = (dateStr) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+};
+const formatDateStrUTC = (date) =>
+  `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+
+/** Rango [jueves, miércoles] de la semana de horas extra que contiene `dateStr` — igual que getOvertimeWeekRange en src/utils/dateUtils.js. */
+const rhGetOvertimeWeekRange = (dateStr) => {
+  const d = parseDateStrUTC(dateStr);
+  const dow = d.getUTCDay();
+  const daysSinceThu = dow >= 4 ? dow - 4 : dow + 3;
+  const start = new Date(d);
+  start.setUTCDate(start.getUTCDate() - daysSinceThu);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 6);
+  return { start: formatDateStrUTC(start), end: formatDateStrUTC(end) };
+};
+
+const RH_ESTADO_TITULOS = {
+  falta: 'Falta (Inasistencia Injustificada)',
+  incapacidad: 'Incapacidad Médica',
+  salida_campo: 'Salida Fuera / Trabajo en Campo',
+  actividad_externa: 'Comisión / Actividad Externa',
+  viaje: 'Viaje / Ensamble Foráneo',
+  vacaciones: 'Vacaciones / Permiso Autorizado',
+};
+
+const rhFormatHourLabel = (h) => {
+  const value = Number(h);
+  const hour = Math.floor(value);
+  const minutes = Math.round((value - hour) * 60);
+  return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
+const rhGetOvertimeBlocks = (startHour, endHour, authorizedDate) => {
+  const isSaturday = authorizedDate ? parseDateStrUTC(authorizedDate).getUTCDay() === 6 : false;
+  const baseEndHour = isSaturday ? 13 : 18;
+  const earlyHours = startHour < 8 ? 8 - startHour : 0;
+  const lateHours = endHour > baseEndHour ? endHour - baseEndHour : 0;
+  return {
+    earlyHours,
+    earlyRange: earlyHours > 0 ? `${rhFormatHourLabel(startHour)} - ${rhFormatHourLabel(8)}` : null,
+    lateHours,
+    lateRange: lateHours > 0 ? `${rhFormatHourLabel(baseEndHour)} - ${rhFormatHourLabel(endHour)}` : null,
+  };
+};
+
+const rhDescribeOvertime = (he) => {
+  if (he.authorizedDate && parseDateStrUTC(he.authorizedDate).getUTCDay() === 0) {
+    return `Domingo Completo ${he.overtimeHours}h (${rhFormatHourLabel(he.startHour)}-${rhFormatHourLabel(he.endHour)})`;
+  }
+  const { earlyHours, earlyRange, lateHours, lateRange } = rhGetOvertimeBlocks(he.startHour, he.endHour, he.authorizedDate);
+  const parts = [];
+  if (earlyHours > 0) parts.push(`Matutino ${earlyHours}h (${earlyRange})`);
+  if (lateHours > 0) parts.push(`Vespertino ${lateHours}h (${lateRange})`);
+  return parts.length > 0 ? parts.join(' | ') : `${he.overtimeHours}h`;
+};
+
+/** Reclama el envío de HOY para `lockField` en config/general — evita duplicados si Cloud Scheduler reintenta la ejecución. */
+const claimRHDailyLock = async (lockField, todayStr) => {
+  const configRef = admin.firestore().collection('config').doc('general');
+  try {
+    let claimed = false;
+    await admin.firestore().runTransaction(async (tx) => {
+      const snap = await tx.get(configRef);
+      const current = snap.exists() ? snap.data()[lockField] : null;
+      if (current === todayStr) return;
+      tx.set(configRef, { [lockField]: todayStr }, { merge: true });
+      claimed = true;
+    });
+    return claimed;
+  } catch (error) {
+    console.error(`Error al reclamar candado ${lockField}:`, error);
+    return false;
+  }
+};
+
+const rhEmailWrapper = (subtitle, innerHtml) => `
+  <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background-color: #ffffff;">
+    <div style="background-color: #1e293b; color: #ffffff; padding: 20px; text-align: center;">
+      <h2 style="margin: 0; font-size: 20px; font-weight: bold;">DICREJART - Control de Calidad y Operarios</h2>
+      <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">${subtitle}</p>
+    </div>
+    <div style="padding: 20px;">${innerHtml}</div>
+    <div style="background-color: #f9fafb; padding: 12px 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; text-align: center;">
+      Generado automáticamente por el Sistema Dicrejart (servidor).
+    </div>
+  </div>
+`;
+
+const rhTable = (headers, rows, emptyMessage) => {
+  const headHtml = headers.map((h) => `<th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">${h}</th>`).join('');
+  const bodyHtml = rows.length === 0
+    ? `<tr><td colspan="${headers.length}" style="padding: 16px; text-align: center; color: #6b7280; background-color: #f9fafb;">${emptyMessage}</td></tr>`
+    : rows.map((cells, i) => `
+        <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
+          ${cells.map((c) => `<td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #374151;">${c}</td>`).join('')}
+        </tr>
+      `).join('');
+  return `<table style="width: 100%; border-collapse: collapse; margin-top: 12px;"><thead><tr style="background-color: #f3f4f6; color: #374151; font-size: 12px; text-transform: uppercase;">${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>`;
+};
+
+/** Reporte diario de faltas + horas extra del día (10:00 AM) — mismo contenido que buildRHReportEmailContent en src/services/rhNotificationService.js. */
+const buildDailyRHReport = (operariosList, horasExtraToday, todayStr, emailRH) => {
+  const absentList = operariosList.filter((op) => op.estado && op.estado.tipo !== 'activo');
+  const subject = `[Dicrejart System] Reporte Diario de Faltas y Ausencias del Personal - ${todayStr} (10:00 AM)`;
+
+  const absentRows = absentList.map((op) => [
+    `<strong>${op.name}</strong><br/><span style="font-size:11px;color:#6b7280;">ID: ${op.id}</span>`,
+    op.currentArea || 'N/A',
+    `<span style="color:#ef4444;font-weight:600;">${RH_ESTADO_TITULOS[op.estado?.tipo] || op.estado?.tipo}</span>`,
+    `${op.estado?.desde || '-'}${op.estado?.hasta ? ' al ' + op.estado.hasta : ''}`,
+    op.estado?.notas || 'Sin observaciones',
+  ]);
+
+  const heRows = horasExtraToday.map((he) => [
+    `<strong>${he.operarioName}</strong><br/><span style="font-size:11px;color:#6b7280;">ID: ${he.operarioId}</span>`,
+    he.areaId || 'N/A',
+    `<span style="color:#92400e;font-weight:600;">${rhDescribeOvertime(he)}</span>`,
+    he.overtimeTasks || 'N/A',
+    he.authorizedBy || 'N/A',
+  ]);
+
+  const innerHtml = `
+    <p style="font-size: 14px; color: #374151;"><strong>Fecha del Reporte:</strong> ${todayStr}</p>
+    <p style="font-size: 14px; color: #374151;"><strong>Destinatario RH:</strong> <span style="color:#2563eb;">${emailRH}</span></p>
+    <h3 style="font-size: 15px; color: #1f2937; border-bottom: 2px solid #1e293b; padding-bottom: 6px;">📋 Faltas y Ausencias (${absentList.length})</h3>
+    ${rhTable(['Colaborador', 'Área', 'Motivo', 'Periodo', 'Notas'], absentRows, '✅ Todo el personal se encuentra activo En Planta hoy.')}
+    <h3 style="font-size: 15px; color: #1f2937; border-bottom: 2px solid #1e293b; padding-bottom: 6px; margin-top: 24px;">🕒 Horas Extra Autorizadas Hoy (${horasExtraToday.length})</h3>
+    ${rhTable(['Colaborador', 'Área', 'Horas', 'Tareas', 'Autorizó'], heRows, 'No se autorizaron horas extra el día de hoy.')}
+  `;
+
+  return { subject, bodyHtml: rhEmailWrapper('Reporte Diario — Faltas/Ausencias y Horas Extra (10:00 AM)', innerHtml), absentCount: absentList.length };
+};
+
+/** Relación de horas extra autorizadas hoy (corte de tarde L-V o sábado). */
+const buildOvertimeOnlyReport = (horasExtraToday, todayStr, emailRH, horaLabel) => {
+  const subject = `[Dicrejart System] Relación de Horas Extra Autorizadas - ${todayStr} (${horaLabel})`;
+  const rows = horasExtraToday.map((he) => [
+    `<strong>${he.operarioName}</strong><br/><span style="font-size:11px;color:#6b7280;">ID: ${he.operarioId}</span>`,
+    he.areaId || 'N/A',
+    `<span style="color:#92400e;font-weight:600;">${rhDescribeOvertime(he)}</span>`,
+    he.overtimeTasks || 'N/A',
+    he.authorizedBy || 'N/A',
+  ]);
+  const innerHtml = `
+    <p style="font-size: 14px; color: #374151;"><strong>Fecha:</strong> ${todayStr}</p>
+    <p style="font-size: 14px; color: #374151;"><strong>Destinatario RH:</strong> <span style="color:#2563eb;">${emailRH}</span></p>
+    <p style="font-size: 14px; color: #374151;"><strong>Total:</strong> <span style="background-color:#fef3c7;color:#92400e;padding:3px 8px;border-radius:4px;font-weight:bold;">${horasExtraToday.length} autorización(es)</span></p>
+    ${rhTable(['Colaborador', 'Área', 'Horas', 'Tareas', 'Autorizó'], rows, 'No se autorizaron horas extra el día de hoy.')}
+  `;
+  return { subject, bodyHtml: rhEmailWrapper(`Relación de Horas Extra — Corte de ${horaLabel}`, innerHtml) };
+};
+
+/** Resumen semanal (jueves a miércoles), agrupado por colaborador. */
+const buildWeeklySummaryReport = (weeklyList, weekStart, weekEnd, emailRH) => {
+  const subject = `[Dicrejart System] Resumen Semanal de Horas Extra - ${weekStart} al ${weekEnd}`;
+  const byOperario = new Map();
+  weeklyList.forEach((he) => {
+    if (!byOperario.has(he.operarioId)) {
+      byOperario.set(he.operarioId, { name: he.operarioName, puesto: he.operarioPuesto || 'N/A', areaId: he.areaId || 'N/A', totalHours: 0, count: 0 });
+    }
+    const entry = byOperario.get(he.operarioId);
+    entry.totalHours += Number(he.overtimeHours) || 0;
+    entry.count += 1;
+  });
+  const entries = Array.from(byOperario.values()).sort((a, b) => (a.areaId === b.areaId ? b.totalHours - a.totalHours : a.areaId.localeCompare(b.areaId)));
+  const totalHoras = entries.reduce((sum, e) => sum + e.totalHours, 0);
+
+  const rows = entries.map((e) => [
+    e.areaId.toUpperCase(),
+    `<strong>${e.name}</strong><br/><span style="font-size:11px;color:#6b7280;">${e.puesto}</span>`,
+    `<strong style="color:#92400e;">${e.totalHours}h</strong>`,
+    String(e.count),
+  ]);
+
+  const innerHtml = `
+    <p style="font-size: 14px; color: #374151;"><strong>Semana:</strong> ${weekStart} al ${weekEnd}</p>
+    <p style="font-size: 14px; color: #374151;"><strong>Destinatario RH:</strong> <span style="color:#2563eb;">${emailRH}</span></p>
+    <p style="font-size: 14px; color: #374151;"><strong>Total Acumulado:</strong> <span style="background-color:#fef3c7;color:#92400e;padding:3px 8px;border-radius:4px;font-weight:bold;">${totalHoras}h entre ${entries.length} colaborador(es)</span></p>
+    ${rhTable(['Área', 'Colaborador', 'Horas Extra', 'Autorizaciones'], rows, 'No se registraron horas extra esta semana.')}
+  `;
+  return { subject, bodyHtml: rhEmailWrapper('Resumen Semanal de Horas Extra — Jueves a Miércoles', innerHtml), totalHoras, totalColaboradores: entries.length };
+};
+
+/**
+ * Corre cada 10 minutos. Solo necesita acceso a Firestore (no SMTP) — cada reporte se
+ * guarda en `notificaciones_rh`, y onNotificacionRHCreated (ya existente) es quien de
+ * verdad despacha el correo por SMTP en cuanto detecta el documento nuevo.
+ */
+exports.rhScheduledNotificationsCheck = onSchedule(
+  { schedule: 'every 10 minutes', timeZone: RH_TIMEZONE },
+  async () => {
+    const db = admin.firestore();
+    const configSnap = await db.collection('config').doc('general').get();
+    const config = configSnap.exists ? configSnap.data() : {};
+    const emailRH = config.emailRH;
+    if (!isPlausibleEmail(emailRH)) return;
+
+    const now = new Date();
+    const todayStr = getMexicoDateStr(now);
+    const { hours, minutes, dayOfWeek } = getMexicoTimeParts(now);
+    const nowMinutes = hours * 60 + minutes;
+
+    // ---- 1. Reporte diario de faltas + horas extra (10:00 AM, todos los días) ----
+    if (config.notificarFaltasRH !== false && config.lastRHNotificationDate !== todayStr) {
+      const [th, tm] = (config.horaNotificacionRH || '10:00').split(':').map(Number);
+      if (nowMinutes >= th * 60 + tm) {
+        if (await claimRHDailyLock('lastRHNotificationDate', todayStr)) {
+          const [operariosSnap, heSnap] = await Promise.all([
+            db.collection('operarios').get(),
+            db.collection('horas_extra').where('authorizedDate', '==', todayStr).get(),
+          ]);
+          const operariosList = operariosSnap.docs.map((d) => d.data());
+          const heToday = heSnap.docs.map((d) => d.data()).filter((h) => h.verificationStatus !== 'cancelado');
+          const { subject, bodyHtml, absentCount } = buildDailyRHReport(operariosList, heToday, todayStr, emailRH);
+          await db.collection('notificaciones_rh').add({
+            id: `NOTIF-RH-${Date.now()}`, type: 'faltas', date: todayStr, timestamp: new Date().toISOString(),
+            emailRH, absentCount, horasExtraCount: heToday.length, status: 'enviado', subject, bodyHtml,
+            enviadoPor: 'Sistema Programado (Servidor)',
+          });
+        }
+      }
+    }
+
+    // ---- 2. Relación de horas extra (17:30 L-V, 12:00 sábado, sin domingo) ----
+    if (config.notificarHorasExtraRH !== false && config.lastRHOvertimeNotificationDate !== todayStr && dayOfWeek !== 0) {
+      const horaLabel = dayOfWeek === 6
+        ? (config.horaNotificacionHorasExtraRHSabado || '12:00')
+        : (config.horaNotificacionHorasExtraRHSemana || '17:30');
+      const [th, tm] = horaLabel.split(':').map(Number);
+      if (nowMinutes >= th * 60 + tm) {
+        if (await claimRHDailyLock('lastRHOvertimeNotificationDate', todayStr)) {
+          const heSnap = await db.collection('horas_extra').where('authorizedDate', '==', todayStr).get();
+          const heToday = heSnap.docs.map((d) => d.data()).filter((h) => h.verificationStatus !== 'cancelado');
+          const { subject, bodyHtml } = buildOvertimeOnlyReport(heToday, todayStr, emailRH, horaLabel);
+          await db.collection('notificaciones_rh').add({
+            id: `NOTIF-RH-HE-${Date.now()}`, type: 'horas_extra', date: todayStr, timestamp: new Date().toISOString(),
+            emailRH, horasExtraCount: heToday.length, status: 'enviado', subject, bodyHtml,
+            enviadoPor: 'Sistema Programado (Servidor)',
+          });
+        }
+      }
+    }
+
+    // ---- 3. Resumen semanal de horas extra (miércoles 18:00) ----
+    if (config.notificarResumenSemanalRH !== false && config.lastRHWeeklySummaryDate !== todayStr && dayOfWeek === 3) {
+      const [th, tm] = (config.horaResumenSemanalRH || '18:00').split(':').map(Number);
+      if (nowMinutes >= th * 60 + tm) {
+        if (await claimRHDailyLock('lastRHWeeklySummaryDate', todayStr)) {
+          const { start, end } = rhGetOvertimeWeekRange(todayStr);
+          const heSnap = await db.collection('horas_extra')
+            .where('authorizedDate', '>=', start)
+            .where('authorizedDate', '<=', end)
+            .get();
+          const weeklyList = heSnap.docs.map((d) => d.data()).filter((h) => h.verificationStatus !== 'cancelado');
+          const { subject, bodyHtml, totalHoras, totalColaboradores } = buildWeeklySummaryReport(weeklyList, start, end, emailRH);
+          await db.collection('notificaciones_rh').add({
+            id: `NOTIF-RH-WK-${Date.now()}`, type: 'resumen_semanal', date: todayStr, weekStart: start, weekEnd: end,
+            timestamp: new Date().toISOString(), emailRH, totalHoras, totalColaboradores,
+            status: 'enviado', subject, bodyHtml, enviadoPor: 'Sistema Programado (Servidor)',
+          });
+        }
+      }
+    }
+  }
+);
