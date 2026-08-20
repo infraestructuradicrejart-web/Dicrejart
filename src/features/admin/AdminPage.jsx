@@ -667,19 +667,28 @@ const AdminPage = () => {
                     variant="secondary"
                     size="sm"
                     onClick={async () => {
-                      const res = await triggerDailyRHNotification({
-                        operarios,
-                        horasExtra,
-                        generalConfig,
-                        updateGeneralConfig,
-                        force: true,
-                        user
-                      });
-                      if (res && res.ok) {
-                        toast.success(`📧 Reporte de RH preparado correctamente (${res.absentCount} personal ausente, ${res.horasExtraCount} hora(s) extra autorizadas). Destinatario: ${res.emailTarget}.`);
-                        setRhPreviewModal({ isOpen: true, notifRecord: res.record });
-                      } else {
-                        toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+                      // Si algo inesperado truena (ej. un dato con forma rara en horasExtra
+                      // que rompa el armado del correo), sin este try/catch el botón se
+                      // quedaba sin mostrar ningún mensaje — ni éxito ni error — porque el
+                      // rechazo de la promesa nunca llegaba al toast.danger de abajo.
+                      try {
+                        const res = await triggerDailyRHNotification({
+                          operarios,
+                          horasExtra,
+                          generalConfig,
+                          updateGeneralConfig,
+                          force: true,
+                          user
+                        });
+                        if (res && res.ok) {
+                          toast.success(`📧 Reporte de RH preparado correctamente (${res.absentCount} personal ausente, ${res.horasExtraCount} hora(s) extra autorizadas). Destinatario: ${res.emailTarget}.`);
+                          setRhPreviewModal({ isOpen: true, notifRecord: res.record });
+                        } else {
+                          toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+                        }
+                      } catch (error) {
+                        console.error('Error al probar el envío de RH:', error);
+                        toast.danger(`No se pudo generar el reporte: ${error.message}`);
                       }
                     }}
                   >
@@ -762,19 +771,24 @@ const AdminPage = () => {
                     variant="secondary"
                     size="sm"
                     onClick={async () => {
-                      const res = await triggerRHOvertimeNotification({
-                        horasExtra,
-                        generalConfig,
-                        updateGeneralConfig,
-                        force: true,
-                        user,
-                        horaLabel: 'Prueba Manual',
-                      });
-                      if (res && res.ok) {
-                        toast.success(`📧 Relación de horas extra preparada correctamente (${res.horasExtraCount} autorización(es)). Destinatario: ${res.emailTarget}.`);
-                        setRhPreviewModal({ isOpen: true, notifRecord: res.record });
-                      } else {
-                        toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+                      try {
+                        const res = await triggerRHOvertimeNotification({
+                          horasExtra,
+                          generalConfig,
+                          updateGeneralConfig,
+                          force: true,
+                          user,
+                          horaLabel: 'Prueba Manual',
+                        });
+                        if (res && res.ok) {
+                          toast.success(`📧 Relación de horas extra preparada correctamente (${res.horasExtraCount} autorización(es)). Destinatario: ${res.emailTarget}.`);
+                          setRhPreviewModal({ isOpen: true, notifRecord: res.record });
+                        } else {
+                          toast.danger(res?.error || res?.reason || 'No se pudo generar el reporte.');
+                        }
+                      } catch (error) {
+                        console.error('Error al probar el envío de horas extra a RH:', error);
+                        toast.danger(`No se pudo generar el reporte: ${error.message}`);
                       }
                     }}
                   >
