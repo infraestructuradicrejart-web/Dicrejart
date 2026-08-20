@@ -99,6 +99,8 @@ const OperariosPage = () => {
   const [absencesModal, setAbsencesModal] = useState({
     isOpen: false,
     selectedOperarioId: 'todos',
+    searchQuery: '',
+    sortOrder: 'fecha-desc',
   });
 
   // Modal para editar o rectificar un registro específico de ausencia o falta
@@ -687,6 +689,54 @@ const OperariosPage = () => {
 
     return records;
   }, [operarios, todayStr]);
+
+  // Registros de ausencias filtrados por colaborador, búsqueda por texto y ordenados alfabéticamente o por fecha
+  const filteredAndSortedAbsenceRecords = useMemo(() => {
+    let list = allAbsenceRecords.filter((r) => {
+      // Filtro por colaborador
+      if (absencesModal.selectedOperarioId !== 'todos' && r.operarioId !== absencesModal.selectedOperarioId) {
+        return false;
+      }
+      // Filtro por búsqueda de nombre o motivo
+      if (absencesModal.searchQuery?.trim()) {
+        const q = absencesModal.searchQuery.toLowerCase().trim();
+        const matchesName = r.operarioName?.toLowerCase().includes(q);
+        const matchesNotas = r.notas?.toLowerCase().includes(q);
+        const matchesTipo = (ESTADO_LABELS[r.tipo] || r.tipo)?.toLowerCase().includes(q);
+        const matchesArea = getAreaName(r.areaId)?.toLowerCase().includes(q);
+        if (!matchesName && !matchesNotas && !matchesTipo && !matchesArea) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    const sort = absencesModal.sortOrder || 'fecha-desc';
+    list = [...list].sort((a, b) => {
+      if (sort === 'nombre-asc') {
+        return (a.operarioName || '').localeCompare(b.operarioName || '');
+      }
+      if (sort === 'nombre-desc') {
+        return (b.operarioName || '').localeCompare(a.operarioName || '');
+      }
+      if (sort === 'fecha-asc') {
+        const dateA = a.desde || a.registradoAt || '';
+        const dateB = b.desde || b.registradoAt || '';
+        return dateA.localeCompare(dateB);
+      }
+      if (sort === 'tipo') {
+        const tipoA = ESTADO_LABELS[a.tipo] || a.tipo || '';
+        const tipoB = ESTADO_LABELS[b.tipo] || b.tipo || '';
+        return tipoA.localeCompare(tipoB);
+      }
+      // default: 'fecha-desc'
+      const dateA = a.desde || a.registradoAt || '';
+      const dateB = b.desde || b.registradoAt || '';
+      return dateB.localeCompare(dateA);
+    });
+
+    return list;
+  }, [allAbsenceRecords, absencesModal.selectedOperarioId, absencesModal.searchQuery, absencesModal.sortOrder]);
 
   const pendingMovimientos = movimientos.filter(
     (m) => m.status === 'pendiente_origen' || m.status === 'pendiente_destino'
@@ -1697,46 +1747,107 @@ const OperariosPage = () => {
           title="📋 Historial de Ausencias, Faltas e Incapacidades"
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ minWidth: '220px', flex: 1 }}>
+            {/* Barra de Filtros y Búsqueda */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end', backgroundColor: 'var(--color-gray-50)', padding: '12px', borderRadius: '8px', border: '1px solid var(--color-gray-200)' }}>
+              <div style={{ flex: '1 1 200px', minWidth: '180px' }}>
+                <Input
+                  label="Buscar por Nombre / Motivo"
+                  placeholder="🔍 Escribe un nombre o nota..."
+                  value={absencesModal.searchQuery}
+                  onChange={(e) => setAbsencesModal((prev) => ({ ...prev, searchQuery: e.target.value }))}
+                />
+              </div>
+
+              <div style={{ flex: '1 1 220px', minWidth: '180px' }}>
                 <Select
                   label="Filtrar por Colaborador"
                   value={absencesModal.selectedOperarioId}
                   onChange={(e) => setAbsencesModal((prev) => ({ ...prev, selectedOperarioId: e.target.value }))}
                   options={[
                     { value: 'todos', label: 'Todos los Colaboradores' },
-                    ...operarios.map((op) => ({ value: op.id, label: `${op.name} (${getAreaName(op.currentArea)})` })),
+                    ...[...operarios]
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((op) => ({ value: op.id, label: `${op.name} (${getAreaName(op.currentArea)})` })),
                   ]}
                 />
               </div>
-              <div style={{ fontSize: '12px', color: 'var(--color-gray-600)', alignSelf: 'flex-end', paddingBottom: '6px' }}>
-                Total de registros: <strong>
-                  {allAbsenceRecords.filter(r => absencesModal.selectedOperarioId === 'todos' || r.operarioId === absencesModal.selectedOperarioId).length}
-                </strong>
+
+              <div style={{ flex: '1 1 200px', minWidth: '180px' }}>
+                <Select
+                  label="Ordenar Registros por"
+                  value={absencesModal.sortOrder}
+                  onChange={(e) => setAbsencesModal((prev) => ({ ...prev, sortOrder: e.target.value }))}
+                  options={[
+                    { value: 'nombre-asc', label: '🔤 Nombre (A - Z)' },
+                    { value: 'nombre-desc', label: '🔤 Nombre (Z - A)' },
+                    { value: 'fecha-desc', label: '📅 Fecha (Más reciente)' },
+                    { value: 'fecha-asc', label: '📅 Fecha (Más antigua)' },
+                    { value: 'tipo', label: '🏷️ Tipo de Ausencia' },
+                  ]}
+                />
               </div>
+
+              {(absencesModal.searchQuery || absencesModal.selectedOperarioId !== 'todos' || absencesModal.sortOrder !== 'fecha-desc') && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setAbsencesModal((prev) => ({ ...prev, searchQuery: '', selectedOperarioId: 'todos', sortOrder: 'fecha-desc' }))}
+                  style={{ height: '38px', alignSelf: 'flex-end' }}
+                >
+                  🧹 Limpiar Filtros
+                </Button>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--color-gray-600)' }}>
+              <span>
+                Mostrando <strong>{filteredAndSortedAbsenceRecords.length}</strong> de {allAbsenceRecords.length} registros totales
+              </span>
+              {absencesModal.searchQuery && (
+                <span style={{ color: 'var(--color-primary, #2563eb)' }}>
+                  Filtrado por texto: &quot;{absencesModal.searchQuery}&quot;
+                </span>
+              )}
             </div>
 
             <div style={{ maxHeight: '420px', overflowY: 'auto', border: '1px solid var(--color-gray-200)', borderRadius: '8px' }}>
-              {allAbsenceRecords.filter(r => absencesModal.selectedOperarioId === 'todos' || r.operarioId === absencesModal.selectedOperarioId).length === 0 ? (
+              {filteredAndSortedAbsenceRecords.length === 0 ? (
                 <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--color-gray-500)' }}>
-                  🟢 No hay registros de ausencias ni faltas para la selección actual.
+                  🟢 No se encontraron registros de ausencias ni faltas con los filtros aplicados.
                 </div>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                   <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--color-gray-100)', zIndex: 1 }}>
                     <tr>
-                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Fecha / Periodo</th>
-                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Colaborador</th>
-                      <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Tipo de Ausencia</th>
+                      <th
+                        onClick={() => setAbsencesModal((prev) => ({ ...prev, sortOrder: prev.sortOrder === 'fecha-desc' ? 'fecha-asc' : 'fecha-desc' }))}
+                        style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)', cursor: 'pointer', userSelect: 'none' }}
+                        title="Clic para ordenar por Fecha"
+                      >
+                        Fecha / Periodo {absencesModal.sortOrder === 'fecha-desc' ? '▼' : absencesModal.sortOrder === 'fecha-asc' ? '▲' : '↕'}
+                      </th>
+                      <th
+                        onClick={() => setAbsencesModal((prev) => ({ ...prev, sortOrder: prev.sortOrder === 'nombre-asc' ? 'nombre-desc' : 'nombre-asc' }))}
+                        style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)', cursor: 'pointer', userSelect: 'none' }}
+                        title="Clic para ordenar Alfabéticamente por Nombre"
+                      >
+                        Colaborador {absencesModal.sortOrder === 'nombre-asc' ? '▲ (A-Z)' : absencesModal.sortOrder === 'nombre-desc' ? '▼ (Z-A)' : '↕'}
+                      </th>
+                      <th
+                        onClick={() => setAbsencesModal((prev) => ({ ...prev, sortOrder: 'tipo' }))}
+                        style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)', cursor: 'pointer', userSelect: 'none' }}
+                        title="Clic para ordenar por Tipo"
+                      >
+                        Tipo de Ausencia {absencesModal.sortOrder === 'tipo' ? '▼' : '↕'}
+                      </th>
                       <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Motivo / Notas</th>
                       <th style={{ padding: '8px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-gray-200)' }}>Registrado por</th>
                       <th style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--color-gray-200)' }}>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {allAbsenceRecords
-                      .filter(r => absencesModal.selectedOperarioId === 'todos' || r.operarioId === absencesModal.selectedOperarioId)
-                      .map((r) => (
+                    {filteredAndSortedAbsenceRecords.map((r) => (
                         <tr key={r.id} style={{ borderBottom: '1px solid var(--color-gray-200)', backgroundColor: r.isCurrent ? '#fff5f5' : 'transparent' }}>
                           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                             <strong>{r.desde || 'N/A'}</strong>
