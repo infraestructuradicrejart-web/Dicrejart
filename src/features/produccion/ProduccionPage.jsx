@@ -1278,22 +1278,30 @@ const ProduccionPage = () => {
         doc.setLineWidth(0.2);
       };
 
-      const colWidths = [22, 50, 28, 38, 16, 28];
+      // Colaborador y Autorizó son las únicas columnas con texto de largo variable (nombres
+      // de personas) — el resto siempre cabe en una línea. FONT_SIZE/LINE_H/MIN_ROW_H
+      // están calibrados para que, si un nombre necesita más de una línea, la fila crezca
+      // en vez de que la segunda línea se encime con la fila de abajo (lo que se veía como
+      // "nombres cortados").
+      const colWidths = [20, 56, 22, 32, 14, 38];
       const headers = ['Fecha', 'Colaborador', 'Bloque', 'Horario', 'Horas', 'Autorizó'];
-      const rowH = 7;
+      const FONT_SIZE = 8;
+      const LINE_H = 4;
+      const MIN_ROW_H = 8;
+      const TOP_PAD = 5.3;
 
       const drawTableHeader = (yPos) => {
         doc.setFillColor(...SECONDARY);
-        doc.rect(MARGIN, yPos, WIDTH, rowH, 'F');
+        doc.rect(MARGIN, yPos, WIDTH, MIN_ROW_H, 'F');
         doc.setFont(undefined, 'bold');
-        doc.setFontSize(8);
+        doc.setFontSize(FONT_SIZE);
         doc.setTextColor(255, 255, 255);
         let cx = MARGIN;
         headers.forEach((h, i) => {
-          doc.text(h, cx + 2, yPos + rowH - 2.3);
+          doc.text(h, cx + 2, yPos + TOP_PAD);
           cx += colWidths[i];
         });
-        return yPos + rowH;
+        return yPos + MIN_ROW_H;
       };
 
       const describeBloque = (h) => {
@@ -1309,63 +1317,68 @@ const ProduccionPage = () => {
       let y = drawTableHeader(42);
 
       doc.setFont(undefined, 'normal');
-      doc.setFontSize(8);
+      doc.setFontSize(FONT_SIZE);
       let totalHoras = 0;
 
       if (areaRecords.length === 0) {
         doc.setDrawColor(...BORDER);
-        doc.rect(MARGIN, y, WIDTH, rowH);
+        doc.rect(MARGIN, y, WIDTH, MIN_ROW_H);
         doc.setTextColor(...DARK);
-        doc.text('No se autorizaron horas extra en esta área durante la semana en curso.', MARGIN + 2, y + rowH - 2.3);
-        y += rowH;
+        doc.text('No se autorizaron horas extra en esta área durante la semana en curso.', MARGIN + 2, y + TOP_PAD);
+        y += MIN_ROW_H;
       }
 
       areaRecords.forEach((h, idx) => {
-        if (y > 275) {
+        const nameLines = doc.splitTextToSize(String(h.operarioName || '—'), colWidths[1] - 4);
+        const authLines = doc.splitTextToSize(String(h.authorizedBy || '—'), colWidths[5] - 4);
+        const linesNeeded = Math.max(nameLines.length, authLines.length, 1);
+        const currentRowH = Math.max(MIN_ROW_H, TOP_PAD + (linesNeeded - 1) * LINE_H + 3);
+
+        if (y + currentRowH > 280) {
           doc.addPage();
           drawHeader();
           y = drawTableHeader(42);
           doc.setFont(undefined, 'normal');
-          doc.setFontSize(8);
+          doc.setFontSize(FONT_SIZE);
         }
         if (idx % 2 === 1) {
           doc.setFillColor(...STRIPE);
-          doc.rect(MARGIN, y, WIDTH, rowH, 'F');
+          doc.rect(MARGIN, y, WIDTH, currentRowH, 'F');
         }
         doc.setDrawColor(...BORDER);
-        doc.rect(MARGIN, y, WIDTH, rowH);
+        doc.rect(MARGIN, y, WIDTH, currentRowH);
         let cx = MARGIN;
         colWidths.forEach((w) => {
           cx += w;
-          doc.line(cx, y, cx, y + rowH);
+          doc.line(cx, y, cx, y + currentRowH);
         });
 
         doc.setTextColor(...DARK);
         cx = MARGIN;
-        doc.text(h.authorizedDate || '—', cx + 2, y + rowH - 2.3); cx += colWidths[0];
-        doc.text(String(h.operarioName || '—'), cx + 2, y + rowH - 2.3, { maxWidth: colWidths[1] - 4 }); cx += colWidths[1];
-        doc.text(describeBloque(h), cx + 2, y + rowH - 2.3); cx += colWidths[2];
-        doc.text(`${formatHourLabel(h.startHour)}-${formatHourLabel(h.endHour)}`, cx + 2, y + rowH - 2.3); cx += colWidths[3];
-        doc.text(String(h.overtimeHours ?? '—'), cx + 2, y + rowH - 2.3); cx += colWidths[4];
-        doc.text(String(h.authorizedBy || '—'), cx + 2, y + rowH - 2.3, { maxWidth: colWidths[5] - 4 });
-        y += rowH;
+        doc.text(h.authorizedDate || '—', cx + 2, y + TOP_PAD); cx += colWidths[0];
+        doc.text(nameLines, cx + 2, y + TOP_PAD); cx += colWidths[1];
+        doc.text(describeBloque(h), cx + 2, y + TOP_PAD); cx += colWidths[2];
+        doc.text(`${formatHourLabel(h.startHour)}-${formatHourLabel(h.endHour)}`, cx + 2, y + TOP_PAD); cx += colWidths[3];
+        doc.text(String(h.overtimeHours ?? '—'), cx + 2, y + TOP_PAD); cx += colWidths[4];
+        doc.text(authLines, cx + 2, y + TOP_PAD);
+        y += currentRowH;
         totalHoras += Number(h.overtimeHours) || 0;
       });
 
-      if (y > 275) {
+      if (y + MIN_ROW_H > 280) {
         doc.addPage();
         drawHeader();
         y = 42;
       }
       doc.setFillColor(...STRIPE);
-      doc.rect(MARGIN, y, WIDTH, rowH, 'F');
+      doc.rect(MARGIN, y, WIDTH, MIN_ROW_H, 'F');
       doc.setDrawColor(...BORDER);
-      doc.rect(MARGIN, y, WIDTH, rowH);
+      doc.rect(MARGIN, y, WIDTH, MIN_ROW_H);
       doc.setFont(undefined, 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(...SECONDARY);
-      doc.text(`Total: ${totalHoras}h en ${areaRecords.length} autorización(es)`, MARGIN + 2, y + rowH - 2.3);
-      y += rowH + 8;
+      doc.text(`Total: ${totalHoras}h en ${areaRecords.length} autorización(es)`, MARGIN + 2, y + TOP_PAD);
+      y += MIN_ROW_H + 8;
 
       doc.setFont(undefined, 'normal');
       doc.setFontSize(7);
