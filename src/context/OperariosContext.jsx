@@ -67,20 +67,24 @@ const getDefaultEstado = () => ({
  *   supera el `hasta` (hasta < fechaHoy).
  * @returns {string|null} La nota de restablecimiento si expiró, o null si sigue vigente
  */
-const getExpiredEstadoResetNote = (estado, todayStr) => {
-  if (!estado || estado.tipo === 'activo') return null;
+const getExpiredEstadoResetNote = (estado, todayStr = getTodayLocalDateStr()) => {
+  if (!estado || !estado.tipo || estado.tipo === 'activo') return null;
   const { tipo, desde, hasta, registradoAt } = estado;
 
-  if (tipo === 'falta') {
-    const fechaFalta = desde || (registradoAt ? registradoAt.split('T')[0] : null);
-    if (fechaFalta && fechaFalta < todayStr) {
-      return 'Restablecido automáticamente a En Planta (Falta diaria concluyó)';
+  // Las faltas (inasistencias puntuales) son estrictamente de 1 solo día:
+  if (tipo === 'falta' || tipo === 'salida_campo') {
+    const fechaPuntual = desde || (registradoAt ? registradoAt.split('T')[0] : null);
+    if (fechaPuntual && fechaPuntual < todayStr) {
+      return `Restablecido automáticamente a En Planta (La ${tipo === 'falta' ? 'falta diaria' : 'salida de campo'} del ${fechaPuntual} concluyó)`;
     }
     return null;
   }
+
+  // Ausencias programadas con fecha límite 'hasta' (vacaciones, incapacidad, viajes, etc.):
   if (hasta && hasta < todayStr) {
     return `Restablecido automáticamente a En Planta (Venció periodo de ausencia el ${hasta})`;
   }
+
   return null;
 };
 
@@ -118,7 +122,7 @@ const evaluateAndResetExpiredEstado = async (op) => {
 
       const defaultEstado = {
         tipo: 'activo',
-        desde: null,
+        desde: getTodayLocalDateStr(),
         hasta: null,
         notas: resetNotes,
         registradoPor: 'Sistema (Restablecimiento Automático)',

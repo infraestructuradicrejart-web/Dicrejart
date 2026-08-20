@@ -1704,7 +1704,6 @@ const ProduccionPage = () => {
               variant="secondary"
               size="md"
               onClick={handleOpenRequestOvertimeModal}
-              style={{ backgroundColor: 'var(--color-secondary)', color: '#ffffff', fontWeight: 'bold' }}
             >
               ⏰ Solicitar Horas Extras
             </Button>
