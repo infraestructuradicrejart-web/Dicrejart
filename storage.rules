@@ -46,17 +46,25 @@ service firebase.storage {
       allow delete: if request.auth != null;
     }
 
-    // Adjuntos de actividades (ej. creadas desde un Bloque del Editor Visual). A
-    // diferencia de compras/inspecciones, aquí NO se restringe por tipo de archivo:
-    // el departamento de Diseño adjunta modelos 3D de SolidWorks (.sldprt/.sldasm/
-    // .slddrw) y Arquitectura adjunta planos — el navegador reporta un content-type
-    // genérico o ninguno para esas extensiones, así que una lista blanca de
-    // image/PDF los rechazaría. Solo se limita el tamaño (25 MB, los modelos 3D
-    // pesan más que una foto o un PDF).
+    // Adjuntos de actividades (ej. creadas desde un Bloque del Editor Visual).
     match /actividades/{actividadId}/{fileName} {
       allow read: if request.auth != null;
       allow create, update: if request.auth != null
                             && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if request.auth != null;
+    }
+
+    // Recursos, planos, modelos 3D y ayudas visuales del editor visual (Canvas)
+    match /lienzos_recursos/{lienzoId}/{fileName} {
+      allow read: if true;
+      allow create, update: if request.resource.size < 50 * 1024 * 1024;
+      allow delete: if request.auth != null;
+    }
+
+    // Permiso para cualquier recurso adjunto en lienzo visual
+    match /recursos_canvas/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if request.resource.size < 50 * 1024 * 1024;
       allow delete: if request.auth != null;
     }
   }

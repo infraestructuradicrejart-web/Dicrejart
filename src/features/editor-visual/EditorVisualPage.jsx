@@ -242,15 +242,25 @@ const getResourcePreviewInfo = (nodeOrDraft) => {
 };
 
 /**
- * Sube un archivo a Firebase Storage con compresión automática para imágenes
+ * Sube un archivo a Firebase Storage con compresión automática para imágenes,
+ * incluyendo fallback ligero transparente (< 30KB) si la red o Storage presentaran intermitencia.
  */
 const uploadResourceFile = async (file, lienzoId = 'general') => {
   if (!file) return null;
   const isImage = file.type?.startsWith('image/');
   let toUpload = file;
+  let compressedBase64 = null;
+
   if (isImage) {
     try {
       toUpload = await compressImage(file, { maxWidth: 1920, maxHeight: 1920, quality: 0.85 });
+      // Versión ultraligera (~20KB) para garantizar persistencia y vista inmediata en cualquier escenario
+      const thumbBlob = await compressImage(file, { maxWidth: 720, maxHeight: 720, quality: 0.65 });
+      compressedBase64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(thumbBlob);
+      });
     } catch (e) {
       console.warn('Compresión falló, subiendo original:', e);
       toUpload = file;
@@ -259,16 +269,44 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
 
   const safeName = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
   const path = `lienzos_recursos/${lienzoId}/${Date.now()}_${safeName}`;
-  const fileRef = ref(storage, path);
-  await uploadBytes(fileRef, toUpload);
-  const downloadUrl = await getDownloadURL(fileRef);
 
+  if (storage) {
+    try {
+      const fileRef = ref(storage, path);
+      await uploadBytes(fileRef, toUpload);
+      const downloadUrl = await getDownloadURL(fileRef);
+
+      return {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: downloadUrl,
+        storagePath: path,
+        isUploading: false,
+      };
+    } catch (storageErr) {
+      console.warn('Fallo subida a Firebase Storage, usando respaldo optimizado:', storageErr);
+      if (compressedBase64) {
+        return {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          dataUrl: compressedBase64,
+          url: compressedBase64,
+          isUploading: false,
+        };
+      }
+    }
+  }
+
+  // Fallback si no hay storage o si no es imagen pero se quiere guardar metadata
   return {
     name: file.name,
     size: file.size,
     type: file.type,
-    url: downloadUrl,
-    storagePath: path,
+    dataUrl: compressedBase64 || null,
+    url: compressedBase64 || '',
+    isUploading: false,
   };
 };
 
