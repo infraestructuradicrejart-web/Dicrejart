@@ -24,6 +24,7 @@ import useAreas from '../../hooks/useAreas';
 import useProgressiveList from '../../hooks/useProgressiveList';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
+import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import styles from './JuegosPage.module.css';
 
 /**
@@ -689,7 +690,7 @@ const JuegosPage = () => {
 
               {/* Piezas de proveedores externos (fibra de vidrio, letreros iluminados, etc.), solo lectura */}
               {juego.externalOrders && juego.externalOrders.length > 0 && (() => {
-                const todayStr = new Date().toISOString().split('T')[0];
+                const todayStr = getTodayLocalDateStr();
                 const delayed = juego.externalOrders.filter((o) => o.status === 'pendiente' && o.expectedDeliveryDate < todayStr).length;
                 const pending = juego.externalOrders.filter((o) => o.status === 'pendiente').length;
                 const received = juego.externalOrders.filter((o) => o.status === 'recibido').length;

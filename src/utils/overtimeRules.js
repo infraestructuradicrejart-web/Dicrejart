@@ -105,7 +105,7 @@ export const checkOvertimeEligibility = (operario, targetDateStr = getTodayLocal
     if (diffDays >= 0 && diffDays < 7) {
       const fechaDesbloqueoObj = new Date(fechaFaltaObj);
       fechaDesbloqueoObj.setDate(fechaDesbloqueoObj.getDate() + 7);
-      const fechaDesbloqueoStr = fechaDesbloqueoObj.toISOString().split('T')[0];
+      const fechaDesbloqueoStr = getTodayLocalDateStr(fechaDesbloqueoObj);
 
       return {
         isEligible: false,

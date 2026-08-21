@@ -48,17 +48,19 @@
    ============================================ */
 
 .variant-primary {
-  background-color: var(--color-primary);
-  color: var(--color-white);
+  background-color: var(--btn-primary-bg, var(--color-primary));
+  color: var(--btn-primary-color, var(--color-white));
+  border: 1px solid var(--btn-primary-border, transparent);
   
   /* Hover */
   &:hover:not(:disabled) {
-    background-color: #d64c05; /* Naranja más oscuro */
+    background-color: var(--btn-primary-hover, #d64c05);
+    border-color: var(--btn-primary-border, transparent);
   }
   
   /* Active/Press */
   &:active:not(:disabled) {
-    background-color: #c43f00; /* Naranja aún más oscuro */
+    background-color: var(--btn-primary-active, #c43f00);
   }
 }
 

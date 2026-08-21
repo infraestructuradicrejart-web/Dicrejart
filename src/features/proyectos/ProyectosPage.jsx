@@ -21,6 +21,7 @@ import { isReadOnlySection } from '../../utils/roleAccess';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import useProgressiveList from '../../hooks/useProgressiveList';
+import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import styles from './ProyectosPage.module.css';
 
 /**
@@ -137,7 +138,7 @@ const ProyectosPage = () => {
 
       let added = 0;
       let skipped = 0;
-      const today = new Date().toISOString().split('T')[0];
+      const today = getTodayLocalDateStr();
 
       rows.forEach((row) => {
         const name = getCellValue(row, /nombre|name/i);
@@ -211,12 +212,14 @@ const ProyectosPage = () => {
       return;
     }
 
+    const today = getTodayLocalDateStr();
+
     addProject({
       name: newProject.name,
       client: newProject.client,
       description: newProject.description,
-      startDate: newProject.startDate || new Date().toISOString().split('T')[0],
-      endDate: newProject.endDate || new Date().toISOString().split('T')[0],
+      startDate: newProject.startDate || today,
+      endDate: newProject.endDate || today,
     });
 
     toast.success('🏗️ Proyecto registrado con éxito.');

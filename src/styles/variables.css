@@ -42,6 +42,13 @@
   --backdrop-shape-opacity: 0.14;
   --heading-secondary: #330066;
 
+  /* Botones primarios (Tonalidad cálida refinada de marca) */
+  --btn-primary-bg: #ea580c;
+  --btn-primary-hover: #c2410c;
+  --btn-primary-active: #9a3412;
+  --btn-primary-border: #f97316;
+  --btn-primary-color: #ffffff;
+
   /* Botones secundarios */
   --btn-secondary-bg: var(--color-secondary);
   --btn-secondary-hover: #2f2660;
@@ -240,6 +247,13 @@
   --color-secondary: #c4b5fd;
   --color-area-herreria: #a855f7;
   --heading-secondary: #c4b5fd;
+
+  /* Botones primarios en Modo Oscuro (Cálido, elegante y sin brillo deslumbrante) */
+  --btn-primary-bg: #c2410c;
+  --btn-primary-hover: #ea580c;
+  --btn-primary-active: #9a3412;
+  --btn-primary-border: rgba(249, 115, 22, 0.45);
+  --btn-primary-color: #ffffff;
 
   /* Botones secundarios en Modo Oscuro (Púrpura vibrante con alto contraste) */
   --btn-secondary-bg: #6d28d9;

@@ -274,7 +274,7 @@ const ProduccionPage = () => {
   const [externalOrdersModal, setExternalOrdersModal] = useState({ isOpen: false, gameId: null });
   const [externalOrderForm, setExternalOrderForm] = useState(EMPTY_EXTERNAL_ORDER_FORM);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayLocalDateStr();
 
   // Se deriva del arreglo vivo de `juegos` (no una copia estática) para reflejar altas/recepciones al instante
   const externalOrdersGame = useMemo(
