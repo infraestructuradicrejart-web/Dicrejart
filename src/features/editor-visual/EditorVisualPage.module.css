@@ -1172,115 +1172,194 @@
   margin-left: -7px;
 }
 
-/* ---------- Bloque: lista de actividades desplegable sobre el propio nodo ---------- */
-/* Se cuelga como overlay (position: absolute, fuera del flujo normal) para que no
-   cambie la altura real del nodo — así los puertos (calculados con NODE_HEIGHT) y las
-   líneas de conexión no se desalinean cuando el bloque tiene muchas actividades. */
-.blockDropdown {
-  position: absolute;
-  top: 100%;
-  left: -1px;
-  right: -1px;
-  margin-top: 4px;
-  z-index: 20;
-  background: var(--color-white);
-  border: 1px solid var(--color-gray-200);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  padding: 8px;
-  cursor: default;
-  max-height: 280px;
-  overflow-y: auto;
-}
-.blockDropdownEmpty {
-  margin: 4px 0;
-  font-size: 12px;
-  color: var(--color-gray-400);
-  text-align: center;
-}
-.blockDropdownItem {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 7px 6px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-}
-.blockDropdownItem:hover { background: var(--color-gray-50); }
-.blockDropdownMeta { font-size: 10.5px; color: var(--color-gray-500); margin-top: 2px; }
-.blockDropdownRemove {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  color: var(--color-gray-400);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  padding: 2px 4px;
-}
-.blockDropdownRemove:hover { color: var(--color-alert); }
-.blockDropdownActions {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-gray-100);
-}
-.blockDropdownAction {
-  flex: 1;
-  background: var(--color-gray-50);
-  border: 1px solid var(--color-gray-200);
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-dark);
-  cursor: pointer;
-  text-align: center;
-}
-.blockDropdownAction:hover { background: var(--color-gray-100); }
-
-/* Responsable del bloque (colaborador conectado por cable) — franja fija arriba de la
-   lista de actividades, con el botón de reasignar en lote cuando aplica */
-.blockDropdownResponsable {
+/* ---------- Recurso / Ayuda Visual / Documentos / Enlaces en Nodo ---------- */
+.resourceThumbnailBox {
+  position: relative;
+  width: 100%;
+  height: 90px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 6px 0;
+  background: var(--color-gray-100, #f1f5f9);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 6px 8px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--color-gray-100);
-  font-size: 11.5px;
-  color: var(--color-dark);
-}
-.blockDropdownLinks {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 3px;
-}
-.blockDropdownLinks a {
-  font-size: 10.5px;
-  color: var(--color-primary);
-  text-decoration: underline;
-  word-break: break-all;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-/* Botón para abrir el archivo/link del modelo 3D (Diseño) o plano (Arquitectura) de
-   una actividad — preparación para integrarse más adelante con el visualizador propio. */
-.blockDropdownModelBtn {
-  margin-top: 5px;
-  background: var(--color-secondary);
-  color: var(--color-white);
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
+:global([data-theme="dark"]) .resourceThumbnailBox {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.resourceThumbnailBox:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-primary, #ea580c);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.resourceThumbnailImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.resourcePreviewHover {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.resourceThumbnailBox:hover .resourcePreviewHover {
+  opacity: 1;
+}
+
+.resourceDocBadge {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin: 6px 0;
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px dashed rgba(220, 38, 38, 0.35);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.resourceDocBadge:hover {
+  background: rgba(220, 38, 38, 0.14);
+  border-color: #dc2626;
+}
+
+.resourceLinkBadge {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin: 6px 0;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px dashed rgba(37, 99, 235, 0.35);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.resourceLinkBadge:hover {
+  background: rgba(37, 99, 235, 0.14);
+  border-color: #2563eb;
+}
+
+.resourceModelBadge {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin: 6px 0;
+  background: rgba(13, 148, 136, 0.08);
+  border: 1px dashed rgba(13, 148, 136, 0.35);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.resourceModelBadge:hover {
+  background: rgba(13, 148, 136, 0.14);
+  border-color: #0d9488;
+}
+
+.resourceEmptyBox {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  margin: 6px 0;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1.5px dashed var(--color-gray-300, #cbd5e1);
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-gray-500);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+:global([data-theme="dark"]) .resourceEmptyBox {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--color-gray-400);
+}
+
+.resourceEmptyBox:hover {
+  border-color: var(--color-primary, #ea580c);
+  color: var(--color-primary, #ea580c);
+  background: rgba(234, 88, 12, 0.06);
+}
+
+.resourceActions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.08);
+}
+
+:global([data-theme="dark"]) .resourceActions {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.resourceActionBtn {
+  flex: 1;
+  padding: 4px 6px;
   font-size: 10.5px;
   font-weight: 600;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: var(--color-white, #ffffff);
+  color: var(--color-dark, #1e293b);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s ease;
 }
-.blockDropdownModelBtn:hover { opacity: 0.85; }
+
+:global([data-theme="dark"]) .resourceActionBtn {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+.resourceActionBtn:hover {
+  background: var(--color-gray-100, #f1f5f9);
+  border-color: var(--color-primary, #ea580c);
+  color: var(--color-primary, #ea580c);
+}
+
+.resourceActionBtnPrimary {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  color: #ffffff !important;
+  border: none;
+}
+
+.resourceActionBtnPrimary:hover {
+  background: linear-gradient(135deg, #0ea5e9, #0284c7);
+}
 
 /* ---------- Inspector Flotante Derecho (Glassmorphic) ---------- */
 .inspector {

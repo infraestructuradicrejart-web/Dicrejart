@@ -62,7 +62,7 @@ const PRESET_COLORS = [
 ];
 
 const NODE_TYPES = {
-  bloque: { icon: '📦', label: 'Nodo de Trabajo', badgeText: 'TRABAJO', colorVar: '#ea580c', allowCreate: true },
+  recurso: { icon: '📎', label: 'Ayuda Visual / Archivo', badgeText: 'AYUDA VISUAL', colorVar: '#06b6d4', allowCreate: true },
   proyecto: { icon: '🗂️', label: 'Proyecto', badgeText: 'PROYECTO', colorVar: '#2563eb', allowCreate: true },
   juego: { icon: '🎮', label: 'Juego / Modelo', badgeText: 'MODELO', colorVar: '#0d9488', allowCreate: true },
   actividad: { icon: '📌', label: 'Actividad', badgeText: 'ACTIVIDAD', colorVar: '#d97706', allowCreate: true },
@@ -113,8 +113,8 @@ const previewBezier = (p1, p2) => {
 const getSmartWirePath = (fromNode, toNode) => {
   if (!fromNode || !toNode) return { path: '', p1: { x: 0, y: 0 }, p2: { x: 0, y: 0 } };
 
-  const fromHeight = fromNode.type === 'bloque' ? 140 : 85;
-  const toHeight = toNode.type === 'bloque' ? 140 : 85;
+  const fromHeight = fromNode.type === 'recurso' ? 140 : 85;
+  const toHeight = toNode.type === 'recurso' ? 140 : 85;
 
   const c1x = fromNode.x + NODE_WIDTH / 2;
   const c1y = fromNode.y + fromHeight / 2;
@@ -209,6 +209,16 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   // Modal para marcar una actividad como completada con notas de entrega
   const [completeModal, setCompleteModal] = useState({ isOpen: false, activityId: null, title: '', notes: '' });
+
+  // Modal para ver y ampliar Ayudas Visuales (Imágenes en alta resolución, PDFs, Modelos 3D y Enlaces)
+  const [previewResourceModal, setPreviewResourceModal] = useState({
+    isOpen: false,
+    title: '',
+    resourceType: 'imagen',
+    url: '',
+    fileData: null,
+    notes: '',
+  });
 
   // Determina si el lienzo activo es un lienzo libre que se puede eliminar
   const isCurrentLienzoDeletable = useMemo(() => {
@@ -426,10 +436,11 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const nodeTitle = useCallback(
     (node) => {
-      // Un Bloque no representa un único registro real (Firestore) sino un grupo de
-      // actividades, así que no pasa por getLinkedEntity — su "entidad" es su propio nombre.
-      if (node.type === 'bloque') return node.blockName || 'Bloque sin nombre';
-      if (node.draft) return node.draftFields.name || node.draftFields.title || 'Sin nombre';
+      if (!node) return 'Sin nombre';
+      if (node.type === 'recurso') {
+        return node.draftFields?.title || node.title || 'Ayuda Visual / Archivo';
+      }
+      if (node.draft) return node.draftFields?.name || node.draftFields?.title || 'Sin nombre';
       const entity = getLinkedEntity(node);
       if (!entity) return '(no encontrado)';
       return entity.name || entity.title || 'Sin nombre';
@@ -542,7 +553,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
       const colabNode = fromNode.type === 'colaborador' ? fromNode : toNode.type === 'colaborador' ? toNode : null;
       const actNode = fromNode.type === 'actividad' ? fromNode : toNode.type === 'actividad' ? toNode : null;
-      const blockNode = fromNode.type === 'bloque' ? fromNode : toNode.type === 'bloque' ? toNode : null;
+      const recursoNode = fromNode.type === 'recurso' ? fromNode : toNode.type === 'recurso' ? toNode : null;
       const projNode = fromNode.type === 'proyecto' ? fromNode : toNode.type === 'proyecto' ? toNode : null;
       const areaNode = fromNode.type === 'area' ? fromNode : toNode.type === 'area' ? toNode : null;
       const gameNode = fromNode.type === 'juego' ? fromNode : toNode.type === 'juego' ? toNode : null;
@@ -562,17 +573,20 @@ const EditorVisualPage = ({ standalone = false }) => {
         }
       }
 
-      // 2. Colaborador ↔ Bloque (sincronizar todas las actividades del bloque)
-      if (colabNode && blockNode && (blockNode.activityIds || []).length > 0) {
-        for (const actId of blockNode.activityIds) {
-          const act = actividades.find((a) => a.id === actId);
-          if (act && act.operarioId !== colabNode.refId) {
+      // 2. Recurso / Ayuda Visual ↔ Actividad
+      if (recursoNode && actNode && actNode.refId) {
+        const act = actividades.find((a) => a.id === actNode.refId);
+        if (act) {
+          // Si el recurso tiene URL o archivo, validar sincronización
+          const resUrl = recursoNode.draftFields?.url;
+          if (resUrl && !(act.links || []).includes(resUrl)) {
             try {
+              const updatedLinks = [...(act.links || []), resUrl];
               await updateDoc(doc(db, 'actividades', act.id), {
-                operarioId: colabNode.refId,
+                links: updatedLinks,
                 updatedAt: new Date().toISOString(),
               });
-              updateActividad(act.id, { operarioId: colabNode.refId });
+              updateActividad(act.id, { links: updatedLinks });
               syncedCount++;
             } catch (e) {}
           }
@@ -595,27 +609,7 @@ const EditorVisualPage = ({ standalone = false }) => {
         }
       }
 
-      // 4. Área ↔ Bloque
-      if (areaNode && blockNode && (blockNode.activityIds || []).length > 0) {
-        const areaId = areaNode.refId;
-        if (areaId) {
-          for (const actId of blockNode.activityIds) {
-            const act = actividades.find((a) => a.id === actId);
-            if (act && act.areaId !== areaId) {
-              try {
-                await updateDoc(doc(db, 'actividades', act.id), {
-                  areaId,
-                  updatedAt: new Date().toISOString(),
-                });
-                updateActividad(act.id, { areaId });
-                syncedCount++;
-              } catch (e) {}
-            }
-          }
-        }
-      }
-
-      // 5. Proyecto ↔ Actividad
+      // 4. Proyecto ↔ Actividad
       if (projNode && actNode && actNode.refId) {
         const projId = projNode.refId;
         const projEntity = getLinkedEntity(projNode);
@@ -634,30 +628,7 @@ const EditorVisualPage = ({ standalone = false }) => {
         }
       }
 
-      // 6. Proyecto ↔ Bloque
-      if (projNode && blockNode && (blockNode.activityIds || []).length > 0) {
-        const projId = projNode.refId;
-        const projEntity = getLinkedEntity(projNode);
-        const projName = projEntity?.name || nodeTitle(projNode);
-        if (projId) {
-          for (const actId of blockNode.activityIds) {
-            const act = actividades.find((a) => a.id === actId);
-            if (act && act.projectId !== projId) {
-              try {
-                await updateDoc(doc(db, 'actividades', act.id), {
-                  projectId: projId,
-                  projectName: projName,
-                  updatedAt: new Date().toISOString(),
-                });
-                updateActividad(act.id, { projectId: projId, projectName: projName });
-                syncedCount++;
-              } catch (e) {}
-            }
-          }
-        }
-      }
-
-      // 7. Juego ↔ Actividad
+      // 5. Juego ↔ Actividad
       if (gameNode && actNode && actNode.refId) {
         const gameId = gameNode.refId;
         const act = actividades.find((a) => a.id === actNode.refId);
@@ -670,26 +641,6 @@ const EditorVisualPage = ({ standalone = false }) => {
             updateActividad(act.id, { gameId });
             syncedCount++;
           } catch (e) {}
-        }
-      }
-
-      // 8. Juego ↔ Bloque
-      if (gameNode && blockNode && (blockNode.activityIds || []).length > 0) {
-        const gameId = gameNode.refId;
-        if (gameId) {
-          for (const actId of blockNode.activityIds) {
-            const act = actividades.find((a) => a.id === actId);
-            if (act && act.gameId !== gameId) {
-              try {
-                await updateDoc(doc(db, 'actividades', act.id), {
-                  gameId,
-                  updatedAt: new Date().toISOString(),
-                });
-                updateActividad(act.id, { gameId });
-                syncedCount++;
-              } catch (e) {}
-            }
-          }
         }
       }
     }
@@ -764,28 +715,20 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const nodeSummary = useCallback(
     (node) => {
-      if (node.type === 'bloque') {
-        const areaName = allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId || 'Sin área';
-        const projName = proyectos.find((p) => p.id === node.projectId)?.name || null;
-        const gameName = juegos.find((j) => j.id === node.gameId)?.name || null;
-        const count = node.activityIds?.length || 0;
-        const colabDirect = operarios.find((o) => o.id === node.operarioId)?.name;
-        const colabEdge = edges.find(
+      if (node.type === 'recurso') {
+        const resType = node.draftFields?.resourceType || 'imagen';
+        const typeLabel = resType === 'imagen' ? '🖼️ Imagen/Render' : resType === 'documento' ? '📄 Documento PDF' : resType === 'link' ? '🔗 Enlace Web' : '🎬 Modelo 3D';
+        const targetEdge = edges.find(
           (e) =>
-            (e.from === node.id && findNode(e.to)?.type === 'colaborador') ||
-            (e.to === node.id && findNode(e.from)?.type === 'colaborador')
+            (e.from === node.id && (findNode(e.to)?.type === 'actividad' || findNode(e.to)?.type === 'proyecto')) ||
+            (e.to === node.id && (findNode(e.from)?.type === 'actividad' || findNode(e.from)?.type === 'proyecto'))
         );
-        const colabConnected = colabEdge
-          ? nodeTitle(findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to))
-          : null;
-        const colabName = colabDirect || colabConnected;
+        const targetNode = targetEdge ? findNode(findNode(targetEdge.from)?.type === 'actividad' || findNode(targetEdge.from)?.type === 'proyecto' ? targetEdge.from : targetEdge.to) : null;
+        const targetName = targetNode ? nodeTitle(targetNode) : null;
 
-        const parts = [];
-        if (projName) parts.push(`🗂️ ${projName}`);
-        if (gameName) parts.push(`🎮 ${gameName}`);
-        parts.push(`🏭 ${areaName}`);
-        parts.push(`📌 ${count} act.`);
-        if (colabName) parts.push(`👷 ${colabName}`);
+        const parts = [typeLabel];
+        if (targetName) parts.push(`📌 Ligado a: ${targetName}`);
+        if (node.draftFields?.fileData?.name) parts.push(`📎 ${node.draftFields.fileData.name}`);
         return parts.join(' · ');
       }
       if (node.draft) return '🆕 Aún no guardado en el sistema';
@@ -1129,56 +1072,38 @@ const EditorVisualPage = ({ standalone = false }) => {
                 }
               }
 
-              // 4. Colaborador ↔ Bloque: Asignar al bloque y a TODAS sus actividades en Firestore
-              if (colabNode && blockNode) {
-                const operario = operarios.find((o) => o.id === colabNode.refId);
-                const operarioName = operario?.name || nodeTitle(colabNode);
-                const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, operarioId: colabNode.refId } : n));
-                setNodes(nextNodes);
-                saveToFirestore(nextNodes, nextEdges);
+              // 4. Recurso / Ayuda Visual ↔ Actividad: Vincular el recurso a la actividad
+              if (recursoNode && actNode) {
+                const actId = actNode.refId || (actNode.draft ? null : actNode.id);
+                const actTitle = nodeTitle(actNode);
+                const resTitle = nodeTitle(recursoNode);
+                const resUrl = recursoNode.draftFields?.url;
 
-                const activityIds = blockNode.activityIds || [];
-                if (activityIds.length > 0) {
-                  activityIds.forEach(async (actId) => {
-                    try {
-                      await updateDoc(doc(db, 'actividades', actId), {
-                        operarioId: colabNode.refId,
-                        updatedAt: new Date().toISOString(),
-                      });
-                      updateActividad(actId, { operarioId: colabNode.refId });
-                    } catch (e) {
-                      console.error('Error al reasignar actividad de bloque:', e);
-                    }
+                if (actId && !actNode.draft) {
+                  const act = actividades.find((a) => a.id === actId);
+                  const updatedLinks = resUrl && !(act?.links || []).includes(resUrl)
+                    ? [...(act?.links || []), resUrl]
+                    : (act?.links || []);
+
+                  updateDoc(doc(db, 'actividades', actId), {
+                    links: updatedLinks,
+                    updatedAt: new Date().toISOString(),
+                  }).then(() => {
+                    updateActividad(actId, { links: updatedLinks });
+                    toast.success(`📎 "${resTitle}" vinculada a la Actividad "${actTitle}".`);
+                  }).catch(() => {
+                    toast.success(`📎 "${resTitle}" vinculada a la Actividad "${actTitle}".`);
                   });
-                  toast.success(`👷 ${operarioName} asignado al Bloque y a sus ${activityIds.length} actividad(es).`);
                 } else {
-                  toast.success(`👷 ${operarioName} asignado al Bloque de Trabajo.`);
+                  toast.success(`📎 "${resTitle}" vinculada a la Actividad "${actTitle}".`);
                 }
               }
 
-              // 5. Proyecto ↔ Bloque: Asignar proyecto al bloque y propagar a sus actividades
-              if (projNode && blockNode) {
-                const projId = projNode.refId || (projNode.draft ? null : projNode.id);
-                const projEntity = getLinkedEntity(projNode);
-                const projName = projEntity?.name || nodeTitle(projNode);
-                const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, projectId: projId } : n));
-                setNodes(nextNodes);
-                saveToFirestore(nextNodes, nextEdges);
-
-                const activityIds = blockNode.activityIds || [];
-                if (activityIds.length > 0 && projId) {
-                  activityIds.forEach(async (actId) => {
-                    try {
-                      await updateDoc(doc(db, 'actividades', actId), {
-                        projectId: projId,
-                        projectName: projName,
-                        updatedAt: new Date().toISOString(),
-                      });
-                      updateActividad(actId, { projectId: projId, projectName: projName });
-                    } catch (e) {}
-                  });
-                }
-                toast.success(`🔗 Bloque vinculado al Proyecto "${projName}".`);
+              // 5. Recurso / Ayuda Visual ↔ Proyecto: Vincular el recurso al proyecto
+              if (recursoNode && projNode) {
+                const projName = nodeTitle(projNode);
+                const resTitle = nodeTitle(recursoNode);
+                toast.success(`📎 "${resTitle}" vinculada al Proyecto "${projName}".`);
               }
 
               // 6. Proyecto ↔ Actividad: Vincular proyecto directamente
@@ -1199,29 +1124,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                 }
               }
 
-              // 7. Juego ↔ Bloque
-              if (gameNode && blockNode) {
-                const gameId = gameNode.refId || (gameNode.draft ? null : gameNode.id);
-                const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, gameId } : n));
-                setNodes(nextNodes);
-                saveToFirestore(nextNodes, nextEdges);
-
-                const activityIds = blockNode.activityIds || [];
-                if (activityIds.length > 0 && gameId) {
-                  activityIds.forEach(async (actId) => {
-                    try {
-                      await updateDoc(doc(db, 'actividades', actId), {
-                        gameId,
-                        updatedAt: new Date().toISOString(),
-                      });
-                      updateActividad(actId, { gameId });
-                    } catch (e) {}
-                  });
-                }
-                toast.success(`🔗 Bloque vinculado al Juego "${nodeTitle(gameNode)}".`);
-              }
-
-              // 8. Juego ↔ Actividad
+              // 7. Juego ↔ Actividad
               if (gameNode && actNode) {
                 const gameId = gameNode.refId || (gameNode.draft ? null : gameNode.id);
                 const actId = actNode.refId || (actNode.draft ? null : actNode.id);
@@ -1234,30 +1137,6 @@ const EditorVisualPage = ({ standalone = false }) => {
                     toast.success(`🔗 Actividad vinculada al Juego "${nodeTitle(gameNode)}".`);
                   });
                 }
-              }
-
-              // 9. Área ↔ Bloque: Vincular área y propagar a sus actividades
-              if (areaNode && blockNode) {
-                const areaEntity = getLinkedEntity(areaNode);
-                const areaId = areaNode.refId || areaEntity?.id;
-                const areaName = areaEntity?.name || nodeTitle(areaNode);
-                const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, areaId } : n));
-                setNodes(nextNodes);
-                saveToFirestore(nextNodes, nextEdges);
-
-                const activityIds = blockNode.activityIds || [];
-                if (activityIds.length > 0 && areaId) {
-                  activityIds.forEach(async (actId) => {
-                    try {
-                      await updateDoc(doc(db, 'actividades', actId), {
-                        areaId,
-                        updatedAt: new Date().toISOString(),
-                      });
-                      updateActividad(actId, { areaId });
-                    } catch (e) {}
-                  });
-                }
-                toast.success(`🏭 Bloque asignado al Área "${areaName}".`);
               }
 
               // 10. Área ↔ Actividad: Asignar área a la actividad y notificar al supervisor
@@ -1638,7 +1517,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const EMPTY_NODE_MODAL = {
     isOpen: false,
-    type: 'colaborador', // 'proyecto' | 'juego' | 'colaborador' | 'area' | 'actividad' | 'bloque'
+    type: 'colaborador', // 'proyecto' | 'juego' | 'colaborador' | 'area' | 'actividad' | 'recurso'
     tab: 'existing', // 'existing' | 'new'
     query: '',
 
@@ -1663,16 +1542,19 @@ const EditorVisualPage = ({ standalone = false }) => {
     newActPriority: 'media',
     newActDueDate: '',
 
-    // Bloque
-    newBlockName: 'Nodo de Trabajo',
-    newBlockAreaId: 'herreria',
+    // Recurso / Ayuda Visual
+    newRecursoTitle: 'Plano / Ayuda Visual',
+    newRecursoType: 'imagen',
+    newRecursoUrl: '',
+    newRecursoFileData: null,
+    newRecursoNotes: '',
   };
 
   const [nodeModal, setNodeModal] = useState(EMPTY_NODE_MODAL);
 
   const openNodeModal = (type) => {
     if (!canEditDiagram) return;
-    const defaultTab = (type === 'colaborador' || type === 'area') ? 'existing' : (type === 'bloque' ? 'new' : 'existing');
+    const defaultTab = (type === 'colaborador' || type === 'area') ? 'existing' : (type === 'recurso' ? 'new' : 'existing');
     setNodeModal({
       ...EMPTY_NODE_MODAL,
       isOpen: true,
@@ -1681,7 +1563,6 @@ const EditorVisualPage = ({ standalone = false }) => {
       newGameAreas: ['herreria', 'corte-laser'],
       newGameTargets: { herreria: 10, 'corte-laser': 10 },
       newActAreaId: dynamicAreas[0]?.id || 'herreria',
-      newBlockAreaId: dynamicAreas[0]?.id || 'herreria',
     });
   };
 
@@ -1761,6 +1642,21 @@ const EditorVisualPage = ({ standalone = false }) => {
       closeNodeModal();
       toast.success(`📌 Actividad "${nodeModal.newActTitle.trim()}" creada y agregada.`);
     }
+  };
+
+  const handleCreateNewRecursoNode = () => {
+    spawnNode('recurso', {
+      draft: false,
+      draftFields: {
+        title: nodeModal.newRecursoTitle.trim() || 'Ayuda Visual / Archivo',
+        resourceType: nodeModal.newRecursoType || 'imagen',
+        url: nodeModal.newRecursoUrl.trim() || '',
+        fileData: nodeModal.newRecursoFileData || null,
+        notes: nodeModal.newRecursoNotes.trim() || '',
+      },
+    });
+    closeNodeModal();
+    toast.success(`📎 Ayuda Visual "${nodeModal.newRecursoTitle.trim() || 'Ayuda Visual'}" agregada al lienzo.`);
   };
 
   /**
@@ -2651,17 +2547,27 @@ const EditorVisualPage = ({ standalone = false }) => {
                       <button
                         type="button"
                         className={styles.paletteNodeBtn}
-                        style={{ '--btn-theme': '#ea580c' }}
+                        style={{ '--btn-theme': '#06b6d4' }}
                         onClick={() => {
-                          openNodeModal('bloque');
+                          spawnNode('recurso', {
+                            draft: false,
+                            draftFields: {
+                              title: 'Ayuda Visual / Archivo',
+                              resourceType: 'imagen',
+                              url: '',
+                              fileData: null,
+                              notes: '',
+                            },
+                          });
                           setIsLeftRailOpen(false);
+                          toast.success('📎 Nodo de Ayuda Visual agregado al lienzo.');
                         }}
-                        title="Agregar Celda Modular de Trabajo"
+                        title="Agregar nodo de Ayuda Visual, Documentos, Planos o Enlaces"
                       >
-                        <span style={{ fontSize: '18px' }}>📦</span>
+                        <span style={{ fontSize: '18px' }}>📎</span>
                         <div>
-                          <strong>Celda Trabajo</strong>
-                          <small>Grupo modular</small>
+                          <strong>Ayuda Visual</strong>
+                          <small>Imágenes, PDFs y Links</small>
                         </div>
                       </button>
                     </div>
@@ -3322,223 +3228,213 @@ const EditorVisualPage = ({ standalone = false }) => {
                         </div>
                       )}
 
-                      {node.type === 'bloque' && (
+                      {node.type === 'recurso' && (
                         <div>
-                          <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>📦 NODO MODULAR DE TRABAJO</span>
-                          <div className={styles.nodeBadgesGrid}>
-                            <div className={styles.nodeBadgeTag} title="Proyecto">
-                              🗂️ {proyectos.find((p) => p.id === node.projectId)?.name || 'Sin proyecto'}
-                            </div>
-                            <div className={styles.nodeBadgeTag} title="Juego">
-                              🎮 {juegos.find((j) => j.id === node.gameId)?.name || 'Sin juego'}
-                            </div>
-                            <div className={styles.nodeBadgeTag} title="Área">
-                              🏭 {allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId}
-                            </div>
-                            <div className={styles.nodeBadgeTag} title="Responsable">
-                              👷 {operarios.find((o) => o.id === node.operarioId)?.name || (
-                                getConnectedColaboradorNode(node.id) ? nodeTitle(getConnectedColaboradorNode(node.id)) : 'Sin asignar'
-                              )}
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
-                              <span>📌 {(node.activityIds || []).length} actividades</span>
-                              <span style={{ fontWeight: 700, color: nodeThemeColor }}>{expandedBlocks.has(node.id) ? '▲ Ocultar' : '▼ Ver detalles'}</span>
-                            </div>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '3px' }}>
+                            <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>
+                              📎 {node.draftFields?.resourceType === 'imagen' ? '🖼️ IMAGEN / RENDER' : node.draftFields?.resourceType === 'documento' ? '📄 DOCUMENTO / PLANO' : node.draftFields?.resourceType === 'link' ? '🔗 ENLACE WEB' : '🎬 MODELO 3D CAD'}
+                            </span>
+                          </div>
+
+                          {/* MINIATURA / VISTA PREVIA SEGÚN TIPO */}
+                          {(() => {
+                            const resType = node.draftFields?.resourceType || 'imagen';
+                            const fileData = node.draftFields?.fileData;
+                            const url = node.draftFields?.url;
+                            const previewImgSrc = fileData?.dataUrl || (resType === 'imagen' && url ? url : null);
+
+                            if (previewImgSrc) {
+                              return (
+                                <div
+                                  className={styles.resourceThumbnailBox}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewResourceModal({
+                                      isOpen: true,
+                                      title: nodeTitle(node),
+                                      resourceType: resType,
+                                      url: url || previewImgSrc,
+                                      fileData,
+                                      notes: node.draftFields?.notes || '',
+                                    });
+                                  }}
+                                  title="Clic para ampliar vista previa"
+                                >
+                                  <img src={previewImgSrc} alt={nodeTitle(node)} className={styles.resourceThumbnailImg} />
+                                  <div className={styles.resourcePreviewHover}>
+                                    <span>🔍 Ampliar</span>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (resType === 'documento' || fileData?.type?.includes('pdf') || url?.endsWith('.pdf')) {
+                              return (
+                                <div
+                                  className={styles.resourceDocBadge}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewResourceModal({
+                                      isOpen: true,
+                                      title: nodeTitle(node),
+                                      resourceType: 'documento',
+                                      url,
+                                      fileData,
+                                      notes: node.draftFields?.notes || '',
+                                    });
+                                  }}
+                                >
+                                  <span style={{ fontSize: '20px' }}>📄</span>
+                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#dc2626' }}>
+                                      {fileData?.name || 'Documento PDF'}
+                                    </div>
+                                    <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
+                                      {fileData?.size ? `${Math.round(fileData.size / 1024)} KB` : 'Ver documento'}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (resType === 'link' || url) {
+                              return (
+                                <div
+                                  className={styles.resourceLinkBadge}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                                  }}
+                                  title={url ? `Abrir: ${url}` : 'Sin URL asignada'}
+                                >
+                                  <span style={{ fontSize: '18px' }}>🔗</span>
+                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#2563eb' }}>
+                                      {url ? url.replace(/^https?:\/\//, '').split('/')[0] : 'Enlace Web'}
+                                    </div>
+                                    <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
+                                      {url ? 'Clic para abrir enlace' : 'Configurar URL en panel'}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (resType === 'modelo') {
+                              return (
+                                <div
+                                  className={styles.resourceModelBadge}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewResourceModal({
+                                      isOpen: true,
+                                      title: nodeTitle(node),
+                                      resourceType: 'modelo',
+                                      url,
+                                      fileData,
+                                      notes: node.draftFields?.notes || '',
+                                    });
+                                  }}
+                                >
+                                  <span style={{ fontSize: '18px' }}>🧊</span>
+                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#0d9488' }}>
+                                      {fileData?.name || 'Modelo CAD 3D'}
+                                    </div>
+                                    <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
+                                      {fileData?.size ? `${Math.round(fileData.size / 1024)} KB` : 'Ficha 3D'}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div
+                                className={styles.resourceEmptyBox}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedNodeId(node.id);
+                                }}
+                                title="Haz clic para seleccionar y cargar un archivo o enlace en el panel derecho"
+                              >
+                                📂 <strong>Sin archivo adjunto</strong>
+                                <div style={{ fontSize: '10px', marginTop: '2px' }}>Haz clic para configurar en panel</div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* INDICADOR DE ACTIVIDAD / PROYECTO ASIGNADO POR CABLE */}
+                          {(() => {
+                            const connectedEdge = edges.find(
+                              (e) =>
+                                (e.from === node.id && (findNode(e.to)?.type === 'actividad' || findNode(e.to)?.type === 'proyecto')) ||
+                                (e.to === node.id && (findNode(e.from)?.type === 'actividad' || findNode(e.from)?.type === 'proyecto'))
+                            );
+                            const targetNode = connectedEdge
+                              ? findNode(findNode(connectedEdge.from)?.type === 'actividad' || findNode(connectedEdge.from)?.type === 'proyecto' ? connectedEdge.from : connectedEdge.to)
+                              : null;
+
+                            if (targetNode) {
+                              return (
+                                <div style={{ fontSize: '10.5px', color: 'var(--color-primary, #ea580c)', fontWeight: 700, margin: '3px 0', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  <span>{targetNode.type === 'proyecto' ? '🗂️ Ligado a Proy:' : '📌 Ligado a Tarea:'}</span>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nodeTitle(targetNode)}</span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', fontStyle: 'italic', margin: '2px 0' }}>
+                                🔌 Conecta un cable a una Actividad o Proyecto
+                              </div>
+                            );
+                          })()}
+
+                          {/* BOTONES DE ACCIÓN: EXPANDIR Y DESCARGAR/ABRIR */}
+                          <div className={styles.resourceActions}>
+                            <button
+                              type="button"
+                              className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewResourceModal({
+                                  isOpen: true,
+                                  title: nodeTitle(node),
+                                  resourceType: node.draftFields?.resourceType || 'imagen',
+                                  url: node.draftFields?.url || '',
+                                  fileData: node.draftFields?.fileData || null,
+                                  notes: node.draftFields?.notes || '',
+                                });
+                              }}
+                              title="Ver y ampliar esta ayuda visual"
+                            >
+                              🔍 Ver / Expandir
+                            </button>
+
+                            {(node.draftFields?.fileData?.dataUrl || node.draftFields?.url) && (
+                              <button
+                                type="button"
+                                className={styles.resourceActionBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (node.draftFields?.fileData?.dataUrl) {
+                                    const a = document.createElement('a');
+                                    a.href = node.draftFields.fileData.dataUrl;
+                                    a.download = node.draftFields.fileData.name || 'archivo_ayuda_visual';
+                                    a.click();
+                                  } else if (node.draftFields?.url) {
+                                    window.open(node.draftFields.url, '_blank', 'noopener,noreferrer');
+                                  }
+                                }}
+                                title="Descargar archivo u abrir enlace"
+                              >
+                                {node.draftFields?.fileData ? '📥 Descargar' : '🔗 Abrir'}
+                              </button>
+                            )}
                           </div>
                         </div>
                       )}
                     </div>
-
-                    {node.type === 'bloque' && expandedBlocks.has(node.id) && (
-                      <div
-                        data-role="block-panel"
-                        className={styles.blockDropdown}
-                        onMouseDown={(e) => e.stopPropagation()}
-                      >
-                        {(() => {
-                          const colaboradorNode = getConnectedColaboradorNode(node.id);
-                          const directOperario = operarios.find((o) => o.id === node.operarioId);
-                          const currentResponsable = directOperario?.name || (colaboradorNode ? nodeTitle(colaboradorNode) : null);
-                          return (
-                            <div className={styles.blockDropdownResponsable}>
-                              <span>👷 Responsable: <strong>{currentResponsable || 'Sin asignar'}</strong></span>
-                              {canEditDiagram && currentResponsable && (node.activityIds || []).length > 0 && (
-                                <button
-                                  type="button"
-                                  className={styles.blockDropdownAction}
-                                  onClick={() => handleReassignBlockActivities(node, colaboradorNode)}
-                                  title="Reasignar todas las actividades de este nodo al responsable actual"
-                                >
-                                  🔗 Reasignar todas
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })()}
-
-                        {(node.activityIds || []).length === 0 && (
-                          <p className={styles.blockDropdownEmpty}>Aún no hay actividades en este nodo.</p>
-                        )}
-                        {(node.activityIds || []).map((activityId) => {
-                          const act = actividades.find((a) => a.id === activityId);
-                          if (!act) return null;
-                          const responsable = operarios.find((o) => o.id === act.operarioId)?.name;
-                          const attachmentCount = act.attachments?.length || 0;
-                          const linkCount = act.links?.length || 0;
-                          const modelUrl = act.modelFile?.url || act.modelLink || null;
-                          return (
-                            <div key={activityId} className={styles.blockDropdownItem}>
-                              <div>
-                                <strong>📌 {act.title}</strong>
-                                <div className={styles.blockDropdownMeta}>
-                                  <span
-                                    style={{
-                                      fontSize: '9.5px',
-                                      fontWeight: 800,
-                                      padding: '1px 5px',
-                                      borderRadius: '3px',
-                                      textTransform: 'uppercase',
-                                      background:
-                                        act.status === 'completado'
-                                          ? 'rgba(16, 185, 129, 0.15)'
-                                          : act.status === 'proceso'
-                                          ? 'rgba(37, 99, 235, 0.15)'
-                                          : 'rgba(156, 163, 175, 0.15)',
-                                      color:
-                                        act.status === 'completado'
-                                          ? '#10b981'
-                                          : act.status === 'proceso'
-                                          ? '#2563eb'
-                                          : '#6b7280',
-                                    }}
-                                  >
-                                    {act.status}
-                                  </span>
-                                  <span>· {act.priority}</span>
-                                  {responsable && <span>· 👷 {responsable}</span>}
-                                  {attachmentCount > 0 && <span>· 📎 {attachmentCount}</span>}
-                                  {linkCount > 0 && <span>· 🔗 {linkCount}</span>}
-                                </div>
-                                {canUserControlActivity(act) && (
-                                  <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                                    {act.status === 'pendiente' && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleStartActivity(act.id, act.title);
-                                        }}
-                                        style={{
-                                          fontSize: '10px',
-                                          fontWeight: 700,
-                                          padding: '2px 6px',
-                                          borderRadius: '4px',
-                                          background: '#2563eb',
-                                          color: '#ffffff',
-                                          border: 'none',
-                                          cursor: 'pointer',
-                                        }}
-                                        title="Iniciar actividad"
-                                      >
-                                        ▶️ Iniciar
-                                      </button>
-                                    )}
-                                    {act.status === 'proceso' && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleOpenCompleteModal(act.id, act.title);
-                                        }}
-                                        style={{
-                                          fontSize: '10px',
-                                          fontWeight: 700,
-                                          padding: '2px 6px',
-                                          borderRadius: '4px',
-                                          background: '#10b981',
-                                          color: '#ffffff',
-                                          border: 'none',
-                                          cursor: 'pointer',
-                                        }}
-                                        title="Marcar como terminada"
-                                      >
-                                        ✅ Terminar
-                                      </button>
-                                    )}
-                                    {act.status === 'completado' && (
-                                      <span style={{ fontSize: '10px', color: '#10b981', fontWeight: 600 }}>
-                                        ✓ Finalizada
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                                {linkCount > 0 && (
-                                  <div className={styles.blockDropdownLinks}>
-                                    {act.links.map((url) => (
-                                      <a
-                                        key={url}
-                                        href={formatExternalUrl(url)}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {url}
-                                      </a>
-                                    ))}
-                                  </div>
-                                )}
-                                {modelUrl && (
-                                  <button
-                                    type="button"
-                                    className={styles.blockDropdownModelBtn}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      window.open(formatExternalUrl(modelUrl), '_blank', 'noreferrer');
-                                    }}
-                                    title={act.modelFile ? `Abrir ${act.modelFile.name}` : 'Abrir link del modelo'}
-                                  >
-                                    🎬 Abrir Modelo
-                                  </button>
-                                )}
-                              </div>
-                              {canEditDiagram && (
-                                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                  <button
-                                    type="button"
-                                    className={styles.blockDropdownRemove}
-                                    title="Desvincular del nodo visual"
-                                    onClick={() => handleUnlinkActivity(node.id, activityId)}
-                                  >
-                                    ✕
-                                  </button>
-                                  {act.status === 'pendiente' && (
-                                    <button
-                                      type="button"
-                                      className={styles.blockDropdownRemove}
-                                      style={{ color: 'var(--color-alert)' }}
-                                      title="Eliminar actividad permanentemente y avisar al personal en el chat"
-                                      onClick={() => handleDeleteActivityCompletely(node.id, activityId)}
-                                    >
-                                      🗑️
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {canEditDiagram && (
-                          <div className={styles.blockDropdownActions}>
-                            <button type="button" className={styles.blockDropdownAction} onClick={() => openBlockActivityForm(node.id)}>
-                              ➕ Nueva actividad
-                            </button>
-                            <button type="button" className={styles.blockDropdownAction} onClick={() => openBlockLinkPicker(node.id)}>
-                              🔗 Existente
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
 
                     {/* 4 PUERTOS DE CONEXIÓN (IZQUIERDA, DERECHA, ARRIBA, ABAJO) */}
                     {canEditDiagram && (
@@ -4231,223 +4127,195 @@ const EditorVisualPage = ({ standalone = false }) => {
           </div>
         )}
 
-        {/* 5. CREAR BLOQUE / CELDA */}
-        {nodeModal.type === 'bloque' && (
+        {/* 5. CREAR RECURSO / AYUDA VISUAL */}
+        {nodeModal.type === 'recurso' && (
           <div className={styles.inlineCreateBox}>
-            <label className={styles.inlineLabel}>Nombre del Nodo Modular *</label>
+            <label className={styles.inlineLabel}>Título / Nombre de la Ayuda Visual *</label>
             <input
               type="text"
-              placeholder="Ej. Ensamble de Célula 1..."
-              value={nodeModal.newBlockName}
-              onChange={(e) => setNodeModal((prev) => ({ ...prev, newBlockName: e.target.value }))}
+              placeholder="Ej. Plano de Ensamblaje Rev 2, Render Fachada..."
+              value={nodeModal.newRecursoTitle}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, newRecursoTitle: e.target.value }))}
               autoFocus
             />
 
-            <label className={styles.inlineSubLabel}>🏭 Área Principal de la Celda</label>
+            <label className={styles.inlineSubLabel}>Tipo de Contenido:</label>
             <select
-              value={nodeModal.newBlockAreaId}
-              onChange={(e) => setNodeModal((prev) => ({ ...prev, newBlockAreaId: e.target.value }))}
+              value={nodeModal.newRecursoType}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, newRecursoType: e.target.value }))}
             >
-              {allBlockAreas.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
+              <option value="imagen">🖼️ Imagen / Fotografía / Render</option>
+              <option value="documento">📄 Documento / Plano PDF</option>
+              <option value="link">🔗 Enlace Web (Google Drive, Figma, OneDrive, Web)</option>
+              <option value="modelo">🎬 Modelo 3D / CAD (.step, .skp, .dwg, .obj)</option>
             </select>
+
+            <label className={styles.inlineSubLabel}>
+              {nodeModal.newRecursoType === 'link' ? '🔗 URL del Enlace *' : '🔗 URL Externa o de Nube (opcional)'}
+            </label>
+            <input
+              type="text"
+              placeholder="https://drive.google.com/... o https://figma.com/..."
+              value={nodeModal.newRecursoUrl}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, newRecursoUrl: e.target.value }))}
+            />
+
+            {nodeModal.newRecursoType !== 'link' && (
+              <div>
+                <label className={styles.inlineSubLabel}>📁 O Subir Archivo desde tu dispositivo:</label>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        setNodeModal((prev) => ({
+                          ...prev,
+                          newRecursoFileData: {
+                            name: file.name,
+                            size: file.size,
+                            type: file.type,
+                            dataUrl: reader.result,
+                          },
+                        }));
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+                {nodeModal.newRecursoFileData && (
+                  <div style={{ fontSize: '11.5px', color: '#10b981', fontWeight: 600, marginTop: '4px' }}>
+                    ✓ Archivo listo: {nodeModal.newRecursoFileData.name} ({Math.round(nodeModal.newRecursoFileData.size / 1024)} KB)
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label className={styles.inlineSubLabel}>Instrucciones / Notas Técnicas (opcional)</label>
+              <textarea
+                rows="2"
+                placeholder="Cotas críticas, tolerancias, especificaciones de armado..."
+                value={nodeModal.newRecursoNotes}
+                onChange={(e) => setNodeModal((prev) => ({ ...prev, newRecursoNotes: e.target.value }))}
+              />
+            </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
               <Button variant="secondary" size="md" onClick={closeNodeModal}>Cancelar</Button>
-              <Button variant="primary" size="md" onClick={handleCreateNewBlockNode}>📦 Crear Celda en Lienzo</Button>
+              <Button variant="primary" size="md" onClick={handleCreateNewRecursoNode}>📎 Crear y Agregar al Lienzo</Button>
             </div>
           </div>
         )}
       </Modal>
 
+      {/* ---------- MODAL: VISTA PREVIA Y LIGHTBOX DE AYUDA VISUAL / ARCHIVO ---------- */}
+      <Modal
+        isOpen={previewResourceModal.isOpen}
+        onClose={() => setPreviewResourceModal((prev) => ({ ...prev, isOpen: false }))}
+        title={`📎 ${previewResourceModal.title || 'Ayuda Visual / Archivo'}`}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'center' }}>
+          {/* VISTA PREVIA DE IMAGEN */}
+          {(previewResourceModal.resourceType === 'imagen' || previewResourceModal.fileData?.type?.startsWith('image/') || previewResourceModal.url?.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i)) && (
+            <div style={{ width: '100%', maxHeight: '65vh', overflow: 'auto', background: 'rgba(0,0,0,0.05)', borderRadius: '12px', padding: '8px', display: 'flex', justifyContent: 'center' }}>
+              <img
+                src={previewResourceModal.fileData?.dataUrl || previewResourceModal.url}
+                alt={previewResourceModal.title}
+                style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)' }}
+              />
+            </div>
+          )}
 
-      {/* ---------- MODAL: NUEVA ACTIVIDAD DENTRO DE UN BLOQUE ---------- */}
-      <Modal isOpen={blockActivityForm.isOpen} onClose={closeBlockActivityForm} title="📌 Nueva Actividad">
-        <div className={styles.field}>
-          <label>Título</label>
-          <input
-            type="text"
-            autoFocus
-            value={blockActivityForm.title}
-            onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, title: e.target.value }))}
-          />
-        </div>
-        <div className={styles.field}>
-          <label>Descripción</label>
-          <textarea
-            rows="3"
-            value={blockActivityForm.description}
-            onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, description: e.target.value }))}
-          />
-        </div>
-        <div className={styles.field}>
-          <label>Prioridad</label>
-          <select
-            value={blockActivityForm.priority}
-            onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, priority: e.target.value }))}
-          >
-            {PRIORITY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className={styles.field}>
-          <label>Fecha Límite</label>
-          <input
-            type="date"
-            value={blockActivityForm.dueDate}
-            onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, dueDate: e.target.value }))}
-          />
-        </div>
-        {(() => {
-          const blockNode = findNode(blockActivityForm.blockNodeId);
-          if (!blockNode) return null;
-          const colaboradorNode = getConnectedColaboradorNode(blockNode.id);
-          return (
-            <div
-              className={styles.calloutBox}
-              style={
-                colaboradorNode
-                  ? { background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)' }
-                  : { background: 'rgba(153, 51, 255, 0.08)', border: '1px solid rgba(153, 51, 255, 0.25)' }
-              }
-            >
-              {colaboradorNode ? (
-                <>👷 Se asignará automáticamente a <strong>{nodeTitle(colaboradorNode)}</strong> (colaborador conectado a este bloque).</>
-              ) : (
-                <>ℹ️ Este bloque no tiene un Colaborador conectado — la actividad se creará sin responsable. Conecta un
-                  nodo Colaborador al bloque (arrastra desde sus puertos) para asignarla automáticamente.</>
+          {/* VISTA PREVIA DE DOCUMENTO / PDF */}
+          {(previewResourceModal.resourceType === 'documento' || previewResourceModal.fileData?.type?.includes('pdf') || previewResourceModal.url?.endsWith('.pdf')) && (
+            <div style={{ width: '100%', padding: '24px', background: 'var(--color-gray-50)', border: '1px solid var(--color-gray-200)', borderRadius: '12px', textAlign: 'center' }}>
+              <span style={{ fontSize: '48px', display: 'block', marginBottom: '8px' }}>📄</span>
+              <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', color: 'var(--color-dark)' }}>
+                {previewResourceModal.fileData?.name || previewResourceModal.title || 'Documento PDF'}
+              </h4>
+              {previewResourceModal.fileData?.size && (
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--color-gray-500)' }}>
+                  Tamaño: {Math.round(previewResourceModal.fileData.size / 1024)} KB
+                </p>
               )}
             </div>
-          );
-        })()}
-        <div className={styles.field}>
-          <label>Adjuntar Archivos de Referencia (opcional)</label>
-          <input
-            type="file"
-            accept="image/*,application/pdf,.dwg,.dxf,.step,.stp,.iges,.igs"
-            multiple
-            onChange={handleBlockActivityFileChange}
-          />
-          {blockActivityForm.attachments.length > 0 && (
-            <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {blockActivityForm.attachments.map((file, idx) => (
-                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                  <span>📎 {file.name}</span>
-                  <button type="button" onClick={() => handleRemoveBlockActivityFile(idx)} style={{ border: 'none', background: 'none', color: 'var(--color-alert)', cursor: 'pointer' }}>✕</button>
-                </div>
-              ))}
+          )}
+
+          {/* ENLACE WEB */}
+          {(previewResourceModal.resourceType === 'link' || (!previewResourceModal.fileData && previewResourceModal.url)) && (
+            <div style={{ width: '100%', padding: '20px', background: 'rgba(37, 99, 235, 0.06)', border: '1.5px dashed rgba(37, 99, 235, 0.3)', borderRadius: '12px', textAlign: 'center' }}>
+              <span style={{ fontSize: '36px', display: 'block', marginBottom: '8px' }}>🌐</span>
+              <strong style={{ fontSize: '14px', color: '#2563eb', display: 'block', marginBottom: '6px' }}>Enlace Web / Cloud</strong>
+              <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', wordBreak: 'break-all', margin: '0 0 12px 0' }}>
+                {previewResourceModal.url || 'Sin enlace configurado'}
+              </p>
+              {previewResourceModal.url && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => window.open(formatExternalUrl(previewResourceModal.url), '_blank', 'noopener,noreferrer')}
+                >
+                  🔗 Abrir Enlace en Pestaña Nueva
+                </Button>
+              )}
             </div>
           )}
-        </div>
-        <div className={styles.field}>
-          <label>Links de Referencia (opcional, uno por línea)</label>
-          <textarea
-            rows="2"
-            placeholder="https://..."
-            value={blockActivityForm.linksText}
-            onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, linksText: e.target.value }))}
-          />
-        </div>
 
-        {/* "Modelo": distinto de los adjuntos de referencia de arriba — es lo que abre el
-            botón "🎬 Abrir Modelo" del bloque (planos de Arquitectura o modelos 3D de
-            SolidWorks de Diseño, pendientes de integrarse con el visualizador/renderizador
-            — por ahora el botón simplemente abre el archivo o el link tal cual). */}
-        {(() => {
-          const blockNode = findNode(blockActivityForm.blockNodeId);
-          const colaboradorNode = blockNode ? getConnectedColaboradorNode(blockNode.id) : null;
-          const puesto = colaboradorNode ? operarios.find((o) => o.id === colaboradorNode.refId)?.puesto : null;
-          const hint =
-            puesto === 'arquitecto'
-              ? '📐 Sugerido para Arquitectura: el plano del proyecto (PDF, imagen o DWG/DXF), o el link de Drive donde está guardado.'
-              : puesto === 'disenador'
-              ? '✏️ Sugerido para Diseño: el archivo del modelo 3D (SolidWorks) o el link de Drive/visualizador donde está guardado.'
-              : 'Sube el archivo del modelo/plano o pega el link donde está guardado (ej. Drive).';
-          return (
-            <>
-              <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '14px', marginBottom: '2px' }}>{hint}</p>
-              <div className={styles.field}>
-                <label>🎬 Archivo del Modelo/Plano (opcional)</label>
-                <input type="file" onChange={handleBlockActivityModelFileChange} />
-                {blockActivityForm.modelFile && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginTop: '4px' }}>
-                    <span>🎬 {blockActivityForm.modelFile.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => setBlockActivityForm((prev) => ({ ...prev, modelFile: null }))}
-                      style={{ border: 'none', background: 'none', color: 'var(--color-alert)', cursor: 'pointer' }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className={styles.field}>
-                <label>O Link del Modelo/Plano (ej. Drive)</label>
-                <input
-                  type="text"
-                  placeholder="https://drive.google.com/..."
-                  value={blockActivityForm.modelLink}
-                  onChange={(e) => setBlockActivityForm((prev) => ({ ...prev, modelLink: e.target.value }))}
-                />
-              </div>
-            </>
-          );
-        })()}
-        <Button variant="primary" size="md" onClick={handleCreateBlockActivity} isLoading={isSavingBlockActivity} style={{ marginTop: '10px' }}>
-          💾 Crear y agregar al bloque
-        </Button>
-      </Modal>
-
-      {/* ---------- MODAL: ENLAZAR ACTIVIDAD EXISTENTE A UN BLOQUE ---------- */}
-      <Modal isOpen={blockLinkPicker.isOpen} onClose={closeBlockLinkPicker} title="🔗 Enlazar Actividad Existente">
-        <input
-          type="text"
-          autoFocus
-          className={styles.pickerSearch}
-          placeholder="Buscar actividad existente..."
-          value={blockLinkPicker.query}
-          onChange={(e) => setBlockLinkPicker((prev) => ({ ...prev, query: e.target.value }))}
-        />
-        <div className={styles.pickerList}>
-          {blockLinkCandidates.map((a) => (
-            <button key={a.id} type="button" className={styles.pickerItem} onClick={() => handleLinkExistingActivity(a.id)}>
-              📌 <span>{a.title}</span>
-              <span className={styles.pickerBadge}>{dynamicAreas.find((ar) => ar.id === a.areaId)?.name || a.areaId}</span>
-            </button>
-          ))}
-          {blockLinkCandidates.length === 0 && (
-            <div className={styles.pickerEmpty}>Sin coincidencias.</div>
-          )}
-        </div>
-      </Modal>
-
-      {/* ---------- MODAL: CONFIRMAR BORRADO DE BLOQUE CON ACTIVIDADES ---------- */}
-      <Modal isOpen={deleteBlockConfirm.isOpen} onClose={closeDeleteBlockConfirm} title="🗑️ Eliminar Bloque">
-        {(() => {
-          const node = findNode(deleteBlockConfirm.nodeId);
-          if (!node) return null;
-          const count = (node.activityIds || []).length;
-          return (
-            <div style={{ padding: 'var(--space-2) 0' }}>
-              <p style={{ marginBottom: 'var(--space-4)' }}>
-                El bloque <strong>{node.blockName}</strong> tiene <strong>{count}</strong> actividad{count === 1 ? '' : 'es'} real
-                {count === 1 ? '' : 'es'} en el sistema.
+          {/* MODELO 3D */}
+          {previewResourceModal.resourceType === 'modelo' && (
+            <div style={{ width: '100%', padding: '20px', background: 'rgba(13, 148, 136, 0.06)', border: '1.5px dashed rgba(13, 148, 136, 0.3)', borderRadius: '12px', textAlign: 'center' }}>
+              <span style={{ fontSize: '36px', display: 'block', marginBottom: '8px' }}>🧊</span>
+              <strong style={{ fontSize: '14px', color: '#0d9488', display: 'block', marginBottom: '6px' }}>
+                {previewResourceModal.fileData?.name || 'Modelo CAD 3D'}
+              </strong>
+              <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', margin: '0 0 12px 0' }}>
+                Ficha de diseño técnico para producción
               </p>
-              <p style={{ fontSize: '12.5px', color: 'var(--color-gray-500)', marginBottom: 'var(--space-5)' }}>
-                Para eliminar el bloque, esas actividades también se eliminarán del sistema (no solo se desvincularán).
-                Si prefieres conservarlas, cancela y quítalas del bloque una por una con &ldquo;✕&rdquo; antes de borrarlo.
-                Una actividad que ya tenga avance (no esté &ldquo;pendiente&rdquo;) impedirá el borrado por completo.
-              </p>
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <Button variant="secondary" size="md" onClick={closeDeleteBlockConfirm}>Cancelar</Button>
-                <Button variant="danger" size="md" onClick={handleConfirmDeleteBlockWithActivities}>Eliminar bloque y actividades</Button>
-              </div>
             </div>
-          );
-        })()}
+          )}
+
+          {/* NOTAS TÉCNICAS */}
+          {previewResourceModal.notes && (
+            <div style={{ width: '100%', padding: '12px 14px', background: 'rgba(234, 88, 12, 0.08)', borderLeft: '4px solid #ea580c', borderRadius: '6px' }}>
+              <strong style={{ fontSize: '12px', color: '#ea580c', display: 'block', marginBottom: '2px' }}>📝 Notas e Instrucciones:</strong>
+              <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--color-dark)', whiteSpace: 'pre-wrap' }}>
+                {previewResourceModal.notes}
+              </p>
+            </div>
+          )}
+
+          {/* ACCIONES DEL MODAL */}
+          <div style={{ width: '100%', display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '10px', borderTop: '1px solid var(--color-gray-200)' }}>
+            {(previewResourceModal.fileData?.dataUrl || previewResourceModal.url) && (
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => {
+                  if (previewResourceModal.fileData?.dataUrl) {
+                    const a = document.createElement('a');
+                    a.href = previewResourceModal.fileData.dataUrl;
+                    a.download = previewResourceModal.fileData.name || 'descarga_ayuda_visual';
+                    a.click();
+                  } else if (previewResourceModal.url) {
+                    window.open(formatExternalUrl(previewResourceModal.url), '_blank', 'noopener,noreferrer');
+                  }
+                }}
+              >
+                {previewResourceModal.fileData ? '📥 Descargar Archivo' : '🔗 Abrir Enlace'}
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setPreviewResourceModal((prev) => ({ ...prev, isOpen: false }))}
+            >
+              ✕ Cerrar
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* ---------- MODAL: CÓMO FUNCIONA ---------- */}
@@ -5414,498 +5282,154 @@ const NodeInspector = ({
         </>
       )}
 
-      {node.type === 'bloque' && (
+      {node.type === 'recurso' && (
         <>
-          {/* Nombre del Nodo */}
+          {/* Título de la Ayuda Visual */}
           <div className={styles.field}>
-            <label>Nombre del Nodo</label>
+            <label>Título / Nombre</label>
             <input
               type="text"
-              value={node.blockName}
+              value={node.draftFields?.title || node.title || ''}
               disabled={!canEditDiagram}
-              onChange={(e) => updateBlockName(e.target.value)}
-              onBlur={onSaveBlockName}
+              placeholder="Ej. Plano de Corte Rev 3..."
+              onChange={(e) => updateDraftField(node.id, 'title', e.target.value)}
             />
           </div>
 
-          {/* 🗂️ Proyecto Ligado */}
+          {/* Tipo de Recurso */}
           <div className={styles.field}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-              <label style={{ margin: 0 }}>🗂️ Proyecto Ligado</label>
-              {canEditDiagram && (
-                <button
-                  type="button"
-                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
-                  onClick={() => setIsCreatingProj((prev) => !prev)}
-                >
-                  {isCreatingProj ? '✕ Usar existente' : '➕ Nuevo Proyecto'}
-                </button>
-              )}
-            </div>
-            {!isCreatingProj ? (
-              <>
-                <select
-                  value={node.projectId || ''}
-                  disabled={!canEditDiagram}
-                  onChange={(e) => {
-                    updateBlockField('projectId', e.target.value);
-                    updateBlockField('gameId', '');
-                  }}
-                >
-                  <option value="">Sin proyecto asignado...</option>
-                  {proyectos.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
-                  ))}
-                </select>
-
-                {node.projectId && canEditDiagram && (
-                  <button
-                    type="button"
-                    style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                    onClick={() => {
-                      const p = proyectos.find((proj) => proj.id === node.projectId);
-                      if (p) {
-                        setEditProjName(p.name || '');
-                        setEditProjClient(p.client || '');
-                        setEditProjStatus(p.status || 'diseno');
-                        setEditProjStartDate(p.startDate || '');
-                        setEditProjEndDate(p.endDate || '');
-                        setEditProjDesc(p.description || '');
-                      }
-                      setIsEditingLinkedProj((prev) => !prev);
-                    }}
-                  >
-                    {isEditingLinkedProj ? '✕ Cerrar edición de proyecto' : '✏️ Modificar datos de este Proyecto'}
-                  </button>
-                )}
-
-                {isEditingLinkedProj && node.projectId && (
-                  <div className={styles.inlineCreateBox} style={{ marginTop: '8px', borderLeft: '3px solid var(--color-primary)' }}>
-                    <p style={{ margin: '0 0 6px 0', fontSize: '11.5px', fontWeight: 700, color: 'var(--color-primary)' }}>
-                      ✏️ Modificar Proyecto: {proyectos.find((p) => p.id === node.projectId)?.name}
-                    </p>
-                    <div className={styles.createGrid2}>
-                      <div>
-                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Nombre *</label>
-                        <input
-                          type="text"
-                          value={editProjName}
-                          onChange={(e) => setEditProjName(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Cliente *</label>
-                        <input
-                          type="text"
-                          value={editProjClient}
-                          onChange={(e) => setEditProjClient(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className={styles.createGrid2}>
-                      <div>
-                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Fecha Inicio</label>
-                        <input
-                          type="date"
-                          value={editProjStartDate}
-                          onChange={(e) => setEditProjStartDate(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Fecha Entrega</label>
-                        <input
-                          type="date"
-                          value={editProjEndDate}
-                          onChange={(e) => setEditProjEndDate(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Descripción</label>
-                      <textarea
-                        rows="2"
-                        value={editProjDesc}
-                        onChange={(e) => setEditProjDesc(e.target.value)}
-                      />
-                    </div>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={async () => {
-                        if (!editProjName.trim() || !editProjClient.trim()) {
-                          toast.danger('Nombre y cliente son obligatorios.');
-                          return;
-                        }
-                        const res = await updateProject(node.projectId, {
-                          name: editProjName.trim(),
-                          client: editProjClient.trim(),
-                          status: editProjStatus,
-                          startDate: editProjStartDate || null,
-                          endDate: editProjEndDate || null,
-                          description: editProjDesc.trim() || 'Sin descripción',
-                        });
-                        if (res?.ok !== false) {
-                          toast.success('✅ Proyecto actualizado en el sistema.');
-                          setIsEditingLinkedProj(false);
-                        }
-                      }}
-                      style={{ alignSelf: 'flex-start', marginTop: '4px' }}
-                    >
-                      💾 Guardar Cambios del Proyecto
-                    </Button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className={styles.inlineCreateBox}>
-                <div className={styles.createGrid2}>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre *</label>
-                    <input
-                      type="text"
-                      placeholder="Nombre..."
-                      value={newProjName}
-                      onChange={(e) => setNewProjName(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Cliente *</label>
-                    <input
-                      type="text"
-                      placeholder="Cliente..."
-                      value={newProjClient}
-                      onChange={(e) => setNewProjClient(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className={styles.createGrid2}>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Inicio</label>
-                    <input
-                      type="date"
-                      value={newProjStartDate}
-                      onChange={(e) => setNewProjStartDate(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Entrega</label>
-                    <input
-                      type="date"
-                      value={newProjEndDate}
-                      onChange={(e) => setNewProjEndDate(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Descripción</label>
-                  <textarea
-                    rows="2"
-                    placeholder="Descripción..."
-                    value={newProjDesc}
-                    onChange={(e) => setNewProjDesc(e.target.value)}
-                  />
-                </div>
-                <Button variant="primary" size="sm" onClick={handleQuickCreateProject} style={{ alignSelf: 'flex-start' }}>
-                  💾 Guardar y Asignar
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* 🎮 Juego Ligado */}
-          <div className={styles.field}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-              <label style={{ margin: 0 }}>🎮 Juego Ligado</label>
-              {canEditDiagram && (
-                <button
-                  type="button"
-                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
-                  onClick={() => setIsCreatingGame((prev) => !prev)}
-                >
-                  {isCreatingGame ? '✕ Usar existente' : '➕ Nuevo Juego'}
-                </button>
-              )}
-            </div>
-            {!isCreatingGame ? (
-              <>
-                <select
-                  value={node.gameId || ''}
-                  disabled={!canEditDiagram}
-                  onChange={(e) => updateBlockField('gameId', e.target.value)}
-                >
-                  <option value="">Sin juego asignado...</option>
-                  {juegos
-                    .filter((j) => !node.projectId || j.projectId === node.projectId || j.projectName === proyectos.find((p) => p.id === node.projectId)?.name)
-                    .map((j) => (
-                      <option key={j.id} value={j.id}>{j.name} ({j.projectName || 'General'})</option>
-                    ))}
-                </select>
-
-                {node.gameId && canEditDiagram && (
-                  <button
-                    type="button"
-                    style={{ background: 'none', border: 'none', color: 'var(--color-tiffany-blue)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                    onClick={() => {
-                      const g = juegos.find((j) => j.id === node.gameId);
-                      if (g) {
-                        setEditGameName(g.name || '');
-                        setEditGameProjectId(g.projectId || '');
-                        setEditGameAreas(g.areas || ['herreria', 'corte-laser']);
-                        setEditGameTargets(g.targetPieces || {});
-                      }
-                      setIsEditingLinkedGame((prev) => !prev);
-                    }}
-                  >
-                    {isEditingLinkedGame ? '✕ Cerrar edición de juego' : '✏️ Modificar datos de este Juego'}
-                  </button>
-                )}
-
-                {isEditingLinkedGame && node.gameId && (
-                  <div className={styles.inlineCreateBox} style={{ marginTop: '8px', borderLeft: '3px solid var(--color-tiffany-blue)' }}>
-                    <p style={{ margin: '0 0 6px 0', fontSize: '11.5px', fontWeight: 700, color: 'var(--color-tiffany-blue)' }}>
-                      ✏️ Modificar Juego: {juegos.find((j) => j.id === node.gameId)?.name}
-                    </p>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Nombre *</label>
-                    <input
-                      type="text"
-                      value={editGameName}
-                      onChange={(e) => setEditGameName(e.target.value)}
-                    />
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginTop: '4px', marginBottom: '2px' }}>
-                      Áreas de Manufactura:
-                    </label>
-                    <div className={styles.areasGridPills}>
-                      {dynamicAreas.map((a) => {
-                        const isSelected = editGameAreas.includes(a.id);
-                        return (
-                          <button
-                            key={a.id}
-                            type="button"
-                            className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
-                            onClick={() => handleToggleEditGameArea(a.id)}
-                          >
-                            {isSelected ? '✓' : '＋'} {a.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {editGameAreas.length > 0 && (
-                      <div className={styles.areaTargetsList}>
-                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
-                          Metas de piezas por área:
-                        </label>
-                        {editGameAreas.map((areaId) => {
-                          const aName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
-                          return (
-                            <div key={areaId} className={styles.areaTargetItem}>
-                              <span>🏭 {aName}</span>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  style={{ width: '70px', padding: '3px 6px', fontSize: '12px' }}
-                                  value={editGameTargets[areaId] ?? 10}
-                                  onChange={(e) => {
-                                    const val = Number(e.target.value) || 1;
-                                    setEditGameTargets((prev) => ({ ...prev, [areaId]: val }));
-                                  }}
-                                />
-                                <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>pzas</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={async () => {
-                        if (!editGameName.trim()) {
-                          toast.danger('El nombre del juego es obligatorio.');
-                          return;
-                        }
-                        const matchingProj = proyectos.find((p) => p.id === editGameProjectId);
-                        await updateDoc(doc(db, 'juegos', node.gameId), {
-                          name: editGameName.trim(),
-                          projectId: editGameProjectId || null,
-                          projectName: matchingProj?.name || 'General',
-                          areas: editGameAreas,
-                          targetPieces: editGameTargets,
-                          updatedAt: new Date().toISOString(),
-                        });
-                        toast.success('✅ Juego actualizado en el sistema.');
-                        setIsEditingLinkedGame(false);
-                      }}
-                      style={{ alignSelf: 'flex-start', marginTop: '6px' }}
-                    >
-                      💾 Guardar Cambios del Juego
-                    </Button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className={styles.inlineCreateBox}>
-                <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre del Modelo / Juego *</label>
-                <input
-                  type="text"
-                  placeholder="Ej. Resbaladilla Acero Inox..."
-                  value={newGameName}
-                  onChange={(e) => setNewGameName(e.target.value)}
-                />
-
-                <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginTop: '4px', marginBottom: '2px' }}>
-                  Áreas de Manufactura Requeridas:
-                </label>
-                <div className={styles.areasGridPills}>
-                  {dynamicAreas.map((a) => {
-                    const isSelected = newGameAreas.includes(a.id);
-                    return (
-                      <button
-                        key={a.id}
-                        type="button"
-                        className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
-                        onClick={() => handleToggleInspectorGameArea(a.id)}
-                      >
-                        {isSelected ? '✓' : '＋'} {a.name}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {newGameAreas.length > 0 && (
-                  <div className={styles.areaTargetsList}>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>
-                      Metas de piezas por área:
-                    </label>
-                    {newGameAreas.map((areaId) => {
-                      const aName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
-                      return (
-                        <div key={areaId} className={styles.areaTargetItem}>
-                          <span>🏭 {aName}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <input
-                              type="number"
-                              min="1"
-                              style={{ width: '70px', padding: '3px 6px', fontSize: '12px' }}
-                              value={newGameTargets[areaId] ?? 10}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNewGameTargets((prev) => ({ ...prev, [areaId]: val }));
-                              }}
-                            />
-                            <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>pzas</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <Button variant="primary" size="sm" onClick={handleQuickCreateGame} style={{ alignSelf: 'flex-start', marginTop: '4px' }}>
-                  💾 Guardar y Asignar
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* 🏭 Área Asignada */}
-          <div className={styles.field}>
-            <label>🏭 Área Asignada</label>
+            <label>Tipo de Recurso</label>
             <select
-              value={node.areaId || ''}
+              value={node.draftFields?.resourceType || 'imagen'}
               disabled={!canEditDiagram}
-              onChange={(e) => updateBlockField('areaId', e.target.value)}
+              onChange={(e) => updateDraftField(node.id, 'resourceType', e.target.value)}
             >
-              <option value="">Seleccionar área...</option>
-              <optgroup label="🏭 Áreas de manufactura">
-                {dynamicAreas.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </optgroup>
-              <optgroup label="✏️ Otras áreas">
-                {NON_PRODUCTION_AREAS.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </optgroup>
+              <option value="imagen">🖼️ Imagen / Fotografía / Render</option>
+              <option value="documento">📄 Documento / Plano PDF</option>
+              <option value="link">🔗 Enlace Web (Drive, Figma, Cloud)</option>
+              <option value="modelo">🎬 Modelo 3D / CAD (.step, .skp, .dwg)</option>
             </select>
           </div>
 
-          {/* 👷 Colaborador Responsable */}
+          {/* URL o Enlace Externo */}
           <div className={styles.field}>
-            <label>👷 Colaborador Responsable</label>
-            <select
-              value={node.operarioId || ''}
+            <label>
+              {(node.draftFields?.resourceType || 'imagen') === 'link' ? '🔗 URL del Enlace *' : '🔗 URL Externa o en la Nube'}
+            </label>
+            <input
+              type="text"
+              value={node.draftFields?.url || ''}
               disabled={!canEditDiagram}
-              onChange={(e) => updateBlockField('operarioId', e.target.value)}
-            >
-              <option value="">Sin asignar (o conectar por cable)</option>
-              {operarios.map((o) => {
-                const areaName = dynamicAreas.find((a) => a.id === o.currentArea)?.name || o.currentArea;
-                return (
-                  <option key={o.id} value={o.id}>{o.name} — {areaName}</option>
-                );
-              })}
-            </select>
+              placeholder="https://drive.google.com/... o https://figma.com/..."
+              onChange={(e) => updateDraftField(node.id, 'url', e.target.value)}
+            />
+          </div>
+
+          {/* Subir Archivo Local */}
+          {canEditDiagram && (node.draftFields?.resourceType || 'imagen') !== 'link' && (
+            <div className={styles.field}>
+              <label>📁 Cargar / Cambiar Archivo</label>
+              <input
+                type="file"
+                accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      updateDraftField(node.id, 'fileData', {
+                        name: file.name,
+                        size: file.size,
+                        type: file.type,
+                        dataUrl: reader.result,
+                      });
+                      toast.success(`📎 Archivo "${file.name}" cargado en el nodo.`);
+                    };
+                    reader.readAsDataURL(file);
+                  }
+                }}
+              />
+              {node.draftFields?.fileData && (
+                <div style={{ marginTop: '4px', fontSize: '11.5px', color: '#10b981', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>✓ {node.draftFields.fileData.name} ({Math.round(node.draftFields.fileData.size / 1024)} KB)</span>
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 'none', color: 'var(--color-alert)', cursor: 'pointer', fontSize: '12px' }}
+                    onClick={() => updateDraftField(node.id, 'fileData', null)}
+                    title="Quitar archivo"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Notas Técnicas / Instrucciones */}
+          <div className={styles.field}>
+            <label>📝 Notas e Instrucciones Técnicas</label>
+            <textarea
+              rows="3"
+              value={node.draftFields?.notes || ''}
+              disabled={!canEditDiagram}
+              placeholder="Especificaciones, cotas críticas, instrucciones de ensamble..."
+              onChange={(e) => updateDraftField(node.id, 'notes', e.target.value)}
+            />
+          </div>
+
+          {/* Estado de Asignación / Conexión por cable */}
+          <div style={{ marginTop: '10px' }}>
+            <label style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', display: 'block', marginBottom: '4px' }}>
+              🔌 Conexión en el Diagrama
+            </label>
             {(() => {
-              const colaboradorNode = getConnectedColaboradorNode?.(node.id);
-              const directOperario = operarios.find((o) => o.id === node.operarioId);
-              const currentResponsable = directOperario?.name || (colaboradorNode ? nodeTitle(colaboradorNode) : null);
-              if (currentResponsable && canEditDiagram && (node.activityIds || []).length > 0) {
+              const connectedEdge = edges.find(
+                (e) =>
+                  (e.from === node.id && (findNode(e.to)?.type === 'actividad' || findNode(e.to)?.type === 'proyecto')) ||
+                  (e.to === node.id && (findNode(e.from)?.type === 'actividad' || findNode(e.from)?.type === 'proyecto'))
+              );
+              const targetNode = connectedEdge
+                ? findNode(findNode(connectedEdge.from)?.type === 'actividad' || findNode(connectedEdge.from)?.type === 'proyecto' ? connectedEdge.from : connectedEdge.to)
+                : null;
+
+              if (targetNode) {
                 return (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleReassignBlockActivities?.(colaboradorNode)}
-                    style={{ marginTop: '6px', width: '100%', fontSize: '11px' }}
-                  >
-                    🔗 Reasignar {(node.activityIds || []).length} actividades a {currentResponsable}
-                  </Button>
+                  <div style={{ padding: '8px 10px', background: 'rgba(37, 99, 235, 0.08)', borderRadius: '6px', border: '1px solid rgba(37, 99, 235, 0.25)', fontSize: '12px', color: 'var(--color-dark)' }}>
+                    <strong>{targetNode.type === 'proyecto' ? '🗂️ Asignado al Proyecto:' : '📌 Asignado a la Actividad:'}</strong>
+                    <div style={{ marginTop: '2px', fontWeight: 600, color: 'var(--color-primary)' }}>{nodeTitle(targetNode)}</div>
+                  </div>
                 );
               }
-              return null;
+              return (
+                <div style={{ padding: '8px 10px', background: 'rgba(255, 255, 255, 0.04)', borderRadius: '6px', border: '1px dashed var(--color-gray-300)', fontSize: '11.5px', color: 'var(--color-gray-500)' }}>
+                  💡 Arrastra un cable desde este nodo hasta una <strong>Actividad</strong> o <strong>Proyecto</strong> para vincularlo directamente.
+                </div>
+              );
             })()}
           </div>
 
-          {/* 📌 Actividades del Bloque */}
-          <div style={{ marginTop: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <p className={styles.inspectorEyebrow} style={{ margin: 0 }}>
-                Actividades ({(node.activityIds || []).length})
-              </p>
-              {canEditDiagram && (
-                <Button variant="primary" size="sm" onClick={openBlockActivityForm}>
-                  ➕ Nueva Actividad
-                </Button>
-              )}
-            </div>
-
-            {(node.activityIds || []).length === 0 ? (
-              <span className={styles.emptyConns}>Sin actividades agregadas en este nodo.</span>
-            ) : (
-              <div className={styles.areaStatusList}>
-                {(node.activityIds || []).map((actId) => {
-                  const act = actividades.find((a) => a.id === actId);
-                  if (!act) return null;
-                  const responsable = operarios.find((o) => o.id === act.operarioId)?.name;
-                  return (
-                    <div key={actId} className={styles.areaStatusRow}>
-                      <strong>📌 {act.title}</strong>
-                      <div className={styles.areaStatusMeta}>
-                        <span>{act.status}</span>
-                        <span>· {act.priority}</span>
-                        {responsable && <span>· 👷 {responsable}</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          {/* Botón para Abrir Vista Previa */}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setPreviewResourceModal({
+                isOpen: true,
+                title: nodeTitle(node),
+                resourceType: node.draftFields?.resourceType || 'imagen',
+                url: node.draftFields?.url || '',
+                fileData: node.draftFields?.fileData || null,
+                notes: node.draftFields?.notes || '',
+              });
+            }}
+            style={{ width: '100%', marginTop: '12px' }}
+          >
+            🔍 Ver en Pantalla Completa / Descargar
+          </Button>
         </>
       )}
 
-      {!node.draft && !entity && node.type !== 'bloque' && (
+      {!node.draft && !entity && node.type !== 'recurso' && (
         <p style={{ fontSize: '12.5px', color: 'var(--color-alert)' }}>Este registro ya no existe.</p>
       )}
 
