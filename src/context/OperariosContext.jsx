@@ -677,20 +677,30 @@ export const OperariosProvider = ({ children }) => {
     }
   }, [operarios, user]);
 
-  /**
-   * Edita el nombre de un colaborador ya existente (corregir un error de captura, por
-   * ejemplo). El área de origen/actual, horario y estado tienen sus propios flujos
-   * dedicados (préstamo/cambio de área, jornada, disponibilidad) — esto solo toca el
-   * nombre, para no saltarse esas validaciones/autorizaciones desde una edición directa.
-   */
-  const updateOperario = useCallback(async (operarioId, { name }) => {
+  const updateOperario = useCallback(async (operarioId, updates = {}) => {
     if (!db) return { ok: false, error: 'Firestore no inicializado' };
-    const trimmedName = (name || '').trim();
-    if (!trimmedName) return { ok: false, error: 'El nombre es obligatorio.' };
+    const patch = {};
+    if (updates.name !== undefined) {
+      const trimmed = (updates.name || '').trim();
+      if (!trimmed) return { ok: false, error: 'El nombre es obligatorio.' };
+      patch.name = trimmed;
+    }
+    if (updates.puesto !== undefined) {
+      patch.puesto = updates.puesto;
+    }
+    if (updates.homeArea !== undefined) {
+      patch.homeArea = updates.homeArea;
+      if (updates.currentArea === undefined) {
+        patch.currentArea = updates.homeArea;
+      }
+    }
+    if (updates.currentArea !== undefined) {
+      patch.currentArea = updates.currentArea;
+    }
 
     try {
-      await updateDoc(doc(db, 'operarios', operarioId), { name: trimmedName });
-      logAudit({ user, module: 'operarios', action: 'Editó los datos de un operario', details: `${operarioId} → ${trimmedName}` });
+      await updateDoc(doc(db, 'operarios', operarioId), patch);
+      logAudit({ user, module: 'operarios', action: 'Editó los datos de un operario', details: `${operarioId} → ${JSON.stringify(patch)}` });
       return { ok: true };
     } catch (error) {
       console.error('Error al editar operario:', error);

@@ -61,7 +61,9 @@ export const resolveAreaId = (rawValue, catalog = DEFAULT_AREAS) => {
   if (/costura/i.test(normalized)) return 'costura-acc'; // Fallback a accesorios si no es colchoneta
   if (/almacen/i.test(normalized)) return 'almacen';
   if (/mantenimiento|pintura/i.test(normalized)) return 'mantenimiento';
-  if (/terminado|pt|empaque/i.test(normalized)) return 'producto-terminado';
+  if (/arqui/i.test(normalized)) return 'arquitectura';
+  if (/diseno|diseño/i.test(normalized)) return 'diseno';
+  if (/supervis/i.test(normalized)) return 'supervision';
 
   const match = catalog.find(
     (area) => normalize(area.id) === normalized || normalize(area.name) === normalized

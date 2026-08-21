@@ -13,6 +13,7 @@
  * @constant
  */
 export const NON_PRODUCTION_AREAS = [
-  { id: 'diseno', name: 'Diseño' },
-  { id: 'arquitectura', name: 'Arquitectura' },
+  { id: 'arquitectura', name: 'Arquitectura', icon: '📐', type: 'tecnica' },
+  { id: 'diseno', name: 'Diseño', icon: '✏️', type: 'tecnica' },
+  { id: 'supervision', name: 'Supervisión', icon: '📋', type: 'supervision' },
 ];

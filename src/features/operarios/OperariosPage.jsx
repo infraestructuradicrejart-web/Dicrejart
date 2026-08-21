@@ -23,7 +23,7 @@ import useAuth from '../../hooks/useAuth';
 import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import { ROLE_TYPE_LABELS } from '../../data/usersData';
-import { PUESTO_LABELS, PUESTO_ICONS, PUESTO_BADGE_VARIANT, PUESTO_OPTIONS, DESIGN_PUESTOS } from '../../data/puestoConfig';
+import { PUESTO_LABELS, PUESTO_ICONS, PUESTO_BADGE_VARIANT, PUESTO_OPTIONS, DESIGN_PUESTOS, PUESTO_DEFAULT_AREA } from '../../data/puestoConfig';
 import { ESTADO_LABELS, ESTADO_ICONS, ESTADO_BADGE_VARIANT, ESTADO_OPTIONS } from '../../data/estadoConfig';
 import useConfig from '../../hooks/useConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
@@ -92,6 +92,7 @@ const OperariosPage = () => {
 
   const fileInputRef = useRef(null);
   const [areaFilter, setAreaFilter] = useState('todas');
+  const [puestoFilter, setPuestoFilter] = useState('todos');
   const [estadoFilter, setEstadoFilter] = useState('todos');
   const [nameSearch, setNameSearch] = useState('');
   const [sortOrder, setSortOrder] = useState('nombre-asc');
@@ -298,8 +299,49 @@ const OperariosPage = () => {
     fileInputRef.current?.click();
   };
 
+  const allSelectableAreas = useMemo(() => {
+    const technical = NON_PRODUCTION_AREAS.map((a) => ({
+      value: a.id,
+      label: `${a.icon || '🏢'} ${a.name} (${a.type === 'supervision' ? 'Supervisión' : 'Oficina Técnica'})`,
+    }));
+    const factory = dynamicAreas
+      .filter((a) => !NON_PRODUCTION_AREAS.some((np) => np.id === a.id))
+      .map((a) => ({
+        value: a.id,
+        label: `🏭 ${a.name}`,
+      }));
+    return [
+      { value: '', label: 'Selecciona un área...' },
+      ...technical,
+      ...factory,
+    ];
+  }, [dynamicAreas]);
+
+  const allFilterAreas = useMemo(() => {
+    const technical = NON_PRODUCTION_AREAS.map((a) => ({
+      value: a.id,
+      label: `${a.icon || '🏢'} ${a.name}`,
+    }));
+    const factory = dynamicAreas
+      .filter((a) => !NON_PRODUCTION_AREAS.some((np) => np.id === a.id))
+      .map((a) => ({
+        value: a.id,
+        label: `🏭 ${a.name}`,
+      }));
+    return [
+      { value: 'todas', label: 'Todas las Áreas' },
+      ...technical,
+      ...factory,
+    ];
+  }, [dynamicAreas]);
+
   const handleOpenAddModal = () => {
-    setAddModal({ isOpen: true, name: '', areaId: dynamicAreas[0]?.id || '', puesto: 'operario' });
+    setAddModal({
+      isOpen: true,
+      name: '',
+      areaId: PUESTO_DEFAULT_AREA.operario || dynamicAreas[0]?.id || 'herreria',
+      puesto: 'operario',
+    });
   };
 
   const handleCloseAddModal = () => {
@@ -307,15 +349,13 @@ const OperariosPage = () => {
   };
 
   /**
-   * Al cambiar el Puesto, el área se ajusta automáticamente: Diseño/Arquitectura solo
-   * pueden pertenecer al área "Diseño" (única área no productiva hoy), mientras que
-   * Operario de Piso vuelve a ofrecer las áreas de manufactura.
+   * Al cambiar el Puesto, sugiere el área predeterminada correspondiente
    */
   const handleAddModalPuestoChange = (puesto) => {
     setAddModal((prev) => ({
       ...prev,
       puesto,
-      areaId: DESIGN_PUESTOS.includes(puesto) ? 'diseno' : (dynamicAreas[0]?.id || ''),
+      areaId: PUESTO_DEFAULT_AREA[puesto] || prev.areaId || dynamicAreas[0]?.id || 'herreria',
     }));
   };
 
@@ -333,20 +373,30 @@ const OperariosPage = () => {
   };
 
   const handleOpenEditModal = (op) => {
-    setEditModal({ isOpen: true, operario: op, name: op.name });
+    setEditModal({
+      isOpen: true,
+      operario: op,
+      name: op.name,
+      puesto: op.puesto || 'operario',
+      homeArea: op.homeArea || op.currentArea || 'herreria',
+    });
   };
 
   const handleCloseEditModal = () => {
-    setEditModal({ isOpen: false, operario: null, name: '' });
+    setEditModal({ isOpen: false, operario: null, name: '', puesto: 'operario', homeArea: '' });
   };
 
   const handleSubmitEditOperario = async (e) => {
     e.preventDefault();
     setIsEditingOperario(true);
-    const res = await updateOperario(editModal.operario.id, { name: editModal.name });
+    const res = await updateOperario(editModal.operario.id, {
+      name: editModal.name.trim(),
+      puesto: editModal.puesto,
+      homeArea: editModal.homeArea,
+    });
     setIsEditingOperario(false);
     if (res.ok) {
-      toast.success('✅ Datos del operario actualizados.');
+      toast.success('✅ Datos del colaborador actualizados.');
       handleCloseEditModal();
     } else {
       toast.danger(res.error || 'No se pudo editar el operario.');
@@ -618,7 +668,8 @@ const OperariosPage = () => {
 
   const filteredOperarios = sortOperarios(
     operarios
-      .filter((op) => (areaFilter === 'todas' ? true : op.currentArea === areaFilter))
+      .filter((op) => (areaFilter === 'todas' ? true : op.currentArea === areaFilter || op.homeArea === areaFilter))
+      .filter((op) => (puestoFilter === 'todos' ? true : op.puesto === puestoFilter))
       .filter((op) => {
         if (estadoFilter === 'todos') return true;
         if (estadoFilter === 'activo') return !op.estado?.tipo || op.estado.tipo === 'activo';
@@ -632,7 +683,7 @@ const OperariosPage = () => {
   // empezar desde la primera tanda cuando cambia el filtro de área, estado, búsqueda o el orden.
   const { visibleItems: visibleOperarios, hasMore: hasMoreOperarios, remaining: remainingOperarios, showMore: showMoreOperarios } = useProgressiveList(
     filteredOperarios,
-    { resetKey: `${areaFilter}-${estadoFilter}-${nameSearch}-${sortOrder}` }
+    { resetKey: `${areaFilter}-${puestoFilter}-${estadoFilter}-${nameSearch}-${sortOrder}` }
   );
 
   const prestadosCount = operarios.filter((op) => op.currentArea !== op.homeArea).length;
@@ -999,11 +1050,6 @@ const OperariosPage = () => {
             <h3 className={styles.sectionTitle}>Padrón de Operarios</h3>
             <div className={styles.filtersGroup}>
               <div className={styles.filterWrapper} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                {/* Select.jsx pone su etiqueta ARRIBA de la caja (empujándola hacia abajo);
-                    el label flotante de Input.jsx vive DENTRO de la caja, así que usar
-                    Input con label="" desalineaba las dos cajas. Se replica manualmente la
-                    misma etiqueta/espaciado de Select.module.css para que ambas cajas
-                    queden a la misma altura. */}
                 <label style={{ fontSize: 'var(--body-size)', color: 'var(--color-gray-600)' }}>Buscar por Nombre</label>
                 <Input
                   placeholder="Ej: Juan Pérez..."
@@ -1014,12 +1060,20 @@ const OperariosPage = () => {
               </div>
               <div className={styles.filterWrapper}>
                 <Select
-                  label="Filtrar por Área Actual"
+                  label="Filtrar por Área"
                   value={areaFilter}
                   onChange={(e) => setAreaFilter(e.target.value)}
+                  options={allFilterAreas}
+                />
+              </div>
+              <div className={styles.filterWrapper}>
+                <Select
+                  label="Filtrar por Puesto"
+                  value={puestoFilter}
+                  onChange={(e) => setPuestoFilter(e.target.value)}
                   options={[
-                    { value: 'todas', label: 'Todas las Áreas' },
-                    ...dynamicAreas.map((a) => ({ value: a.id, label: a.name })),
+                    { value: 'todos', label: 'Todos los Puestos' },
+                    ...PUESTO_OPTIONS,
                   ]}
                 />
               </div>
@@ -1628,28 +1682,15 @@ const OperariosPage = () => {
             />
           </div>
 
-          {DESIGN_PUESTOS.includes(addModal.puesto) ? (
-            <div className={styles.formGroup}>
-              <label className={styles.label}>Área</label>
-              <input type="text" className={styles.textInputDisabled} value="Diseño" disabled />
-              <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: 'var(--space-1)' }}>
-                El departamento de Diseño no forma parte de las áreas de manufactura.
-              </p>
-            </div>
-          ) : (
-            <div className={styles.formGroup}>
-              <Select
-                label="Área de Origen"
-                value={addModal.areaId}
-                onChange={(e) => setAddModal((prev) => ({ ...prev, areaId: e.target.value }))}
-                required
-                options={[
-                  { value: '', label: 'Selecciona...' },
-                  ...dynamicAreas.map((a) => ({ value: a.id, label: a.name })),
-                ]}
-              />
-            </div>
-          )}
+          <div className={styles.formGroup}>
+            <Select
+              label="Área de Asignación / Origen"
+              value={addModal.areaId}
+              onChange={(e) => setAddModal((prev) => ({ ...prev, areaId: e.target.value }))}
+              required
+              options={allSelectableAreas}
+            />
+          </div>
 
           <div className={styles.modalActions} style={{ marginTop: 'var(--space-4)' }}>
             <Button type="button" variant="secondary" onClick={handleCloseAddModal}>
@@ -1663,7 +1704,7 @@ const OperariosPage = () => {
       </Modal>
 
       {/* MODAL: EDITAR DATOS DE UN OPERARIO */}
-      <Modal isOpen={editModal.isOpen} onClose={handleCloseEditModal} title="✏️ Editar Operario">
+      <Modal isOpen={editModal.isOpen} onClose={handleCloseEditModal} title="✏️ Editar Colaborador">
         <form onSubmit={handleSubmitEditOperario}>
           <div className={styles.formGroup}>
             <label className={styles.label}>Nombre Completo</label>
@@ -1678,8 +1719,35 @@ const OperariosPage = () => {
             />
           </div>
 
+          <div className={styles.formGroup}>
+            <Select
+              label="Puesto"
+              value={editModal.puesto}
+              onChange={(e) => {
+                const newPuesto = e.target.value;
+                setEditModal((prev) => ({
+                  ...prev,
+                  puesto: newPuesto,
+                  homeArea: PUESTO_DEFAULT_AREA[newPuesto] || prev.homeArea,
+                }));
+              }}
+              required
+              options={PUESTO_OPTIONS}
+            />
+          </div>
+
+          <div className={styles.formGroup}>
+            <Select
+              label="Área de Asignación"
+              value={editModal.homeArea}
+              onChange={(e) => setEditModal((prev) => ({ ...prev, homeArea: e.target.value }))}
+              required
+              options={allSelectableAreas}
+            />
+          </div>
+
           <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: 'var(--space-2)' }}>
-            El área y disponibilidad se editan desde sus propios botones ("🔁 Mover", "🩺 Estado"). La jornada y las horas extra se gestionan desde la página de Producción del área del colaborador.
+            La disponibilidad temporal se gestiona desde el botón "🩺 Estado". La jornada y las horas extra se gestionan desde la página de Producción del área.
           </p>
 
           <div className={styles.modalActions} style={{ marginTop: 'var(--space-4)' }}>

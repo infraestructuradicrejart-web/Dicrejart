@@ -451,12 +451,193 @@ const EditorVisualPage = ({ standalone = false }) => {
   }, [lienzoActivoId, lienzosList, proyectos, worldOffset, canEditDiagram, user]);
 
   /**
+   * Recorre todas las conexiones existentes en el lienzo y sincroniza automáticamente
+   * en Firestore cualquier actividad, proyecto o juego que esté conectado pero que aún
+   * no tenga grabado su responsable, área o proyecto en la base de datos.
+   */
+  const handleReconcileCanvasAssignments = useCallback(async (showNotification = true) => {
+    let syncedCount = 0;
+    for (const edge of edges) {
+      const fromNode = findNode(edge.from);
+      const toNode = findNode(edge.to);
+      if (!fromNode || !toNode) continue;
+
+      const colabNode = fromNode.type === 'colaborador' ? fromNode : toNode.type === 'colaborador' ? toNode : null;
+      const actNode = fromNode.type === 'actividad' ? fromNode : toNode.type === 'actividad' ? toNode : null;
+      const blockNode = fromNode.type === 'bloque' ? fromNode : toNode.type === 'bloque' ? toNode : null;
+      const projNode = fromNode.type === 'proyecto' ? fromNode : toNode.type === 'proyecto' ? toNode : null;
+      const areaNode = fromNode.type === 'area' ? fromNode : toNode.type === 'area' ? toNode : null;
+      const gameNode = fromNode.type === 'juego' ? fromNode : toNode.type === 'juego' ? toNode : null;
+
+      // 1. Colaborador ↔ Actividad
+      if (colabNode && actNode && actNode.refId) {
+        const act = actividades.find((a) => a.id === actNode.refId);
+        if (act && act.operarioId !== colabNode.refId) {
+          try {
+            await updateDoc(doc(db, 'actividades', act.id), {
+              operarioId: colabNode.refId,
+              updatedAt: new Date().toISOString(),
+            });
+            updateActividad(act.id, { operarioId: colabNode.refId });
+            syncedCount++;
+          } catch (e) {}
+        }
+      }
+
+      // 2. Colaborador ↔ Bloque (sincronizar todas las actividades del bloque)
+      if (colabNode && blockNode && (blockNode.activityIds || []).length > 0) {
+        for (const actId of blockNode.activityIds) {
+          const act = actividades.find((a) => a.id === actId);
+          if (act && act.operarioId !== colabNode.refId) {
+            try {
+              await updateDoc(doc(db, 'actividades', act.id), {
+                operarioId: colabNode.refId,
+                updatedAt: new Date().toISOString(),
+              });
+              updateActividad(act.id, { operarioId: colabNode.refId });
+              syncedCount++;
+            } catch (e) {}
+          }
+        }
+      }
+
+      // 3. Área ↔ Actividad
+      if (areaNode && actNode && actNode.refId) {
+        const areaId = areaNode.refId;
+        const act = actividades.find((a) => a.id === actNode.refId);
+        if (act && areaId && act.areaId !== areaId) {
+          try {
+            await updateDoc(doc(db, 'actividades', act.id), {
+              areaId,
+              updatedAt: new Date().toISOString(),
+            });
+            updateActividad(act.id, { areaId });
+            syncedCount++;
+          } catch (e) {}
+        }
+      }
+
+      // 4. Área ↔ Bloque
+      if (areaNode && blockNode && (blockNode.activityIds || []).length > 0) {
+        const areaId = areaNode.refId;
+        if (areaId) {
+          for (const actId of blockNode.activityIds) {
+            const act = actividades.find((a) => a.id === actId);
+            if (act && act.areaId !== areaId) {
+              try {
+                await updateDoc(doc(db, 'actividades', act.id), {
+                  areaId,
+                  updatedAt: new Date().toISOString(),
+                });
+                updateActividad(act.id, { areaId });
+                syncedCount++;
+              } catch (e) {}
+            }
+          }
+        }
+      }
+
+      // 5. Proyecto ↔ Actividad
+      if (projNode && actNode && actNode.refId) {
+        const projId = projNode.refId;
+        const projEntity = getLinkedEntity(projNode);
+        const projName = projEntity?.name || nodeTitle(projNode);
+        const act = actividades.find((a) => a.id === actNode.refId);
+        if (act && projId && act.projectId !== projId) {
+          try {
+            await updateDoc(doc(db, 'actividades', act.id), {
+              projectId: projId,
+              projectName: projName,
+              updatedAt: new Date().toISOString(),
+            });
+            updateActividad(act.id, { projectId: projId, projectName: projName });
+            syncedCount++;
+          } catch (e) {}
+        }
+      }
+
+      // 6. Proyecto ↔ Bloque
+      if (projNode && blockNode && (blockNode.activityIds || []).length > 0) {
+        const projId = projNode.refId;
+        const projEntity = getLinkedEntity(projNode);
+        const projName = projEntity?.name || nodeTitle(projNode);
+        if (projId) {
+          for (const actId of blockNode.activityIds) {
+            const act = actividades.find((a) => a.id === actId);
+            if (act && act.projectId !== projId) {
+              try {
+                await updateDoc(doc(db, 'actividades', act.id), {
+                  projectId: projId,
+                  projectName: projName,
+                  updatedAt: new Date().toISOString(),
+                });
+                updateActividad(act.id, { projectId: projId, projectName: projName });
+                syncedCount++;
+              } catch (e) {}
+            }
+          }
+        }
+      }
+
+      // 7. Juego ↔ Actividad
+      if (gameNode && actNode && actNode.refId) {
+        const gameId = gameNode.refId;
+        const act = actividades.find((a) => a.id === actNode.refId);
+        if (act && gameId && act.gameId !== gameId) {
+          try {
+            await updateDoc(doc(db, 'actividades', act.id), {
+              gameId,
+              updatedAt: new Date().toISOString(),
+            });
+            updateActividad(act.id, { gameId });
+            syncedCount++;
+          } catch (e) {}
+        }
+      }
+
+      // 8. Juego ↔ Bloque
+      if (gameNode && blockNode && (blockNode.activityIds || []).length > 0) {
+        const gameId = gameNode.refId;
+        if (gameId) {
+          for (const actId of blockNode.activityIds) {
+            const act = actividades.find((a) => a.id === actId);
+            if (act && act.gameId !== gameId) {
+              try {
+                await updateDoc(doc(db, 'actividades', act.id), {
+                  gameId,
+                  updatedAt: new Date().toISOString(),
+                });
+                updateActividad(act.id, { gameId });
+                syncedCount++;
+              } catch (e) {}
+            }
+          }
+        }
+      }
+    }
+
+    if (showNotification) {
+      if (syncedCount > 0) {
+        toast.success(`⚡ Sincronización completa: ${syncedCount} asignación(es) actualizadas en base de datos.`);
+      } else {
+        toast.info('✅ Todas las conexiones del lienzo ya están sincronizadas con la base de datos.');
+      }
+    }
+    return syncedCount;
+  }, [edges, actividades, findNode, getLinkedEntity, nodeTitle, updateActividad, toast]);
+
+  /**
    * Guardado manual explícito por botón para dar confirmación visual al usuario
    */
-  const handleManualSaveCanvas = useCallback(() => {
+  const handleManualSaveCanvas = useCallback(async () => {
     saveToFirestore(nodes, edges, worldOffset);
-    toast.success('💾 Lienzo y conexiones guardados correctamente en la nube.');
-  }, [nodes, edges, worldOffset, saveToFirestore, toast]);
+    const count = await handleReconcileCanvasAssignments(false);
+    if (count > 0) {
+      toast.success(`💾 Lienzo guardado y ${count} asignación(es) sincronizadas en Firestore.`);
+    } else {
+      toast.success('💾 Lienzo y conexiones guardados correctamente en la nube.');
+    }
+  }, [nodes, edges, worldOffset, saveToFirestore, handleReconcileCanvasAssignments, toast]);
 
   /**
    * Crea un nuevo proyecto visual / lienzo independiente
@@ -2214,6 +2395,20 @@ const EditorVisualPage = ({ standalone = false }) => {
                   }}
                 >
                   {saveStatus === 'saving' ? '⏳ Guardando...' : '💾 Guardar Lienzo'}
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleReconcileCanvasAssignments(true)}
+                  title="Revisar todas las conexiones del diagrama y asignar automáticamente a los colaboradores, proyectos y áreas en la base de datos"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                  }}
+                >
+                  🔄 Sincronizar Asignaciones
                 </Button>
 
                 <Button
