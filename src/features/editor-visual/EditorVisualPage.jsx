@@ -14,7 +14,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import PropTypes from 'prop-types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { doc, setDoc, updateDoc, onSnapshot, collection, deleteDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../../config/firebase';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
@@ -1048,6 +1048,13 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   /** Quita un nodo del lienzo (y sus cables) — ya decidido, sin más preguntas */
   const performDeleteNode = (nodeId) => {
+    const node = findNode(nodeId);
+    if (node?.type === 'recurso') {
+      const storagePath = node.draftFields?.fileData?.storagePath;
+      if (storagePath && storage) {
+        deleteObject(ref(storage, storagePath)).catch((e) => console.warn('Archivo de Storage ya no existe o falló borrado:', e));
+      }
+    }
     const nextNodes = nodes.filter((n) => n.id !== nodeId);
     const nextEdges = edges.filter((ed) => ed.from !== nodeId && ed.to !== nodeId);
     setNodes(nextNodes);
@@ -5693,7 +5700,13 @@ const NodeInspector = ({
                     <button
                       type="button"
                       style={{ background: 'none', border: 'none', color: 'var(--color-alert, #ef4444)', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
-                      onClick={() => updateDraftField('fileData', null)}
+                      onClick={() => {
+                        const storagePath = node.draftFields?.fileData?.storagePath;
+                        if (storagePath && storage) {
+                          deleteObject(ref(storage, storagePath)).catch((e) => console.warn('No se pudo borrar archivo de Storage:', e));
+                        }
+                        updateDraftField('fileData', null);
+                      }}
                       title="Quitar archivo adjunto"
                     >
                       ✕
