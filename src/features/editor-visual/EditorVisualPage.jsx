@@ -1885,7 +1885,6 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const handleCreateNewRecursoNode = async () => {
     const title = nodeModal.newRecursoTitle.trim() || 'Ayuda Visual / Archivo';
-    const chosenType = nodeModal.newRecursoType || 'imagen';
     const url = nodeModal.newRecursoUrl.trim() || '';
     const pendingFile = nodeModal.pendingFile;
 
@@ -1907,7 +1906,6 @@ const EditorVisualPage = ({ standalone = false }) => {
       draft: false,
       draftFields: {
         title,
-        resourceType: chosenType,
         url,
         fileData: initialFileData,
         notes: nodeModal.newRecursoNotes.trim() || '',
@@ -4449,25 +4447,42 @@ const EditorVisualPage = ({ standalone = false }) => {
             <label className={styles.inlineLabel}>Título / Nombre de la Ayuda Visual *</label>
             <input
               type="text"
-              placeholder="Ej. Plano de Ensamblaje Rev 2, Render Fachada..."
+              placeholder="Ej. Plano de Ensamblaje Rev 2, Render Fachada, Modelo 3D..."
               value={nodeModal.newRecursoTitle}
               onChange={(e) => setNodeModal((prev) => ({ ...prev, newRecursoTitle: e.target.value }))}
               autoFocus
             />
 
-            <label className={styles.inlineSubLabel}>Tipo de Contenido:</label>
-            <select
-              value={nodeModal.newRecursoType}
-              onChange={(e) => setNodeModal((prev) => ({ ...prev, newRecursoType: e.target.value }))}
-            >
-              <option value="imagen">🖼️ Imagen / Fotografía / Render</option>
-              <option value="documento">📄 Documento / Plano PDF</option>
-              <option value="link">🔗 Enlace Web (Google Drive, Figma, OneDrive, Web)</option>
-              <option value="modelo">🎬 Modelo 3D / CAD (.step, .skp, .dwg, .obj)</option>
-            </select>
+            <div>
+              <label className={styles.inlineSubLabel}>📁 Cargar Archivo (Imagen, PDF, SolidWorks, Inventor, STEP, DWG):</label>
+              <input
+                type="file"
+                accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl,.sldprt,.sldasm,.slddrw,.ipt,.iam,.idw"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setNodeModal((prev) => ({
+                      ...prev,
+                      pendingFile: file,
+                      newRecursoFileData: {
+                        name: file.name,
+                        size: file.size,
+                        type: file.type,
+                        dataUrl: URL.createObjectURL(file),
+                      },
+                    }));
+                  }
+                }}
+              />
+              {nodeModal.newRecursoFileData && (
+                <div style={{ fontSize: '11.5px', color: '#10b981', fontWeight: 600, marginTop: '4px' }}>
+                  ✓ Archivo seleccionado: {nodeModal.newRecursoFileData.name} ({Math.round(nodeModal.newRecursoFileData.size / 1024)} KB)
+                </div>
+              )}
+            </div>
 
             <label className={styles.inlineSubLabel}>
-              {nodeModal.newRecursoType === 'link' ? '🔗 URL del Enlace *' : '🔗 URL Externa o de Nube (opcional)'}
+              🔗 O Pegar URL / Enlace (Google Drive, Figma, OneDrive, Web):
             </label>
             <input
               type="text"
@@ -4475,38 +4490,6 @@ const EditorVisualPage = ({ standalone = false }) => {
               value={nodeModal.newRecursoUrl}
               onChange={(e) => setNodeModal((prev) => ({ ...prev, newRecursoUrl: e.target.value }))}
             />
-
-            {nodeModal.newRecursoType !== 'link' && (
-              <div>
-                <label className={styles.inlineSubLabel}>📁 O Subir Archivo desde tu dispositivo:</label>
-                <input
-                  type="file"
-                  accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const isImg = file.type?.startsWith('image/');
-                      setNodeModal((prev) => ({
-                        ...prev,
-                        pendingFile: file,
-                        newRecursoType: isImg ? 'imagen' : file.type?.includes('pdf') ? 'documento' : prev.newRecursoType,
-                        newRecursoFileData: {
-                          name: file.name,
-                          size: file.size,
-                          type: file.type,
-                          dataUrl: URL.createObjectURL(file),
-                        },
-                      }));
-                    }
-                  }}
-                />
-                {nodeModal.newRecursoFileData && (
-                  <div style={{ fontSize: '11.5px', color: '#10b981', fontWeight: 600, marginTop: '4px' }}>
-                    ✓ Archivo seleccionado: {nodeModal.newRecursoFileData.name} ({Math.round(nodeModal.newRecursoFileData.size / 1024)} KB)
-                  </div>
-                )}
-              </div>
-            )}
 
             <div>
               <label className={styles.inlineSubLabel}>Instrucciones / Notas Técnicas (opcional)</label>
@@ -5649,26 +5632,9 @@ const NodeInspector = ({
               />
             </div>
 
-            {/* Tipo de Recurso */}
-            <div className={styles.field}>
-              <label>Tipo de Recurso</label>
-              <select
-                value={node.draftFields?.resourceType || 'imagen'}
-                disabled={!canEditDiagram}
-                onChange={(e) => updateDraftField('resourceType', e.target.value)}
-              >
-                <option value="imagen">🖼️ Imagen / Fotografía / Render</option>
-                <option value="documento">📄 Documento / Plano PDF</option>
-                <option value="link">🔗 Enlace Web (Drive, Figma, Cloud)</option>
-                <option value="modelo">🎬 Modelo 3D / CAD (.step, .skp, .dwg)</option>
-              </select>
-            </div>
-
             {/* URL o Enlace Externo */}
             <div className={styles.field}>
-              <label>
-                {(node.draftFields?.resourceType || 'imagen') === 'link' ? '🔗 URL del Enlace *' : '🔗 URL Externa o en la Nube'}
-              </label>
+              <label>🔗 URL Externa o en la Nube (Drive, Figma, Autodesk, Web)</label>
               <input
                 type="text"
                 value={node.draftFields?.url || ''}
@@ -5679,16 +5645,15 @@ const NodeInspector = ({
             </div>
 
             {/* Subir Archivo Local / Nube */}
-            {canEditDiagram && (node.draftFields?.resourceType || 'imagen') !== 'link' && (
+            {canEditDiagram && (
               <div className={styles.field}>
-                <label>📁 Cargar / Cambiar Archivo</label>
+                <label>📁 Cargar / Cambiar Archivo (Imagen, PDF, SolidWorks, Inventor, STEP, CAD)</label>
                 <input
                   type="file"
-                  accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl"
+                  accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl,.sldprt,.sldasm,.slddrw,.ipt,.iam,.idw"
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (file) {
-                      const isImg = file.type?.startsWith('image/');
                       const localBlobUrl = URL.createObjectURL(file);
 
                       // Preview inmediato local
@@ -5699,8 +5664,6 @@ const NodeInspector = ({
                         dataUrl: localBlobUrl,
                         isUploading: true,
                       });
-                      if (isImg) updateDraftField('resourceType', 'imagen');
-                      else if (file.type?.includes('pdf')) updateDraftField('resourceType', 'documento');
 
                       toast.info(`⏳ Guardando "${file.name}" en la nube...`);
 
