@@ -22,19 +22,116 @@
 
 .workspace {
   flex: 1;
-  display: flex;
-  gap: var(--space-4);
+  position: relative;
+  width: 100%;
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
-/* ---------- Rail izquierdo: paleta + leyenda ---------- */
-.rail {
-  width: 230px;
-  flex-shrink: 0;
+/* ---------- Botón Flotante Circular para Abrir Herramientas ---------- */
+.floatingTriggerBtn {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--card-bg, rgba(255, 255, 255, 0.88));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(234, 88, 12, 0.35);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12), 0 0 12px rgba(234, 88, 12, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  cursor: pointer;
+  z-index: 25;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--color-primary);
+}
+
+.floatingTriggerBtn:hover {
+  transform: scale(1.08);
+  border-color: var(--color-primary);
+  box-shadow: 0 8px 24px rgba(234, 88, 12, 0.35);
+}
+
+.floatingTriggerBtnActive {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+  transform: rotate(90deg);
+}
+
+:global([data-theme="dark"]) .floatingTriggerBtn {
+  background: rgba(20, 16, 32, 0.85);
+  border-color: rgba(234, 88, 12, 0.4);
+}
+
+/* ---------- Menú Flotante Izquierdo (Paleta / Rail Glassmorphic) ---------- */
+.floatingLeftRail {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 270px;
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  background: var(--card-bg, rgba(255, 255, 255, 0.86));
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 18px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16), 0 0 1px rgba(0, 0, 0, 0.1);
+  padding: 16px;
+  z-index: 30;
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  overflow-y: auto;
+  gap: 14px;
+}
+
+:global([data-theme="dark"]) .floatingLeftRail {
+  background: rgba(18, 14, 28, 0.88);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.floatingRailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-gray-200);
+}
+
+:global([data-theme="dark"]) .floatingRailHeader {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.floatingCloseBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-gray-100);
+  color: var(--color-gray-600);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.floatingCloseBtn:hover {
+  background: var(--color-gray-200);
+  color: var(--color-dark);
+}
+
+:global([data-theme="dark"]) .floatingCloseBtn {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-gray-300);
 }
 
 .railTitle {
@@ -44,7 +141,7 @@
   text-transform: uppercase;
   color: var(--color-gray-500);
   font-weight: 600;
-  margin: 0 0 10px 0;
+  margin: 0;
 }
 
 .palette {
@@ -79,18 +176,54 @@
 
 .inlineCreateBox {
   margin-top: 8px;
-  padding: 12px;
-  background: var(--color-gray-50);
-  border: 1px solid var(--color-gray-200);
-  border-radius: var(--radius-md);
+  padding: 14px;
+  background: var(--color-gray-50, #f8fafc);
+  border: 1.5px solid var(--color-gray-300, #cbd5e1);
+  border-radius: var(--radius-md, 8px);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 :global([data-theme="dark"]) .inlineCreateBox {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: #1e1a2f;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.inlineLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+  display: block;
+  margin-bottom: 3px;
+}
+
+:global([data-theme="dark"]) .inlineLabel {
+  color: #f8fafc;
+}
+
+.inlineSubLabel {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+  display: block;
+  margin-top: 6px;
+  margin-bottom: 3px;
+}
+
+:global([data-theme="dark"]) .inlineSubLabel {
+  color: #cbd5e1;
+}
+
+:global([data-theme="dark"]) .inlineCreateBox input,
+:global([data-theme="dark"]) .inlineCreateBox select,
+:global([data-theme="dark"]) .inlineCreateBox textarea,
+:global([data-theme="dark"]) .field input,
+:global([data-theme="dark"]) .field select,
+:global([data-theme="dark"]) .field textarea {
+  background: #141120;
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .createGrid2 {
@@ -102,42 +235,57 @@
 .areasGridPills {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .areaPill {
-  font-size: 11.5px;
-  font-weight: 500;
-  padding: 5px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--color-gray-300);
-  background: var(--color-white);
-  color: var(--color-gray-700);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 11px;
+  border-radius: 7px;
+  border: 1.5px solid #94a3b8;
+  background: #ffffff;
+  color: #0f172a;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   transition: all 0.15s ease;
+  user-select: none;
+}
+
+.areaPill:hover {
+  background: #f1f5f9;
+  border-color: var(--color-primary, #ea580c);
+  color: #0f172a;
 }
 
 .areaPillActive {
-  border-color: var(--color-primary);
-  background: rgba(234, 88, 12, 0.08);
-  color: var(--color-primary);
-  font-weight: 600;
+  border-color: var(--color-primary, #ea580c) !important;
+  background: #ffedd5 !important;
+  color: #c2410c !important;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.2);
 }
 
 :global([data-theme="dark"]) .areaPill {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.12);
-  color: var(--color-gray-300);
+  background: #252038;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+:global([data-theme="dark"]) .areaPill:hover {
+  background: #322c4a;
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #ffffff;
 }
 
 :global([data-theme="dark"]) .areaPillActive {
-  border-color: var(--color-primary);
-  background: rgba(234, 88, 12, 0.2);
-  color: #ff8a4c;
+  border-color: #ff7a18 !important;
+  background: rgba(234, 88, 12, 0.35) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 10px rgba(234, 88, 12, 0.4);
 }
 
 .areaTargetsList {
@@ -145,7 +293,7 @@
   flex-direction: column;
   gap: 6px;
   margin-top: 6px;
-  max-height: 140px;
+  max-height: 160px;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -154,16 +302,19 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 12px;
-  background: var(--color-white);
-  padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--color-gray-200);
+  font-size: 12.5px;
+  font-weight: 700;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1.5px solid #cbd5e1;
 }
 
 :global([data-theme="dark"]) .areaTargetItem {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: #252038;
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f8fafc;
 }
 
 /* ==========================================================================
@@ -299,28 +450,30 @@
 .nodeBadgesGrid {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 4px;
+  gap: 5px;
+  margin-top: 5px;
 }
 
 .nodeBadgeTag {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-gray-700);
-  background: var(--color-gray-100);
-  padding: 3px 6px;
-  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  padding: 4px 8px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 :global([data-theme="dark"]) .nodeBadgeTag {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--color-gray-300);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #f8fafc;
 }
 
 .paletteChip {
@@ -505,8 +658,13 @@
 
 /* ---------- Lienzo de Ingeniería CAD (Inventor / SolidWorks Style) ---------- */
 .canvasWrap {
-  flex: 1;
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   cursor: grab;
   background-color: var(--canvas-bg, #f8fafc);
@@ -712,7 +870,7 @@
 
 .wirePath {
   fill: none;
-  stroke-width: 2.5px;
+  stroke-width: 2.8px;
   stroke-linecap: round;
   pointer-events: stroke;
   cursor: pointer;
@@ -736,71 +894,198 @@
 }
 
 .wireGroup:hover .wirePath {
-  stroke-width: 3.8px;
+  stroke-width: 4px;
   filter: drop-shadow(0 0 6px var(--color-primary));
+}
+
+.wireGroupSelected .wireBase {
+  opacity: 0.6;
+  stroke-width: 8px;
+}
+
+.wireSelected {
+  stroke-width: 4px !important;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 12px var(--color-primary)) !important;
 }
 
 .wirePreview {
   fill: none;
   stroke: var(--color-primary);
-  stroke-width: 2.5px;
+  stroke-width: 2.8px;
   stroke-linecap: round;
-  stroke-dasharray: 6 5;
+  stroke-dasharray: 7 5;
   animation: cableDashAnim 6s linear infinite;
   pointer-events: none;
-  filter: drop-shadow(0 0 4px rgba(234, 88, 12, 0.4));
+  filter: drop-shadow(0 0 6px rgba(234, 88, 12, 0.5));
+}
+
+/* ---------- Barra Flotante de Edición de Cable Seleccionado ---------- */
+.wireToolbar {
+  position: absolute;
+  transform: translate(-50%, -130%);
+  background: var(--card-bg, rgba(255, 255, 255, 0.96));
+  border: 1.5px solid var(--color-gray-300, #cbd5e1);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+  border-radius: 24px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 50;
+  backdrop-filter: blur(14px);
+  user-select: none;
+  animation: fadeInPop 0.15s ease-out;
+}
+
+@keyframes fadeInPop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -115%) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -130%) scale(1);
+  }
+}
+
+:global([data-theme="dark"]) .wireToolbar {
+  background: rgba(26, 22, 37, 0.96);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+}
+
+.wireColorDot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wireColorDot:hover {
+  transform: scale(1.3);
+}
+
+.wireColorDotActive {
+  transform: scale(1.3);
+  box-shadow: 0 0 0 2px #ffffff, 0 0 8px rgba(0, 0, 0, 0.4);
+}
+
+.wireToolbarDivider {
+  width: 1px;
+  height: 18px;
+  background: var(--color-gray-300, #cbd5e1);
+  opacity: 0.5;
+}
+
+.wireToolbarBtn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--text-color, #0f172a);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background-color 0.15s ease;
+}
+
+:global([data-theme="dark"]) .wireToolbarBtn {
+  color: #f8fafc;
+}
+
+.wireToolbarBtn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+:global([data-theme="dark"]) .wireToolbarBtn:hover {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 /* ---------- Nodos ---------- */
 .node {
   position: absolute;
   width: 260px;
-  background: var(--color-white);
-  border: 1px solid var(--color-gray-200);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  background: var(--card-bg, #ffffff);
+  border: 1.5px solid var(--color-gray-300, #cbd5e1);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   user-select: none;
   cursor: grab;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
-.node.selected { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-.node.dragging { cursor: grabbing; box-shadow: var(--shadow-xl); z-index: 10; }
+
+:global([data-theme="dark"]) .node {
+  background: #181424;
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.node.selected {
+  outline: 2.5px solid var(--color-primary);
+  outline-offset: 2px;
+  box-shadow: 0 8px 24px rgba(234, 88, 12, 0.25);
+  border-color: var(--color-primary);
+}
+
+.node.dragging {
+  cursor: grabbing;
+  box-shadow: var(--shadow-xl);
+  z-index: 10;
+}
 
 .nodeHead {
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 8px 10px;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-radius: 10px 10px 0 0;
   background: var(--node-color);
-  color: var(--color-white);
+  color: #ffffff;
 }
-.nodeIcon { font-size: 14px; line-height: 1; flex-shrink: 0; }
+
+.nodeIcon {
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .nodeTitle {
   font-family: var(--font-heading);
-  font-size: 12.5px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 800;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .nodeBadge {
   font-family: var(--font-mono);
-  font-size: 8.5px;
-  font-weight: 700;
+  font-size: 9px;
+  font-weight: 800;
   text-transform: uppercase;
-  padding: 1px 5px;
+  padding: 2px 6px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
   flex-shrink: 0;
 }
+
 .nodeClose {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.25);
   border: none;
-  color: var(--color-white);
-  width: 17px;
-  height: 17px;
+  color: #ffffff;
+  width: 19px;
+  height: 19px;
   border-radius: var(--radius-sm);
   font-size: 11px;
   line-height: 1;
@@ -809,34 +1094,83 @@
   opacity: 0;
   transition: opacity var(--transition-fast) var(--ease-out);
 }
-.node:hover .nodeClose { opacity: 1; }
-.nodeClose:hover { background: rgba(255, 255, 255, 0.4); }
 
-.nodeBody { padding: 9px 10px 10px 10px; display: flex; flex-direction: column; gap: 5px; }
+.node:hover .nodeClose { opacity: 1; }
+.nodeClose:hover { background: rgba(255, 255, 255, 0.5); }
+
+.nodeBody {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .nodeEyebrow {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--color-gray-500);
+  color: #475569;
+  font-weight: 700;
 }
-.nodeTag { font-size: 11.5px; color: var(--color-gray-600); line-height: 1.35; }
+
+:global([data-theme="dark"]) .nodeEyebrow {
+  color: #cbd5e1;
+}
+
+.nodeTag {
+  font-size: 12.5px;
+  color: #0f172a;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+:global([data-theme="dark"]) .nodeTag {
+  color: #f8fafc;
+}
 
 .port {
   position: absolute;
-  top: 50%;
-  width: 13px;
-  height: 13px;
-  margin-top: -6.5px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  background: var(--color-white);
-  border: 2.5px solid var(--node-color);
+  background: var(--color-white, #ffffff);
+  border: 2.5px solid var(--node-color, #ea580c);
   cursor: crosshair;
-  z-index: 3;
+  z-index: 5;
+  transition: transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
-.port:hover { transform: scale(1.25); }
-.portIn { left: -6.5px; }
-.portOut { right: -6.5px; }
+
+.port:hover {
+  transform: scale(1.4);
+  background: var(--node-color, #ea580c);
+  box-shadow: 0 0 10px var(--node-color, #ea580c);
+}
+
+.portIn {
+  top: 50%;
+  left: -7px;
+  margin-top: -7px;
+}
+
+.portOut {
+  top: 50%;
+  right: -7px;
+  margin-top: -7px;
+}
+
+.portTop {
+  top: -7px;
+  left: 50%;
+  margin-left: -7px;
+}
+
+.portBottom {
+  bottom: -7px;
+  left: 50%;
+  margin-left: -7px;
+}
 
 /* ---------- Bloque: lista de actividades desplegable sobre el propio nodo ---------- */
 /* Se cuelga como overlay (position: absolute, fuera del flujo normal) para que no
@@ -948,11 +1282,35 @@
 }
 .blockDropdownModelBtn:hover { opacity: 0.85; }
 
-/* ---------- Inspector ---------- */
+/* ---------- Inspector Flotante Derecho (Glassmorphic) ---------- */
 .inspector {
-  width: 280px;
-  flex-shrink: 0;
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 320px;
+  max-height: calc(100% - 32px);
   overflow-y: auto;
+  background: var(--card-bg, rgba(255, 255, 255, 0.88));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 18px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16), 0 0 1px rgba(0, 0, 0, 0.1);
+  padding: 16px;
+  z-index: 30;
+}
+
+:global([data-theme="dark"]) .inspector {
+  background: rgba(18, 14, 28, 0.9);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.inspectorHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
 .inspectorEyebrow {
@@ -1026,34 +1384,367 @@
 /* ---------- Picker (buscar existente / crear nuevo) ---------- */
 .pickerSearch {
   width: 100%;
+  box-sizing: border-box;
   font-family: var(--font-family);
   font-size: 13.5px;
-  color: var(--color-dark);
-  background: var(--color-gray-50);
-  border: 1px solid var(--color-gray-200);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  margin-bottom: 10px;
+  color: var(--color-dark, #0f172a);
+  background: var(--input-bg, #ffffff);
+  border: 1.5px solid var(--color-gray-300, #cbd5e1);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  transition: all 0.15s ease;
 }
-.pickerSearch:focus { outline: none; border-color: var(--color-primary); }
 
-.pickerList { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+:global([data-theme="dark"]) .pickerSearch {
+  background: #181528;
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f8fafc;
+}
+
+.pickerSearch:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.2);
+}
+
+.pickerList {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .pickerItem {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   text-align: left;
   font-family: var(--font-family);
   font-size: 13px;
-  color: var(--color-dark);
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 9px 10px;
+  color: var(--color-dark, #0f172a);
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--color-gray-200, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 14px;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
-.pickerItem:hover { background: var(--color-gray-50); }
-.pickerBadge { margin-left: auto; font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; color: var(--color-gray-400); }
-.pickerCreate { color: var(--color-primary); font-weight: 600; }
-.pickerEmpty { padding: 16px; text-align: center; font-size: 12.5px; color: var(--color-gray-400); }
+
+:global([data-theme="dark"]) .pickerItem {
+  background: rgba(30, 27, 46, 0.6);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
+}
+
+.pickerItem:hover {
+  background: var(--color-gray-100, #f1f5f9);
+  border-color: var(--color-primary);
+  transform: translateX(2px);
+}
+
+:global([data-theme="dark"]) .pickerItem:hover {
+  background: rgba(45, 40, 70, 0.9);
+  border-color: var(--color-primary);
+}
+
+.pickerBadge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  color: var(--color-gray-400);
+}
+
+.pickerCreate {
+  color: var(--color-primary);
+  font-weight: 700;
+  border: 1.5px dashed var(--color-primary);
+}
+
+.pickerEmpty {
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-gray-400);
+}
+
+/* ---------- Botones de Creación de Nodos en Barra Lateral ---------- */
+.paletteNodeBtn {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1.5px solid rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-md, 10px);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+:global([data-theme="dark"]) .paletteNodeBtn {
+  background: rgba(30, 27, 46, 0.75);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.paletteNodeBtn:hover {
+  transform: translateY(-2px);
+  border-color: var(--btn-theme, var(--color-primary));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+:global([data-theme="dark"]) .paletteNodeBtn:hover {
+  background: rgba(45, 40, 70, 0.95);
+}
+
+.paletteNodeBtn strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-color, #0f172a);
+}
+
+:global([data-theme="dark"]) .paletteNodeBtn strong {
+  color: #f8fafc;
+}
+
+.paletteNodeBtn small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--color-gray-500);
+}
+
+/* ---------- Estilos de Formularios y Modales de Creación de Nodos ---------- */
+.nodeModalTabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1.5px solid var(--color-gray-200, #e2e8f0);
+  padding-bottom: 10px;
+}
+
+:global([data-theme="dark"]) .nodeModalTabs {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.tabBtn {
+  background: transparent;
+  border: 1.5px solid transparent;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-gray-500, #64748b);
+  cursor: pointer;
+  border-radius: var(--radius-md, 8px);
+  transition: all 0.18s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+:global([data-theme="dark"]) .tabBtn {
+  color: #94a3b8;
+}
+
+.tabBtn:hover {
+  color: var(--text-color, #0f172a);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:global([data-theme="dark"]) .tabBtn:hover {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tabBtnActive {
+  color: #ffffff !important;
+  background: var(--color-primary, #ea580c) !important;
+  border-color: var(--color-primary, #ea580c) !important;
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.35);
+}
+
+.inlineCreateBox {
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--color-gray-200, #e2e8f0);
+  border-radius: var(--radius-lg, 12px);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+
+:global([data-theme="dark"]) .inlineCreateBox {
+  background: rgba(24, 21, 40, 0.7);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.createGrid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 540px) {
+  .createGrid2 {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+.inlineLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-dark, #0f172a);
+  margin-bottom: 6px;
+}
+
+:global([data-theme="dark"]) .inlineLabel {
+  color: #f8fafc;
+}
+
+.inlineSubLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-gray-600, #475569);
+  margin: 12px 0 6px 0;
+}
+
+:global([data-theme="dark"]) .inlineSubLabel {
+  color: #cbd5e1;
+}
+
+/* Campos de entrada genéricos dentro del modal y cajas de creación */
+.inlineCreateBox input[type="text"],
+.inlineCreateBox input[type="date"],
+.inlineCreateBox input[type="number"],
+.inlineCreateBox textarea,
+.inlineCreateBox select,
+.field input[type="text"],
+.field input[type="date"],
+.field input[type="number"],
+.field textarea,
+.field select {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-family, inherit);
+  font-size: 13.5px;
+  color: var(--color-dark, #0f172a);
+  background-color: var(--input-bg, #ffffff);
+  border: 1.5px solid var(--color-gray-300, #cbd5e1);
+  border-radius: var(--radius-md, 8px);
+  padding: 9px 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+:global([data-theme="dark"]) .inlineCreateBox input[type="text"],
+:global([data-theme="dark"]) .inlineCreateBox input[type="date"],
+:global([data-theme="dark"]) .inlineCreateBox input[type="number"],
+:global([data-theme="dark"]) .inlineCreateBox textarea,
+:global([data-theme="dark"]) .inlineCreateBox select,
+:global([data-theme="dark"]) .field input[type="text"],
+:global([data-theme="dark"]) .field input[type="date"],
+:global([data-theme="dark"]) .field input[type="number"],
+:global([data-theme="dark"]) .field textarea,
+:global([data-theme="dark"]) .field select {
+  background-color: #151324;
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f8fafc;
+}
+
+.inlineCreateBox input::placeholder,
+.inlineCreateBox textarea::placeholder,
+.field input::placeholder,
+.field textarea::placeholder {
+  color: #94a3b8;
+}
+
+:global([data-theme="dark"]) .inlineCreateBox input::placeholder,
+:global([data-theme="dark"]) .inlineCreateBox textarea::placeholder,
+:global([data-theme="dark"]) .field input::placeholder,
+:global([data-theme="dark"]) .field textarea::placeholder {
+  color: #64748b;
+}
+
+.inlineCreateBox input:focus,
+.inlineCreateBox textarea:focus,
+.inlineCreateBox select:focus,
+.field input:focus,
+.field textarea:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--color-primary, #ea580c);
+  box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.22);
+}
+
+/* Pastillas de áreas de manufactura */
+.areasGridPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 14px 0;
+}
+
+.areaPill {
+  background: var(--color-gray-100, #f1f5f9);
+  border: 1.5px solid var(--color-gray-300, #cbd5e1);
+  border-radius: var(--radius-full, 9999px);
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-dark, #0f172a);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+:global([data-theme="dark"]) .areaPill {
+  background: rgba(30, 27, 46, 0.8);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #e2e8f0;
+}
+
+.areaPill:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  transform: scale(1.02);
+}
+
+.areaPillActive {
+  background: var(--color-primary, #ea580c) !important;
+  border-color: var(--color-primary, #ea580c) !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.3);
+}
+
+.areaTargetsList {
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+:global([data-theme="dark"]) .areaTargetsList {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.areaTargetItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--color-dark, #0f172a);
+}
+
+:global([data-theme="dark"]) .areaTargetItem {
+  color: #f8fafc;
+}
+

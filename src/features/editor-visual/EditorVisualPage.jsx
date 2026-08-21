@@ -12,8 +12,8 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
-import { motion } from 'framer-motion';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { motion, AnimatePresence } from 'framer-motion';
+import { doc, setDoc, updateDoc, onSnapshot, collection, deleteDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
@@ -24,6 +24,7 @@ import useProduccion from '../../hooks/useProduccion';
 import useActividades from '../../hooks/useActividades';
 import useOperarios from '../../hooks/useOperarios';
 import useAuth from '../../hooks/useAuth';
+import { sendSystemChatMessage } from '../../services/chatNotificationService';
 import { AREA_SEQUENCE_DEPENDENCIES, isAreaBlockedBySequence } from '../../context/ProduccionContext';
 import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
@@ -47,16 +48,27 @@ const ZOOM_STEP = 0.1;
 const clampZoom = (z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z * 100) / 100));
 
 /** Tipos de nodo disponibles, con su color de marca */
-const NODE_TYPES = {
-  bloque: { icon: '📦', label: 'Nodo de Trabajo', colorVar: 'var(--color-primary)', allowCreate: true },
-  proyecto: { icon: '🗂️', label: 'Proyecto', colorVar: 'var(--color-secondary)', allowCreate: true },
-  juego: { icon: '🎮', label: 'Juego', colorVar: 'var(--color-tiffany-blue)', allowCreate: true },
-  area: { icon: '🏭', label: 'Área', colorVar: 'var(--color-princeton-orange)', allowCreate: false },
-  actividad: { icon: '📌', label: 'Actividad', colorVar: 'var(--color-golden-yellow)', allowCreate: true },
-  colaborador: { icon: '👷', label: 'Colaborador', colorVar: 'var(--color-purple-x11)', allowCreate: false },
-};
+const PRESET_COLORS = [
+  { name: 'Naranja Dicrejart', value: '#ea580c' },
+  { name: 'Azul Zafiro', value: '#2563eb' },
+  { name: 'Turquesa Menta', value: '#0d9488' },
+  { name: 'Verde Esmeralda', value: '#16a34a' },
+  { name: 'Púrpura Neón', value: '#9333ea' },
+  { name: 'Ámbar Dorado', value: '#d97706' },
+  { name: 'Rojo Carmesí', value: '#dc2626' },
+  { name: 'Rosa Fucsia', value: '#db2777' },
+  { name: 'Cian Profundo', value: '#0284c7' },
+  { name: 'Grafito Oscuro', value: '#475569' },
+];
 
-// ALL_BLOCK_AREAS is computed dynamically inside components
+const NODE_TYPES = {
+  bloque: { icon: '📦', label: 'Nodo de Trabajo', badgeText: 'TRABAJO', colorVar: '#ea580c', allowCreate: true },
+  proyecto: { icon: '🗂️', label: 'Proyecto', badgeText: 'PROYECTO', colorVar: '#2563eb', allowCreate: true },
+  juego: { icon: '🎮', label: 'Juego / Modelo', badgeText: 'MODELO', colorVar: '#0d9488', allowCreate: true },
+  actividad: { icon: '📌', label: 'Actividad', badgeText: 'ACTIVIDAD', colorVar: '#d97706', allowCreate: true },
+  area: { icon: '🏭', label: 'Área de Taller', badgeText: 'TALLER', colorVar: '#6366f1', allowCreate: false },
+  colaborador: { icon: '👷', label: 'Colaborador', badgeText: 'PERSONAL', colorVar: '#9333ea', allowCreate: false },
+};
 
 const PRIORITY_OPTIONS = [
   { value: 'baja', label: 'Baja' },
@@ -83,24 +95,78 @@ const nextEdgeId = () => {
 };
 
 /**
- * Genera el trazo de cable maleable y curvo estilo CAD/Física con soporte de curvatura natural
+ * Trazo Bezier para previsualización durante arrastre manual
  */
-const bezierPath = (p1, p2) => {
+const previewBezier = (p1, p2) => {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   const dist = Math.hypot(dx, dy);
+  const curvature = Math.max(30, Math.min(dist * 0.45, 140));
+  const signX = dx >= 0 ? 1 : -1;
+  return `M ${p1.x} ${p1.y} C ${p1.x + signX * curvature} ${p1.y}, ${p2.x - signX * curvature} ${p2.y}, ${p2.x} ${p2.y}`;
+};
 
-  // Curvatura suave y maleable adaptativa según distancia y orientación
-  const curveFactor = Math.max(65, Math.min(Math.abs(dx) * 0.55 + 30, 260));
-  // Efecto catenario físico (ligera comba de cable colgante)
-  const gravitySag = Math.min(Math.max(dist * 0.05, 0), 32);
+/**
+ * Genera el trazo de cable inteligente anti-enredo adaptando dinámicamente
+ * los puertos más cercanos (derecha, izquierda, arriba o abajo) según la posición relativa de los nodos.
+ */
+const getSmartWirePath = (fromNode, toNode) => {
+  if (!fromNode || !toNode) return { path: '', p1: { x: 0, y: 0 }, p2: { x: 0, y: 0 } };
 
-  const cp1x = p1.x + curveFactor;
-  const cp1y = p1.y + (dy >= 0 ? gravitySag : -gravitySag * 0.4);
-  const cp2x = p2.x - curveFactor;
-  const cp2y = p2.y + (dy <= 0 ? gravitySag : -gravitySag * 0.4);
+  const fromHeight = fromNode.type === 'bloque' ? 140 : 85;
+  const toHeight = toNode.type === 'bloque' ? 140 : 85;
 
-  return `M ${p1.x} ${p1.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+  const c1x = fromNode.x + NODE_WIDTH / 2;
+  const c1y = fromNode.y + fromHeight / 2;
+  const c2x = toNode.x + NODE_WIDTH / 2;
+  const c2y = toNode.y + toHeight / 2;
+
+  const dx = c2x - c1x;
+  const dy = c2y - c1y;
+
+  let p1, p2, dir1, dir2;
+
+  // Decide si domina flujo horizontal o vertical
+  if (Math.abs(dx) >= Math.abs(dy) * 0.75) {
+    if (dx >= 0) {
+      // toNode está a la derecha
+      p1 = { x: fromNode.x + NODE_WIDTH, y: fromNode.y + 40 };
+      p2 = { x: toNode.x, y: toNode.y + 40 };
+      dir1 = { x: 1, y: 0 };
+      dir2 = { x: -1, y: 0 };
+    } else {
+      // toNode está a la izquierda
+      p1 = { x: fromNode.x, y: fromNode.y + 40 };
+      p2 = { x: toNode.x + NODE_WIDTH, y: toNode.y + 40 };
+      dir1 = { x: -1, y: 0 };
+      dir2 = { x: 1, y: 0 };
+    }
+  } else {
+    if (dy >= 0) {
+      // toNode está abajo
+      p1 = { x: fromNode.x + NODE_WIDTH / 2, y: fromNode.y + fromHeight };
+      p2 = { x: toNode.x + NODE_WIDTH / 2, y: toNode.y };
+      dir1 = { x: 0, y: 1 };
+      dir2 = { x: 0, y: -1 };
+    } else {
+      // toNode está arriba
+      p1 = { x: fromNode.x + NODE_WIDTH / 2, y: fromNode.y };
+      p2 = { x: toNode.x + NODE_WIDTH / 2, y: toNode.y + toHeight };
+      dir1 = { x: 0, y: -1 };
+      dir2 = { x: 0, y: 1 };
+    }
+  }
+
+  const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  const curvature = Math.max(35, Math.min(dist * 0.4, 150));
+
+  const cp1x = p1.x + dir1.x * curvature;
+  const cp1y = p1.y + dir1.y * curvature;
+  const cp2x = p2.x + dir2.x * curvature;
+  const cp2y = p2.y + dir2.y * curvature;
+
+  const path = `M ${p1.x} ${p1.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+  return { path, p1, p2 };
 };
 
 /**
@@ -109,39 +175,127 @@ const bezierPath = (p1, p2) => {
  * @returns {ReactElement}
  */
 const EditorVisualPage = ({ standalone = false }) => {
-  const { proyectos, juegos, addProject, addGame } = useProduccion();
-  const { actividades, addActividad, updateActividad, deleteActividad } = useActividades();
+  const { proyectos, juegos, addProject, addGame, updateProject } = useProduccion();
+  const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
   const allBlockAreas = useMemo(() => [...dynamicAreas, ...NON_PRODUCTION_AREAS], [dynamicAreas]);
-  const { user } = useAuth();
+  const { user, users } = useAuth();
   const toast = useToast();
 
   // ============================================
-  // PROYECTO ACTIVO (Lienzo por Proyecto)
+  // PROYECTOS VISUALES Y LIENZOS LIBRES
+  // Permite diseñar en lienzos independientes o asociados a un proyecto
   // ============================================
-  const [proyectoActivoId, setProyectoActivoId] = useState(() => {
+  const [lienzosList, setLienzosList] = useState([]);
+  const [newLienzoModal, setNewLienzoModal] = useState({ isOpen: false, name: '' });
+  const [deleteLienzoConfirm, setDeleteLienzoConfirm] = useState(false);
+  const [isLeftRailOpen, setIsLeftRailOpen] = useState(false);
+
+  const [lienzoActivoId, setLienzoActivoId] = useState(() => {
     if (typeof window !== 'undefined') {
-      return new URLSearchParams(window.location.search).get('proyectoId') || '';
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get('lienzoId') || urlParams.get('proyectoId') || 'general';
     }
-    return '';
+    return 'general';
   });
 
-  // Refleja el proyecto activo en la URL para que la selección sobreviva a un
-  // refresco de página (sin esto, recargar perdía de vista qué lienzo se estaba viendo)
+  // Modal para gestionar / eliminar cualquier lienzo
+  const [manageLienzosModal, setManageLienzosModal] = useState(false);
+  const [clearNodesConfirm, setClearNodesConfirm] = useState(false);
+
+  // Modal para consultar tareas del área en el lienzo sin redirigir
+  const [areaTasksModal, setAreaTasksModal] = useState({ isOpen: false, areaId: null, areaName: '' });
+
+  // Modal para marcar una actividad como completada con notas de entrega
+  const [completeModal, setCompleteModal] = useState({ isOpen: false, activityId: null, title: '', notes: '' });
+
+  // Determina si el lienzo activo es un lienzo libre que se puede eliminar
+  const isCurrentLienzoDeletable = useMemo(() => {
+    return lienzoActivoId !== 'general' && !proyectos.some((p) => p.id === lienzoActivoId);
+  }, [lienzoActivoId, proyectos]);
+
+  // Elimina un lienzo específico por su ID
+  const handleDeleteLienzoById = async (targetId, targetName) => {
+    if (!db || !canEditDiagram) return;
+    try {
+      await deleteDoc(doc(db, 'lienzos', targetId));
+      toast.success(`🗑️ Lienzo visual "${targetName || 'Lienzo'}" eliminado.`);
+      if (lienzoActivoId === targetId) {
+        setLienzoActivoId('general');
+      }
+    } catch (err) {
+      console.error('Error al eliminar lienzo:', err);
+      toast.danger('No se pudo eliminar el lienzo.');
+    }
+  };
+
+  // Elimina el lienzo actualmente activo
+  const handleDeleteCurrentLienzo = async () => {
+    if (!isCurrentLienzoDeletable || !db || !canEditDiagram) return;
+    const currentName = lienzosList.find((l) => l.id === lienzoActivoId)?.name || 'Lienzo';
+    await handleDeleteLienzoById(lienzoActivoId, currentName);
+    setDeleteLienzoConfirm(false);
+  };
+
+  // Limpia / vacía todos los nodos del lienzo actual
+  const handleClearCurrentCanvasNodes = () => {
+    if (!canEditDiagram) return;
+    setNodes([]);
+    setEdges([]);
+    saveToFirestore([], []);
+    setClearNodesConfirm(false);
+    toast.success('🧹 Lienzo vaciado. Todos los nodos fueron removidos.');
+  };
+
+  // Escucha en tiempo real de todos los lienzos registrados en Firestore
+  useEffect(() => {
+    if (!db) return;
+    try {
+      const unsubscribe = onSnapshot(
+        collection(db, 'lienzos'),
+        (snapshot) => {
+          const list = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+          }));
+          setLienzosList(list);
+        },
+        (err) => {
+          console.warn('Aviso al listar lienzos:', err);
+        }
+      );
+      return unsubscribe;
+    } catch (e) {
+      console.warn('Error iniciando escucha de lienzos:', e);
+    }
+  }, []);
+
+  // Refleja el lienzo activo en la URL para no perder el estado
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
-    if (proyectoActivoId) {
-      url.searchParams.set('proyectoId', proyectoActivoId);
+    if (lienzoActivoId && lienzoActivoId !== 'general') {
+      url.searchParams.set('lienzoId', lienzoActivoId);
+      url.searchParams.delete('proyectoId');
     } else {
+      url.searchParams.delete('lienzoId');
       url.searchParams.delete('proyectoId');
     }
     window.history.replaceState({}, '', url);
-  }, [proyectoActivoId]);
+  }, [lienzoActivoId]);
 
-  // Solo los administradores pueden modificar y guardar diagramas
-  const canEditDiagram = user?.roleType === 'admin';
+  // Proyecto vinculado si el lienzo actual corresponde al ID de un proyecto
+  const currentProject = useMemo(() => {
+    return proyectos.find((p) => p.id === lienzoActivoId) || null;
+  }, [proyectos, lienzoActivoId]);
+
+  // Todos los miembros autenticados con acceso al editor pueden diseñar y guardar sus lienzos
+  const canEditDiagram = Boolean(user);
+  const isAdmin = user?.role === 'admin' || user?.roleType === 'admin' || user?.roleType === 'director';
+
+  // Estado de sincronización en la nube ('saved' | 'saving' | 'error')
+  const [saveStatus, setSaveStatus] = useState('saved');
 
   // ============================================
   // ESTADO DEL GRAFO
@@ -149,6 +303,7 @@ const EditorVisualPage = ({ standalone = false }) => {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState(null);
   const [worldOffset, setWorldOffset] = useState({ x: 40, y: 30 });
   const [howtoOpen, setHowtoOpen] = useState(false);
   // Qué Bloques tienen su lista de actividades desplegada — solo local (no se guarda en
@@ -193,51 +348,146 @@ const EditorVisualPage = ({ standalone = false }) => {
   const [nodeSearch, setNodeSearch] = useState('');
 
   // ============================================
-  // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE
+  // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE CON RESPALDO LOCAL
   // ============================================
   useEffect(() => {
-    if (!db || !proyectoActivoId) {
+    if (!db || !lienzoActivoId) {
       setNodes([]);
       setEdges([]);
       return;
     }
 
-    const unsubscribe = onSnapshot(doc(db, 'lienzos', proyectoActivoId), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setNodes(data.nodes || []);
-        setEdges(data.edges || []);
-        if (data.worldOffset) {
-          setWorldOffset(data.worldOffset);
+    try {
+      const unsubscribe = onSnapshot(
+        doc(db, 'lienzos', lienzoActivoId),
+        (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setNodes(data.nodes || []);
+            setEdges(data.edges || []);
+            if (data.worldOffset) {
+              setWorldOffset(data.worldOffset);
+            }
+            // Actualizar backup local con la versión de Firestore
+            try {
+              localStorage.setItem(
+                `dicrejart_canvas_backup_${lienzoActivoId}`,
+                JSON.stringify({
+                  nodes: data.nodes || [],
+                  edges: data.edges || [],
+                  worldOffset: data.worldOffset || { x: 40, y: 30 },
+                  savedAt: Date.now(),
+                })
+              );
+            } catch (_) {}
+          } else {
+            // Si el documento aún no existe en Firestore, verificar si hay un respaldo en localStorage
+            const localBackup = localStorage.getItem(`dicrejart_canvas_backup_${lienzoActivoId}`);
+            if (localBackup) {
+              try {
+                const parsed = JSON.parse(localBackup);
+                if (parsed.nodes && parsed.nodes.length > 0) {
+                  setNodes(parsed.nodes);
+                  setEdges(parsed.edges || []);
+                  if (parsed.worldOffset) setWorldOffset(parsed.worldOffset);
+                  return;
+                }
+              } catch (_) {}
+            }
+            setNodes([]);
+            setEdges([]);
+          }
+        },
+        (err) => {
+          console.warn('Aviso leyendo lienzo activo:', err);
         }
-      } else {
-        // Inicializar el lienzo vacío en Firestore
-        setDoc(doc(db, 'lienzos', proyectoActivoId), {
-          nodes: [],
-          edges: [],
-          worldOffset: { x: 40, y: 30 },
-        });
-      }
-    });
-
-    return unsubscribe;
-  }, [proyectoActivoId]);
+      );
+      return unsubscribe;
+    } catch (e) {
+      console.warn('Error en listener de lienzo activo:', e);
+    }
+  }, [lienzoActivoId]);
 
   /**
-   * Guarda de forma transparente el estado actual del lienzo en Firestore
+   * Guarda de forma transparente el estado actual del lienzo en Firestore y en localStorage
    */
   const saveToFirestore = useCallback(async (newNodes, newEdges, newOffset) => {
-    if (!db || !proyectoActivoId || !canEditDiagram) return;
+    if (!db || !lienzoActivoId || !canEditDiagram) return;
+
+    // Respaldo inmediato en localStorage para evitar cualquier pérdida al recargar
     try {
-      await setDoc(doc(db, 'lienzos', proyectoActivoId), {
+      localStorage.setItem(
+        `dicrejart_canvas_backup_${lienzoActivoId}`,
+        JSON.stringify({
+          nodes: newNodes,
+          edges: newEdges,
+          worldOffset: newOffset || worldOffset,
+          savedAt: Date.now(),
+        })
+      );
+    } catch (e) {
+      console.warn('No se pudo guardar backup local:', e);
+    }
+
+    setSaveStatus('saving');
+    try {
+      const existingLienzo = lienzosList.find((l) => l.id === lienzoActivoId);
+      const matchingProj = proyectos.find((p) => p.id === lienzoActivoId);
+      const canvasName = existingLienzo?.name || matchingProj?.name || (lienzoActivoId === 'general' ? 'Lienzo General' : 'Lienzo Visual');
+
+      await setDoc(doc(db, 'lienzos', lienzoActivoId), {
+        name: canvasName,
         nodes: newNodes,
         edges: newEdges,
         worldOffset: newOffset || worldOffset,
-      });
+        updatedAt: new Date().toISOString(),
+        lastSavedBy: user?.name || user?.email || 'Usuario',
+      }, { merge: true });
+      setSaveStatus('saved');
     } catch (e) {
       console.error('Error al guardar lienzo en Firestore:', e);
+      setSaveStatus('error');
     }
-  }, [proyectoActivoId, worldOffset, canEditDiagram]);
+  }, [lienzoActivoId, lienzosList, proyectos, worldOffset, canEditDiagram, user]);
+
+  /**
+   * Guardado manual explícito por botón para dar confirmación visual al usuario
+   */
+  const handleManualSaveCanvas = useCallback(() => {
+    saveToFirestore(nodes, edges, worldOffset);
+    toast.success('💾 Lienzo y conexiones guardados correctamente en la nube.');
+  }, [nodes, edges, worldOffset, saveToFirestore, toast]);
+
+  /**
+   * Crea un nuevo proyecto visual / lienzo independiente
+   */
+  const handleCreateNewLienzo = async () => {
+    if (!newLienzoModal.name.trim()) {
+      toast.danger('Ingresa un nombre para el nuevo proyecto visual.');
+      return;
+    }
+    const newId = `lienzo_${Date.now()}`;
+    const newName = newLienzoModal.name.trim();
+    try {
+      await setDoc(doc(db, 'lienzos', newId), {
+        name: newName,
+        isStandalone: true,
+        nodes: [],
+        edges: [],
+        worldOffset: { x: 40, y: 30 },
+        authorId: user?.id || user?.uid || 'user',
+        authorName: user?.name || user?.email || 'Usuario',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      setLienzoActivoId(newId);
+      setNewLienzoModal({ isOpen: false, name: '' });
+      toast.success(`🎨 Lienzo visual "${newName}" creado.`);
+    } catch (err) {
+      console.error('Error creando lienzo:', err);
+      toast.danger('No se pudo crear el lienzo.');
+    }
+  };
 
   const findNode = useCallback((id) => nodes.find((n) => n.id === id) || null, [nodes]);
 
@@ -268,11 +518,68 @@ const EditorVisualPage = ({ standalone = false }) => {
     [getLinkedEntity]
   );
 
+  /**
+   * Obtiene el supervisor / encargado oficial de un área de manufactura
+   */
+  const getSupervisorForArea = useCallback(
+    (areaId) => {
+      if (!areaId) return { id: null, name: 'Supervisor de Área', role: 'Supervisor de Área' };
+      const areaObj = dynamicAreas.find((a) => a.id === areaId);
+
+      // 1. Buscar en usuarios registrados con rol supervisor-area o encargado-area
+      const supervisorUser = (users || []).find(
+        (u) =>
+          u.status === 'activo' &&
+          ((u.roleType === 'supervisor-area' && (u.areaIds || []).includes(areaId)) ||
+           (u.roleType === 'encargado-area' && u.areaId === areaId))
+      );
+      if (supervisorUser) {
+        return {
+          id: supervisorUser.id,
+          name: supervisorUser.name,
+          role: supervisorUser.role || 'Supervisor de Área',
+          email: supervisorUser.email,
+        };
+      }
+
+      // 2. Buscar en plantilla de operarios con puesto de Supervisor o Encargado en esa área
+      const supervisorOp = (operarios || []).find(
+        (o) =>
+          o.currentArea === areaId &&
+          (o.puesto?.toLowerCase().includes('supervisor') || o.puesto?.toLowerCase().includes('encargado'))
+      );
+      if (supervisorOp) {
+        return {
+          id: supervisorOp.id,
+          name: supervisorOp.name,
+          role: supervisorOp.puesto || 'Supervisor de Área',
+          email: supervisorOp.email || null,
+        };
+      }
+
+      return {
+        id: null,
+        name: `Supervisor de ${areaObj?.name || areaId}`,
+        role: 'Supervisor de Área',
+        email: null,
+      };
+    },
+    [dynamicAreas, users, operarios]
+  );
+
   /** Áreas de un Juego real que están bloqueadas por secuencia (ej. Herrería esperando Corte Láser) */
   const getBlockedAreas = useCallback(
     (gameEntity) => (gameEntity?.areas || []).filter((areaId) => isAreaBlockedBySequence(gameEntity, areaId)),
     []
   );
+
+  /** Sanitiza URLs externas para prevenir rutas relativas erróneas */
+  const formatExternalUrl = useCallback((url) => {
+    if (!url) return '#';
+    const trimmed = String(url).trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    return `https://${trimmed}`;
+  }, []);
 
   const nodeSummary = useCallback(
     (node) => {
@@ -316,8 +623,17 @@ const EditorVisualPage = ({ standalone = false }) => {
         return `${entity.projectName || ''} · ${entity.progress ?? 0}%${blockedSuffix}${rejectedSuffix}`;
       }
       if (node.type === 'actividad') {
-        const responsable = operarios.find((o) => o.id === entity.operarioId)?.name;
-        return `Área: ${dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId} · ${entity.status}${responsable ? ` · 👷 ${responsable}` : ''}`;
+        const colabEdge = edges.find(
+          (e) =>
+            (e.from === node.id && findNode(e.to)?.type === 'colaborador') ||
+            (e.to === node.id && findNode(e.from)?.type === 'colaborador')
+        );
+        const connectedColabNode = colabEdge
+          ? findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to)
+          : null;
+        const directOperario = operarios.find((o) => o.id === (entity?.operarioId || node?.operarioId || node?.draftFields?.operarioId));
+        const responsable = directOperario?.name || (connectedColabNode ? nodeTitle(connectedColabNode) : null);
+        return `Área: ${dynamicAreas.find((a) => a.id === entity?.areaId)?.name || entity?.areaId || 'General'} · ${entity?.status || 'pendiente'}${responsable ? ` · 👷 ${responsable}` : ''}`;
       }
       if (node.type === 'colaborador') return `Área actual: ${dynamicAreas.find((a) => a.id === entity.currentArea)?.name || entity.currentArea}`;
       if (node.type === 'area') return 'Área de manufactura';
@@ -357,6 +673,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     const node = findNode(nodeId);
     if (!node) return;
     setSelectedNodeId(nodeId);
+    setSelectedEdgeId(null);
     dragStateRef.current = {
       id: nodeId,
       startMouseX: e.clientX,
@@ -374,6 +691,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     setNodes(nextNodes);
     setEdges(nextEdges);
     setSelectedNodeId((prev) => (prev === nodeId ? null : prev));
+    setSelectedEdgeId(null);
     saveToFirestore(nextNodes, nextEdges);
   };
 
@@ -459,6 +777,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
     if (isMiddle || isRight || isBackgroundLeft) {
       e.preventDefault();
+      setSelectedEdgeId(null);
       panStateRef.current = {
         startMouseX: e.clientX,
         startMouseY: e.clientY,
@@ -546,17 +865,209 @@ const EditorVisualPage = ({ standalone = false }) => {
             return latestEdges;
           });
 
-          // Si el cable nuevo conecta un Bloque con un Colaborador, se asignan de
-          // inmediato las actividades que el bloque ya tenía (no hace falta acordarse
-          // de dar clic aparte en "Reasignar todas") — conectar el cable ya ES la
-          // acción de asignar, sin importar el orden en que se hicieron las cosas.
+          // Al conectar nodos con cables, se propaga y sincroniza automáticamente su relación en Firestore:
           if (didCreateEdge) {
             const fromNode = findNode(from);
             const toNode = findNode(to);
-            const blockNode = fromNode?.type === 'bloque' ? fromNode : toNode?.type === 'bloque' ? toNode : null;
-            const colabNode = fromNode?.type === 'colaborador' ? fromNode : toNode?.type === 'colaborador' ? toNode : null;
-            if (blockNode && colabNode && (blockNode.activityIds || []).length > 0) {
-              handleReassignBlockActivities(blockNode, colabNode);
+            if (fromNode && toNode) {
+              const projNode = fromNode.type === 'proyecto' ? fromNode : toNode.type === 'proyecto' ? toNode : null;
+              const gameNode = fromNode.type === 'juego' ? fromNode : toNode.type === 'juego' ? toNode : null;
+              const colabNode = fromNode.type === 'colaborador' ? fromNode : toNode.type === 'colaborador' ? toNode : null;
+              const actNode = fromNode.type === 'actividad' ? fromNode : toNode.type === 'actividad' ? toNode : null;
+              const areaNode = fromNode.type === 'area' ? fromNode : toNode.type === 'area' ? toNode : null;
+              const blockNode = fromNode.type === 'bloque' ? fromNode : toNode.type === 'bloque' ? toNode : null;
+
+              // 1. Proyecto ↔ Juego: Vincular el juego al proyecto inmediatamente
+              if (projNode && gameNode) {
+                const projEntity = getLinkedEntity(projNode);
+                const projId = projNode.refId || (projNode.draft ? null : projNode.id);
+                const projName = projEntity?.name || nodeTitle(projNode);
+
+                if (gameNode.refId && !gameNode.draft) {
+                  updateDoc(doc(db, 'juegos', gameNode.refId), {
+                    projectId: projId,
+                    projectName: projName,
+                    updatedAt: new Date().toISOString(),
+                  }).then(() => {
+                    toast.success(`🔗 Juego "${nodeTitle(gameNode)}" vinculado al Proyecto "${projName}".`);
+                  }).catch((err) => console.error('Error al vincular juego a proyecto:', err));
+                } else if (gameNode.draft) {
+                  updateDraftField(gameNode.id, 'projectId', projId);
+                  toast.success(`🔗 Juego vinculado al Proyecto "${projName}".`);
+                }
+              }
+
+              // 2. Colaborador ↔ Juego: Asignar colaborador responsable al juego
+              if (colabNode && gameNode) {
+                const operario = operarios.find((o) => o.id === colabNode.refId);
+                const operarioName = operario?.name || nodeTitle(colabNode);
+                if (gameNode.refId && !gameNode.draft) {
+                  updateDoc(doc(db, 'juegos', gameNode.refId), {
+                    operarioId: colabNode.refId,
+                    updatedAt: new Date().toISOString(),
+                  }).then(() => {
+                    toast.success(`👷 ${operarioName} asignado como responsable del Juego "${nodeTitle(gameNode)}".`);
+                  }).catch((err) => console.error('Error al asignar operario a juego:', err));
+                } else if (gameNode.draft) {
+                  updateDraftField(gameNode.id, 'operarioId', colabNode.refId);
+                  toast.success(`👷 ${operarioName} asignado al juego.`);
+                }
+              }
+
+              // 3. Colaborador ↔ Actividad: Asignar colaborador a la tarea y notificar al supervisor del área
+              if (colabNode && actNode) {
+                const operario = operarios.find((o) => o.id === colabNode.refId);
+                const operarioName = operario?.name || nodeTitle(colabNode);
+                const actTitle = nodeTitle(actNode);
+                const actId = actNode.refId || (actNode.draft ? null : actNode.id);
+                const actEntity = getLinkedEntity(actNode);
+                const areaId = actEntity?.areaId;
+                const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId || 'General';
+                const supervisor = getSupervisorForArea(areaId);
+
+                if (actId && !actNode.draft) {
+                  updateDoc(doc(db, 'actividades', actId), {
+                    operarioId: colabNode.refId,
+                    updatedAt: new Date().toISOString(),
+                  }).then(() => {
+                    toast.success(`👷 ${operarioName} asignado a la actividad "${actTitle}".`);
+                    // Notificar al supervisor de área (los avisos de tareas a colaboradores los coordina el supervisor)
+                    if (areaId) {
+                      sendSystemChatMessage({
+                        targetUserId: supervisor.id,
+                        targetUserName: supervisor.name,
+                        text: `📌 [Tarea Asignada en ${areaName}] Se ha asignado a ${operarioName} para la actividad "${actTitle}". Supervisor responsable: ${supervisor.name}.`,
+                        senderId: user?.id || 'admin',
+                        senderName: user?.name || 'Administración',
+                        isGlobal: true,
+                      });
+                    }
+                  }).catch((err) => {
+                    console.error('Error al asignar colaborador vía updateDoc:', err);
+                    updateActividad(actId, { operarioId: colabNode.refId });
+                  });
+                } else if (actNode.draft) {
+                  updateDraftField(actNode.id, 'operarioId', colabNode.refId);
+                  toast.success(`👷 ${operarioName} asignado a la actividad.`);
+                }
+              }
+
+              // 4. Colaborador ↔ Bloque: Asignar al bloque y reasignar actividades
+              if (colabNode && blockNode) {
+                updateBlockField(blockNode.id, 'operarioId', colabNode.refId);
+                if ((blockNode.activityIds || []).length > 0) {
+                  handleReassignBlockActivities(blockNode, colabNode);
+                }
+                toast.success(`👷 ${nodeTitle(colabNode)} asignado al Bloque de Trabajo.`);
+              }
+
+              // 5. Proyecto ↔ Bloque
+              if (projNode && blockNode) {
+                const projId = projNode.refId || (projNode.draft ? null : projNode.id);
+                updateBlockField(blockNode.id, 'projectId', projId);
+                toast.success(`🔗 Bloque vinculado al Proyecto "${nodeTitle(projNode)}".`);
+              }
+
+              // 6. Juego ↔ Bloque
+              if (gameNode && blockNode) {
+                const gameId = gameNode.refId || (gameNode.draft ? null : gameNode.id);
+                updateBlockField(blockNode.id, 'gameId', gameId);
+                toast.success(`🔗 Bloque vinculado al Juego "${nodeTitle(gameNode)}".`);
+              }
+
+              // 7. Área ↔ Proyecto: Notificar al supervisor del área que hay un nuevo proyecto que le corresponde trabajar
+              if (areaNode && projNode) {
+                const areaEntity = getLinkedEntity(areaNode);
+                const areaId = areaNode.refId || areaEntity?.id;
+                const areaName = areaEntity?.name || nodeTitle(areaNode);
+                const projName = nodeTitle(projNode);
+                const supervisor = getSupervisorForArea(areaId);
+
+                const alertText = `📢 [Nuevo Proyecto Asignado a ${areaName}] El proyecto "${projName}" ha sido vinculado al área "${areaName}". Le corresponde al supervisor (${supervisor.name}) y a su equipo programar y coordinar los trabajos correspondientes.`;
+
+                // Notificar al supervisor y al Chat Global del sistema
+                sendSystemChatMessage({
+                  targetUserId: supervisor.id,
+                  targetUserName: supervisor.name,
+                  text: alertText,
+                  senderId: user?.id || 'admin',
+                  senderName: user?.name || 'Administración',
+                  isGlobal: true,
+                });
+
+                toast.success(`📢 Notificación enviada al supervisor (${supervisor.name}) de ${areaName} para el Proyecto "${projName}".`);
+              }
+
+              // 8. Juego ↔ Área: Añadir área a la ruta de manufactura del juego y notificar al supervisor
+              if (gameNode && areaNode) {
+                const areaId = areaNode.refId;
+                const areaEntity = getLinkedEntity(areaNode);
+                const areaName = areaEntity?.name || nodeTitle(areaNode);
+                const gameEntity = getLinkedEntity(gameNode);
+                const gameName = nodeTitle(gameNode);
+                const supervisor = getSupervisorForArea(areaId);
+
+                if (gameEntity && areaId) {
+                  const currentAreas = gameEntity.areas || [];
+                  if (!currentAreas.includes(areaId)) {
+                    const nextAreas = [...currentAreas, areaId];
+                    updateDoc(doc(db, 'juegos', gameEntity.id), {
+                      areas: nextAreas,
+                      targetPieces: { ...(gameEntity.targetPieces || {}), [areaId]: 10 },
+                      updatedAt: new Date().toISOString(),
+                    }).then(() => {
+                      toast.success(`🏭 Área "${areaName}" agregada a la ruta del Juego.`);
+                    });
+                  }
+                }
+
+                const alertText = `📢 [Modelo de Juego en Ruta de Fabricación] El área "${areaName}" ha sido incorporada para fabricar el modelo "${gameName}". Supervisado por ${supervisor.name}.`;
+
+                sendSystemChatMessage({
+                  targetUserId: supervisor.id,
+                  targetUserName: supervisor.name,
+                  text: alertText,
+                  senderId: user?.id || 'admin',
+                  senderName: user?.name || 'Administración',
+                  isGlobal: true,
+                });
+
+                toast.success(`📢 Supervisor (${supervisor.name}) notificado sobre el modelo "${gameName}".`);
+              }
+
+              // 9. Área ↔ Actividad: Asignar área a la actividad y notificar al supervisor
+              if (areaNode && actNode) {
+                const areaEntity = getLinkedEntity(areaNode);
+                const areaId = areaNode.refId || areaEntity?.id;
+                const areaName = areaEntity?.name || nodeTitle(areaNode);
+                const actTitle = nodeTitle(actNode);
+                const actId = actNode.refId || (actNode.draft ? null : actNode.id);
+                const supervisor = getSupervisorForArea(areaId);
+
+                if (actId && !actNode.draft) {
+                  updateDoc(doc(db, 'actividades', actId), {
+                    areaId: areaId,
+                    updatedAt: new Date().toISOString(),
+                  }).then(() => {
+                    toast.success(`🏭 Actividad "${actTitle}" asignada al área "${areaName}".`);
+                    // Notificar al supervisor de área
+                    sendSystemChatMessage({
+                      targetUserId: supervisor.id,
+                      targetUserName: supervisor.name,
+                      text: `📌 [Nueva Tarea Asignada a ${areaName}] La actividad "${actTitle}" ha sido asignada al área "${areaName}". Le corresponde al supervisor (${supervisor.name}) coordinar su realización.`,
+                      senderId: user?.id || 'admin',
+                      senderName: user?.name || 'Administración',
+                      isGlobal: true,
+                    });
+                  }).catch((err) => {
+                    console.error('Error al actualizar área de actividad:', err);
+                    updateActividad(actId, { areaId });
+                  });
+                } else if (actNode.draft) {
+                  updateDraftField(actNode.id, 'areaId', areaId);
+                  toast.success(`🏭 Actividad asignada al área "${areaName}".`);
+                }
+              }
             }
           }
         }
@@ -772,8 +1283,11 @@ const EditorVisualPage = ({ standalone = false }) => {
         height: worldBounds.height,
       });
 
-      const projectName = proyectos.find((p) => p.id === proyectoActivoId)?.name || 'diagrama';
-      const fileSafeName = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const canvasName =
+        lienzosList.find((l) => l.id === lienzoActivoId)?.name ||
+        proyectos.find((p) => p.id === lienzoActivoId)?.name ||
+        (lienzoActivoId === 'general' ? 'general' : 'diagrama');
+      const fileSafeName = canvasName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
       const link = document.createElement('a');
       link.download = `dicrejart-editor-visual-${fileSafeName || 'diagrama'}-${new Date().toISOString().split('T')[0]}.png`;
       link.href = canvas.toDataURL('image/png');
@@ -790,34 +1304,25 @@ const EditorVisualPage = ({ standalone = false }) => {
   };
 
   // ============================================
-  // PICKER: BUSCAR EXISTENTE O CREAR NUEVO
+  // MODAL UNIFICADO DE CREACIÓN / INSERCIÓN DE NODOS
   // ============================================
-  const [picker, setPicker] = useState({ isOpen: false, type: null, query: '' });
-
   const catalogFor = useCallback(
     (type) => {
-      if (type === 'proyecto') return proyectos.map((p) => ({ id: p.id, label: p.name }));
-      if (type === 'juego') return juegos.map((j) => ({ id: j.id, label: `${j.name} (${j.projectName})` }));
-      if (type === 'actividad') return actividades.map((a) => ({ id: a.id, label: a.title }));
+      if (type === 'proyecto') return proyectos.map((p) => ({ id: p.id, label: `${p.name} ${p.client ? `(${p.client})` : ''}` }));
+      if (type === 'juego') return juegos.map((j) => ({ id: j.id, label: `${j.name} ${j.projectName ? `· 🗂️ ${j.projectName}` : ''}` }));
+      if (type === 'actividad') return actividades.map((a) => ({ id: a.id, label: `📌 ${a.title} (${dynamicAreas.find((c) => c.id === a.areaId)?.name || a.areaId})` }));
       if (type === 'colaborador') {
         return operarios.map((o) => {
           const areaName = dynamicAreas.find((a) => a.id === o.currentArea)?.name || o.currentArea;
           const loanTag = o.currentArea !== o.homeArea ? ' · prestado' : '';
-          return { id: o.id, label: `${o.name} — ${areaName}${loanTag}` };
+          return { id: o.id, label: `👷 ${o.name} — ${areaName}${loanTag} (${o.puesto || 'Operario'})` };
         });
       }
-      if (type === 'area') return dynamicAreas.map((a) => ({ id: a.id, label: a.name }));
+      if (type === 'area') return dynamicAreas.map((a) => ({ id: a.id, label: `🏭 ${a.name}` }));
       return [];
     },
     [proyectos, juegos, actividades, operarios, dynamicAreas]
   );
-
-  const openPicker = (type) => {
-    if (!canEditDiagram) return;
-    setPicker({ isOpen: true, type, query: '' });
-  };
-  
-  const closePicker = () => setPicker({ isOpen: false, type: null, query: '' });
 
   const spawnNode = (type, node) => {
     const rect = canvasWrapRef.current?.getBoundingClientRect();
@@ -845,254 +1350,290 @@ const EditorVisualPage = ({ standalone = false }) => {
     saveToFirestore(nextNodes, edges);
   };
 
-  const handlePickExisting = (type, entityId) => {
-    spawnNode(type, { draft: false, refId: entityId, draftFields: {} });
-    closePicker();
-  };
-
-  const handleCreateNewDraft = (type, name) => {
-    const draftDefaults = {
-      proyecto: { name, client: '', status: 'diseno' },
-      juego: { name, meta_piezas: '10' },
-      actividad: { title: name, description: '', priority: 'media', dueDate: '' },
-    }[type];
-    spawnNode(type, { draft: true, refId: null, draftFields: draftDefaults });
-    closePicker();
-  };
-
-  const filteredCatalog = useMemo(() => {
-    if (!picker.type) return [];
-    const q = picker.query.trim().toLowerCase();
-    return catalogFor(picker.type).filter((c) => c.label.toLowerCase().includes(q));
-  }, [picker.type, picker.query, catalogFor]);
-
-  // ============================================
-  // ASISTENTE GUIADO DE CREACIÓN DE NODOS (WIZARD)
-  // ============================================
-  const EMPTY_WIZARD = {
+  const EMPTY_NODE_MODAL = {
     isOpen: false,
-    step: 1, // 1: Rol, 2: Proyecto, 3: Juego (si aplica), 4: Área/Responsable
-    role: 'juego', // 'proyecto' | 'juego' | 'bloque'
-    name: '',
+    type: 'colaborador', // 'proyecto' | 'juego' | 'colaborador' | 'area' | 'actividad' | 'bloque'
+    tab: 'existing', // 'existing' | 'new'
+    query: '',
 
     // Proyecto
-    projectMode: 'existing', // 'existing' | 'new'
-    projectId: '',
-    newProjectName: '',
-    newProjectClient: '',
-    newProjectDesc: '',
-    newProjectStartDate: '',
-    newProjectEndDate: '',
-    newProjectStatus: 'diseno',
+    newProjName: '',
+    newProjClient: '',
+    newProjDesc: '',
+    newProjStartDate: getTodayLocalDateStr(),
+    newProjEndDate: getTodayLocalDateStr(),
+    newProjStatus: 'diseno',
 
     // Juego
-    gameMode: 'existing', // 'existing' | 'new'
-    gameId: '',
     newGameName: '',
+    newGameProjectId: '',
     newGameAreas: ['herreria', 'corte-laser'],
     newGameTargets: { herreria: 10, 'corte-laser': 10 },
 
-    // Área y Operario
-    areaId: '',
-    operarioId: '',
+    // Actividad
+    newActTitle: '',
+    newActDesc: '',
+    newActAreaId: 'herreria',
+    newActPriority: 'media',
+    newActDueDate: '',
+
+    // Bloque
+    newBlockName: 'Nodo de Trabajo',
+    newBlockAreaId: 'herreria',
   };
 
-  const [wizard, setWizard] = useState(EMPTY_WIZARD);
+  const [nodeModal, setNodeModal] = useState(EMPTY_NODE_MODAL);
 
-  const openBlockSetup = () => {
+  const openNodeModal = (type) => {
     if (!canEditDiagram) return;
-    const today = getTodayLocalDateStr();
-    const hasProjects = proyectos.length > 0;
-    const firstProjId = proyectoActivoId || (hasProjects ? proyectos[0].id : '');
-
-    setWizard({
-      ...EMPTY_WIZARD,
+    const defaultTab = (type === 'colaborador' || type === 'area') ? 'existing' : (type === 'bloque' ? 'new' : 'existing');
+    setNodeModal({
+      ...EMPTY_NODE_MODAL,
       isOpen: true,
-      step: 1,
-      role: 'juego',
-      projectMode: hasProjects ? 'existing' : 'new',
-      projectId: firstProjId,
-      newProjectStartDate: today,
-      newProjectEndDate: today,
+      type,
+      tab: defaultTab,
       newGameAreas: ['herreria', 'corte-laser'],
       newGameTargets: { herreria: 10, 'corte-laser': 10 },
-      areaId: dynamicAreas[0]?.id || 'herreria',
+      newActAreaId: dynamicAreas[0]?.id || 'herreria',
+      newBlockAreaId: dynamicAreas[0]?.id || 'herreria',
     });
   };
 
-  const closeWizard = () => setWizard(EMPTY_WIZARD);
+  const closeNodeModal = () => setNodeModal(EMPTY_NODE_MODAL);
 
-  const handleToggleWizardGameArea = (areaId) => {
-    setWizard((prev) => {
-      const isSelected = prev.newGameAreas.includes(areaId);
-      let nextAreas = isSelected
-        ? prev.newGameAreas.filter((id) => id !== areaId)
-        : [...prev.newGameAreas, areaId];
+  const handlePickExistingNode = (type, entityId) => {
+    spawnNode(type, { draft: false, refId: entityId, draftFields: {} });
+    closeNodeModal();
+    const meta = NODE_TYPES[type];
+    toast.success(`✅ Nodo de ${meta?.label || type} agregado al lienzo.`);
+  };
 
-      const nextTargets = { ...prev.newGameTargets };
-
-      if (isSelected && areaId === 'corte-laser' && nextAreas.includes('herreria')) {
-        nextAreas = nextAreas.filter((id) => id !== 'herreria');
-        delete nextTargets['herreria'];
-      }
-      if (!isSelected && areaId === 'herreria' && !nextAreas.includes('corte-laser')) {
-        nextAreas.push('corte-laser');
-        nextTargets['corte-laser'] = nextTargets['corte-laser'] || 10;
-      }
-
-      if (isSelected) {
-        delete nextTargets[areaId];
-      } else {
-        nextTargets[areaId] = nextTargets[areaId] || 10;
-      }
-
-      return {
-        ...prev,
-        newGameAreas: nextAreas,
-        newGameTargets: nextTargets,
-      };
+  const handleCreateNewProjectNode = async () => {
+    if (!nodeModal.newProjName.trim() || !nodeModal.newProjClient.trim()) {
+      toast.danger('Nombre del proyecto y cliente son obligatorios.');
+      return;
+    }
+    const today = getTodayLocalDateStr();
+    const newId = await addProject({
+      name: nodeModal.newProjName.trim(),
+      client: nodeModal.newProjClient.trim(),
+      description: nodeModal.newProjDesc.trim() || 'Sin descripción',
+      startDate: nodeModal.newProjStartDate || today,
+      endDate: nodeModal.newProjEndDate || today,
+      status: nodeModal.newProjStatus || 'diseno',
     });
-  };
-
-  const handleWizardNext = () => {
-    if (wizard.step === 1) {
-      if (wizard.role === 'juego') {
-        if (proyectos.length === 0) {
-          setWizard((prev) => ({ ...prev, projectMode: 'new', step: 2 }));
-        } else {
-          setWizard((prev) => ({ ...prev, step: 2 }));
-        }
-      } else {
-        setWizard((prev) => ({ ...prev, step: 2 }));
-      }
-      return;
-    }
-
-    if (wizard.step === 2 && wizard.role === 'juego') {
-      if (wizard.projectMode === 'new') {
-        if (!wizard.newProjectName.trim() || !wizard.newProjectClient.trim()) {
-          toast.danger('Por favor ingresa el Nombre del Proyecto y el Cliente.');
-          return;
-        }
-      } else {
-        if (!wizard.projectId) {
-          toast.danger('Selecciona el proyecto al que pertenecerá el juego.');
-          return;
-        }
-      }
-      const availableGames = juegos.filter((j) => j.projectId === wizard.projectId);
-      const autoGameMode = (wizard.projectMode === 'new' || availableGames.length === 0) ? 'new' : 'existing';
-      setWizard((prev) => ({ ...prev, gameMode: autoGameMode, step: 3 }));
-      return;
-    }
-
-    if (wizard.step === 3 && wizard.role === 'juego') {
-      if (wizard.gameMode === 'new') {
-        if (!wizard.newGameName.trim()) {
-          toast.danger('Ingresa el nombre del juego / modelo.');
-          return;
-        }
-      } else {
-        if (!wizard.gameId) {
-          toast.danger('Selecciona un juego existente.');
-          return;
-        }
-      }
-      setWizard((prev) => ({
-        ...prev,
-        step: 4,
-        name: prev.name || (prev.gameMode === 'new' ? prev.newGameName.trim() : (juegos.find((j) => j.id === prev.gameId)?.name || 'Nodo de Juego')),
-      }));
-      return;
+    if (newId) {
+      spawnNode('proyecto', { draft: false, refId: newId, draftFields: {} });
+      closeNodeModal();
+      toast.success(`🗂️ Proyecto "${nodeModal.newProjName.trim()}" creado y agregado al lienzo.`);
     }
   };
 
-  const handleWizardBack = () => {
-    setWizard((prev) => ({ ...prev, step: Math.max(1, prev.step - 1) }));
+  const handleCreateNewGameNode = async () => {
+    if (!nodeModal.newGameName.trim()) {
+      toast.danger('El nombre del juego / modelo es obligatorio.');
+      return;
+    }
+    let chosenAreas = nodeModal.newGameAreas.length > 0 ? nodeModal.newGameAreas : ['herreria'];
+    if (chosenAreas.includes('herreria') && !chosenAreas.includes('corte-laser')) {
+      chosenAreas.push('corte-laser');
+    }
+    const targets = {};
+    chosenAreas.forEach((ar) => {
+      targets[ar] = Number(nodeModal.newGameTargets[ar]) || 10;
+    });
+
+    const matchingProj = proyectos.find((p) => p.id === nodeModal.newGameProjectId);
+    const newId = await addGame({
+      name: nodeModal.newGameName.trim(),
+      projectName: matchingProj?.name || 'General',
+      projectId: nodeModal.newGameProjectId || null,
+      areas: chosenAreas,
+      targetPieces: targets,
+    });
+    if (newId) {
+      spawnNode('juego', { draft: false, refId: newId, draftFields: {} });
+      closeNodeModal();
+      toast.success(`🎮 Juego "${nodeModal.newGameName.trim()}" creado y agregado al lienzo.`);
+    }
   };
 
-  const handleWizardFinish = async () => {
-    let finalProjectId = wizard.projectId;
-    let finalProjectName = proyectos.find((p) => p.id === finalProjectId)?.name || '';
+  const handleCreateNewActivityNode = async () => {
+    if (!nodeModal.newActTitle.trim()) {
+      toast.danger('El título de la actividad es obligatorio.');
+      return;
+    }
+    const newId = await addActividad({
+      title: nodeModal.newActTitle.trim(),
+      description: nodeModal.newActDesc.trim() || 'Sin descripción.',
+      areaId: nodeModal.newActAreaId || (dynamicAreas[0]?.id || 'herreria'),
+      priority: nodeModal.newActPriority || 'media',
+      dueDate: nodeModal.newActDueDate || null,
+    });
+    if (newId) {
+      spawnNode('actividad', { draft: false, refId: newId, draftFields: {} });
+      closeNodeModal();
+      toast.success(`📌 Actividad "${nodeModal.newActTitle.trim()}" creada y agregada.`);
+    }
+  };
 
-    // 1. Crear proyecto nuevo si aplica
-    if (wizard.projectMode === 'new' && (wizard.role === 'proyecto' || wizard.role === 'juego' || wizard.newProjectName.trim())) {
-      if (!wizard.newProjectName.trim() || !wizard.newProjectClient.trim()) {
-        toast.danger('Ingresa Nombre del Proyecto y Cliente.');
+  /**
+   * Valida si el usuario logueado tiene permiso para iniciar / terminar / reabrir una actividad:
+   * 1. Solo el colaborador asignado a la actividad (por operarioId, uid, email o nombre).
+   * 2. O el supervisor / encargado del área de la actividad.
+   * 3. O administradores / dirección / calidad general.
+   */
+  const canUserControlActivity = useCallback(
+    (act) => {
+      if (!user || !act) return false;
+      // 1. Roles administrativos y supervisión global
+      if (
+        user.role === 'admin' ||
+        user.roleType === 'admin' ||
+        user.roleType === 'director' ||
+        user.roleType === 'calidad' ||
+        user.roleType === 'gerencia'
+      ) {
+        return true;
+      }
+
+      // 2. Colaborador asignado directamente a la actividad
+      const assignedOperario = operarios.find((o) => o.id === act.operarioId);
+      const isDirectlyAssigned =
+        (user.operarioId && user.operarioId === act.operarioId) ||
+        (user.id && (user.id === act.operarioId || user.id === assignedOperario?.id)) ||
+        (user.uid && (user.uid === act.operarioId || user.uid === assignedOperario?.id)) ||
+        (assignedOperario && (
+          (assignedOperario.email && user.email && assignedOperario.email.toLowerCase() === user.email.toLowerCase()) ||
+          (assignedOperario.name && user.name && assignedOperario.name.trim().toLowerCase() === user.name.trim().toLowerCase())
+        ));
+
+      if (isDirectlyAssigned) return true;
+
+      // 3. Supervisor o Encargado del Área de la actividad
+      const supervisor = getSupervisorForArea(act.areaId);
+      const isAreaSupervisor =
+        (supervisor.id && (supervisor.id === user.id || supervisor.id === user.uid)) ||
+        ((user.roleType === 'supervisor-area' || user.roleType === 'encargado-area') && (
+          user.areaId === act.areaId ||
+          user.currentArea === act.areaId ||
+          (Array.isArray(user.assignedAreas) && user.assignedAreas.includes(act.areaId)) ||
+          (supervisor.name && user.name && supervisor.name.trim().toLowerCase() === user.name.trim().toLowerCase())
+        ));
+
+      if (isAreaSupervisor) return true;
+
+      return false;
+    },
+    [user, operarios, getSupervisorForArea]
+  );
+
+  /**
+   * Inicia una actividad pasando su estatus a 'proceso' y fijando startedAt en Firestore
+   */
+  const handleStartActivity = useCallback(
+    async (activityId, title) => {
+      if (!db || !activityId) return;
+      const act = actividades.find((a) => a.id === activityId);
+      if (act && !canUserControlActivity(act)) {
+        toast.warning('🔒 Solo el colaborador asignado o el supervisor de esta área pueden iniciar esta actividad.');
         return;
       }
-      const today = getTodayLocalDateStr();
       try {
-        finalProjectId = await addProject({
-          name: wizard.newProjectName.trim(),
-          client: wizard.newProjectClient.trim(),
-          description: wizard.newProjectDesc.trim() || 'Sin descripción',
-          startDate: wizard.newProjectStartDate || today,
-          endDate: wizard.newProjectEndDate || today,
-          status: wizard.newProjectStatus || 'diseno',
+        await updateDoc(doc(db, 'actividades', activityId), {
+          status: 'proceso',
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         });
-        finalProjectName = wizard.newProjectName.trim();
-        toast.success(`🗂️ Proyecto "${finalProjectName}" registrado.`);
+        toast.success(`⚡ Actividad "${title || 'Actividad'}" iniciada.`);
       } catch (err) {
-        console.error('Error creando proyecto en wizard:', err);
+        console.error('Error al iniciar actividad:', err);
+        toast.danger('Error al iniciar la actividad en el servidor.');
       }
+    },
+    [actividades, canUserControlActivity, toast]
+  );
+
+  /**
+   * Abre modal para completar la actividad con notas de entrega
+   */
+  const handleOpenCompleteModal = useCallback((activityId, title) => {
+    const act = actividades.find((a) => a.id === activityId);
+    if (act && !canUserControlActivity(act)) {
+      toast.warning('🔒 Solo el colaborador asignado o el supervisor de esta área pueden marcar como terminada esta actividad.');
+      return;
     }
+    setCompleteModal({
+      isOpen: true,
+      activityId,
+      title,
+      notes: 'Actividad concluida satisfactoriamente.',
+    });
+  }, [actividades, canUserControlActivity, toast]);
 
-    let finalGameId = wizard.gameId;
-
-    // 2. Crear juego nuevo si aplica
-    if (wizard.role === 'juego' && wizard.gameMode === 'new') {
-      if (!wizard.newGameName.trim()) {
-        toast.danger('Ingresa el nombre del juego.');
-        return;
-      }
-      let chosenAreas = wizard.newGameAreas && wizard.newGameAreas.length > 0
-        ? wizard.newGameAreas
-        : [wizard.areaId || 'herreria'];
-
-      if (chosenAreas.includes('herreria') && !chosenAreas.includes('corte-laser')) {
-        chosenAreas.push('corte-laser');
-      }
-
-      const targets = {};
-      chosenAreas.forEach((ar) => {
-        targets[ar] = Number(wizard.newGameTargets?.[ar]) || 10;
+  /**
+   * Confirma la finalización de la actividad y fija completedAt en Firestore
+   */
+  const handleConfirmCompleteActivity = useCallback(async () => {
+    if (!completeModal.activityId || !db) return;
+    try {
+      await updateDoc(doc(db, 'actividades', completeModal.activityId), {
+        status: 'completado',
+        completedAt: new Date().toISOString(),
+        completionNotes: completeModal.notes.trim() || 'Actividad concluida satisfactoriamente.',
+        updatedAt: new Date().toISOString(),
       });
-
-      try {
-        finalGameId = await addGame({
-          name: wizard.newGameName.trim(),
-          projectName: finalProjectName || 'General',
-          projectId: finalProjectId || null,
-          areas: chosenAreas,
-          targetPieces: targets,
-        });
-        toast.success(`🎮 Juego "${wizard.newGameName.trim()}" registrado.`);
-      } catch (err) {
-        console.error('Error creando juego en wizard:', err);
-      }
+      toast.success(`✅ Actividad "${completeModal.title}" completada.`);
+      setCompleteModal({ isOpen: false, activityId: null, title: '', notes: '' });
+    } catch (err) {
+      console.error('Error al completar actividad:', err);
+      toast.danger('Error al marcar la actividad como completada.');
     }
+  }, [completeModal, toast]);
 
-    const defaultNodeName =
-      wizard.name.trim() ||
-      (wizard.role === 'proyecto'
-        ? (wizard.projectMode === 'new' ? wizard.newProjectName : finalProjectName || 'Proyecto')
-        : wizard.role === 'juego'
-        ? (wizard.gameMode === 'new' ? wizard.newGameName : juegos.find((j) => j.id === finalGameId)?.name || 'Juego')
-        : 'Nodo de Trabajo');
+  /**
+   * Reabre o cambia de estado una actividad
+   */
+  const handleResetActivityStatus = useCallback(
+    async (activityId, targetStatus = 'pendiente') => {
+      if (!db || !activityId) return;
+      const act = actividades.find((a) => a.id === activityId);
+      if (act && !canUserControlActivity(act)) {
+        toast.warning('🔒 No tienes permisos para cambiar el estado de esta actividad.');
+        return;
+      }
+      try {
+        const updates = {
+          status: targetStatus,
+          updatedAt: new Date().toISOString(),
+        };
+        if (targetStatus === 'pendiente') {
+          updates.startedAt = null;
+          updates.completedAt = null;
+          updates.completionNotes = '';
+        } else if (targetStatus === 'proceso') {
+          updates.completedAt = null;
+        }
+        await updateDoc(doc(db, 'actividades', activityId), updates);
+        toast.info(`🔄 Estado de la actividad cambiado a "${targetStatus}".`);
+      } catch (err) {
+        console.error('Error al cambiar estado de actividad:', err);
+      }
+    },
+    [actividades, canUserControlActivity, toast]
+  );
 
+  const handleCreateNewBlockNode = () => {
     spawnNode('bloque', {
-      blockName: defaultNodeName,
-      nodeRole: wizard.role,
-      projectId: finalProjectId || null,
-      gameId: finalGameId || null,
-      areaId: wizard.areaId || (dynamicAreas[0]?.id || 'herreria'),
-      operarioId: wizard.operarioId || null,
+      blockName: nodeModal.newBlockName.trim() || 'Nodo de Trabajo',
+      areaId: nodeModal.newBlockAreaId || (dynamicAreas[0]?.id || 'herreria'),
+      projectId: null,
+      gameId: null,
+      operarioId: null,
       activityIds: [],
     });
-
-    closeWizard();
-    toast.success('📦 Nodo creado con éxito en el lienzo.');
+    closeNodeModal();
+    toast.success(`📦 Bloque "${nodeModal.newBlockName.trim() || 'Nodo de Trabajo'}" creado en el lienzo.`);
   };
 
   /** Actualiza cualquier propiedad de un Bloque (nombre, proyecto, juego, área, colaborador) */
@@ -1100,6 +1641,33 @@ const EditorVisualPage = ({ standalone = false }) => {
     setNodes((prev) => {
       const next = prev.map((n) => (n.id === nodeId ? { ...n, [field]: value } : n));
       saveToFirestore(next, edges);
+      return next;
+    });
+  };
+
+  /** Permite personalizar el color de cualquier nodo */
+  const updateNodeColor = (nodeId, color) => {
+    setNodes((prev) => {
+      const next = prev.map((n) => (n.id === nodeId ? { ...n, customColor: color } : n));
+      saveToFirestore(next, edges);
+      return next;
+    });
+  };
+
+  /** Permite personalizar el color del cable / conexión */
+  const updateEdgeColor = (edgeId, color) => {
+    setEdges((prev) => {
+      const next = prev.map((e) => (e.id === edgeId ? { ...e, customColor: color } : e));
+      saveToFirestore(nodes, next);
+      return next;
+    });
+  };
+
+  /** Permite cambiar el estilo de línea del cable (solido, dashed, grueso) */
+  const updateEdgeStyle = (edgeId, style) => {
+    setEdges((prev) => {
+      const next = prev.map((e) => (e.id === edgeId ? { ...e, style } : e));
+      saveToFirestore(nodes, next);
       return next;
     });
   };
@@ -1382,12 +1950,9 @@ const EditorVisualPage = ({ standalone = false }) => {
   };
 
   const handleOpenStandalone = () => {
-    if (!proyectoActivoId) {
-      toast.warning('Por favor selecciona un proyecto primero.');
-      return;
-    }
+    if (!lienzoActivoId) return;
     window.open(
-      `/editor-visual/ventana?proyectoId=${proyectoActivoId}`,
+      `/editor-visual/ventana?lienzoId=${lienzoActivoId}`,
       'DicrejartEditorVisual',
       'width=1680,height=960,menubar=no,toolbar=no,location=no,status=no'
     );
@@ -1428,27 +1993,34 @@ const EditorVisualPage = ({ standalone = false }) => {
         accentColor="var(--color-secondary)"
       >
         {!standalone && (
-          <div style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '8px' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', verticalAlign: 'middle', marginRight: '8px' }}>
             <select
-              value={proyectoActivoId}
-              onChange={(e) => setProyectoActivoId(e.target.value)}
+              value={lienzoActivoId}
+              onChange={(e) => setLienzoActivoId(e.target.value)}
               style={{
                 padding: '8px 12px',
                 borderRadius: '6px',
                 border: '1px solid var(--color-gray-300)',
                 backgroundColor: 'var(--input-bg, var(--color-white))',
                 color: 'var(--color-dark)',
-                minWidth: '200px',
+                minWidth: '220px',
                 cursor: 'pointer',
               }}
             >
-              <option value="" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>Seleccionar Proyecto...</option>
+              <optgroup label="🎨 Lienzos Libres y Bocetos" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
+                <option value="general">🎨 Lienzo General (Boceto Libre)</option>
+                {lienzosList
+                  .filter((l) => l.id !== 'general' && !proyectos.some((p) => p.id === l.id))
+                  .map((l) => (
+                    <option key={l.id} value={l.id}>{l.name || 'Lienzo Visual'}</option>
+                  ))}
+              </optgroup>
               {proyectos.filter((p) => p.status !== 'completado').length > 0 && (
                 <optgroup label="⚡ Proyectos Activos" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
                   {proyectos
                     .filter((p) => p.status !== 'completado')
                     .map((p) => (
-                      <option key={p.id} value={p.id} style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>{p.name}</option>
+                      <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                 </optgroup>
               )}
@@ -1457,11 +2029,73 @@ const EditorVisualPage = ({ standalone = false }) => {
                   {proyectos
                     .filter((p) => p.status === 'completado')
                     .map((p) => (
-                      <option key={p.id} value={p.id} style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>{p.name} (Completado)</option>
+                      <option key={p.id} value={p.id}>{p.name} (Completado)</option>
                     ))}
                 </optgroup>
               )}
             </select>
+
+            {canEditDiagram && (
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setNewLienzoModal({ isOpen: true, name: '' })}
+                  title="Crear un nuevo lienzo visual independiente"
+                >
+                  ➕ Nuevo Lienzo
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleManualSaveCanvas}
+                  title="Guardar manualmente todos los cambios en Firestore y en tu almacenamiento local"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                  }}
+                >
+                  {saveStatus === 'saving' ? '⏳ Guardando...' : '💾 Guardar Lienzo'}
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setManageLienzosModal(true)}
+                  title="Ver lista de todos los lienzos y eliminar los que ya no necesites"
+                >
+                  📂 Gestionar Lienzos
+                </Button>
+
+                {isCurrentLienzoDeletable && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => setDeleteLienzoConfirm(true)}
+                    title="Eliminar este lienzo visual independiente"
+                  >
+                    🗑️ Eliminar Lienzo
+                  </Button>
+                )}
+
+                <span
+                  style={{
+                    fontSize: '11.5px',
+                    color: saveStatus === 'saving' ? 'var(--color-primary, #ea580c)' : '#10b981',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    marginLeft: '4px',
+                  }}
+                  title="Tus cambios se guardan automáticamente en Firestore y en tu navegador"
+                >
+                  {saveStatus === 'saving' ? '⏳ Guardando...' : '☁️ Guardado en vivo'}
+                </span>
+              </>
+            )}
           </div>
         )}
         {standalone && (
@@ -1473,18 +2107,17 @@ const EditorVisualPage = ({ standalone = false }) => {
           <Button
             variant="secondary"
             size="md"
-            disabled={!proyectoActivoId}
             onClick={handleOpenStandalone}
           >
             🗔 Abrir en Ventana Aparte
           </Button>
         )}
-        {proyectoActivoId && canEditDiagram && nodes.length > 0 && (
+        {canEditDiagram && nodes.length > 0 && (
           <Button variant="secondary" size="md" onClick={handleAutoArrange}>
             🧹 Reorganizar
           </Button>
         )}
-        {proyectoActivoId && nodes.length > 0 && (
+        {nodes.length > 0 && (
           <Button variant="secondary" size="md" onClick={handleExportDiagram} isLoading={isExporting}>
             📥 Exportar PNG
           </Button>
@@ -1494,80 +2127,248 @@ const EditorVisualPage = ({ standalone = false }) => {
         </Button>
       </PageHeader>
 
-      {proyectoActivoId ? (
-        <div className={styles.workspace}>
-          {/* ---------- Rail: paleta + leyenda ---------- */}
-          <aside className={styles.rail}>
-            {canEditDiagram ? (
-              <div>
-                <h2 className={styles.railTitle}>Estructura</h2>
-                <div className={styles.palette}>
+      <div className={styles.workspace}>
+          {/* ---------- Botón Flotante Circular: Abre/Cierra Panel de Herramientas ---------- */}
+          <button
+            type="button"
+            className={`${styles.floatingTriggerBtn} ${isLeftRailOpen ? styles.floatingTriggerBtnActive : ''}`}
+            onClick={() => setIsLeftRailOpen((prev) => !prev)}
+            title={isLeftRailOpen ? 'Cerrar panel de herramientas (Espacio limpio)' : 'Abrir herramientas y nodos (➕)'}
+          >
+            {isLeftRailOpen ? '✕' : '➕'}
+          </button>
+
+          {/* ---------- Panel Flotante Translúcido (Glassmorphism) ---------- */}
+          <AnimatePresence>
+            {isLeftRailOpen && (
+              <motion.aside
+                className={styles.floatingLeftRail}
+                initial={{ opacity: 0, scale: 0.88, x: -12, y: -12 }}
+                animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
+                exit={{ opacity: 0, scale: 0.88, x: -12, y: -12 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <div className={styles.floatingRailHeader}>
+                  <h2 className={styles.railTitle}>Herramientas del Lienzo</h2>
                   <button
                     type="button"
-                    className={styles.addNodeMainBtn}
-                    onClick={openBlockSetup}
-                    title="Crear un nuevo nodo de trabajo integral con proyecto, juego, área y actividades"
+                    className={styles.floatingCloseBtn}
+                    onClick={() => setIsLeftRailOpen(false)}
+                    title="Cerrar panel flotante"
                   >
-                    <span style={{ fontSize: '18px' }}>➕</span>
-                    <div style={{ textAlign: 'left' }}>
-                      <strong style={{ display: 'block', fontSize: '13.5px', letterSpacing: '-0.01em' }}>Agregar Nodo</strong>
-                      <small style={{ fontSize: '11px', opacity: 0.9, fontWeight: 400 }}>Configuración de proyecto y actividades</small>
-                    </div>
+                    ✕
                   </button>
                 </div>
-              </div>
-            ) : (
-              <div className={styles.calloutBox} style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--color-gray-400)', fontSize: '12px' }}>
-                ℹ️ Solo los Administradores pueden editar o arrastrar nodos en el diagrama.
-              </div>
-            )}
 
-            <div>
-              <h2 className={styles.railTitle}>Buscar Nodo</h2>
-              <input
-                type="text"
-                className={styles.searchInput}
-                placeholder="Buscar por nombre..."
-                value={nodeSearch}
-                onChange={(e) => setNodeSearch(e.target.value)}
-              />
-              {nodeSearch.trim() && (
-                <div className={styles.searchResults}>
-                  {nodeSearchMatches.map((n) => (
+                {/* Sección de Gestión Rápida del Lienzo Actual */}
+                <div style={{ marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', marginBottom: '4px' }}>
+                    🎨 Lienzo Activo
+                  </div>
+                  <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {lienzosList.find((l) => l.id === lienzoActivoId)?.name || proyectos.find((p) => p.id === lienzoActivoId)?.name || '🎨 Lienzo General'}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                     <button
-                      key={n.id}
                       type="button"
-                      className={styles.searchResultItem}
-                      onClick={() => handleFocusNode(n)}
+                      className={styles.wireToolbarBtn}
+                      onClick={() => {
+                        setManageLienzosModal(true);
+                        setIsLeftRailOpen(false);
+                      }}
+                      title="Ver todos tus lienzos y eliminar los que desees"
+                      style={{ fontSize: '11px', padding: '4px 8px' }}
                     >
-                      {NODE_TYPES[n.type].icon} <span>{nodeTitle(n)}</span>
+                      📂 Gestionar / Eliminar
                     </button>
-                  ))}
-                  {nodeSearchMatches.length === 0 && (
-                    <div className={styles.searchResultEmpty}>Sin coincidencias.</div>
+                    {nodes.length > 0 && (
+                      <button
+                        type="button"
+                        className={styles.wireToolbarBtn}
+                        onClick={() => setClearNodesConfirm(true)}
+                        title="Quitar todos los nodos de este lienzo"
+                        style={{ fontSize: '11px', padding: '4px 8px', color: 'var(--color-alert)' }}
+                      >
+                        🧹 Vaciar
+                      </button>
+                    )}
+                    {isCurrentLienzoDeletable && (
+                      <button
+                        type="button"
+                        className={styles.wireToolbarBtn}
+                        onClick={() => setDeleteLienzoConfirm(true)}
+                        title="Eliminar permanentemente este lienzo"
+                        style={{ fontSize: '11px', padding: '4px 8px', color: '#dc2626', fontWeight: 700 }}
+                      >
+                        🗑️ Eliminar
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {canEditDiagram ? (
+                  <div className={styles.palette}>
+                    <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', marginBottom: '8px' }}>
+                      ➕ Agregar Nodos al Lienzo
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className={styles.paletteNodeBtn}
+                        style={{ '--btn-theme': '#2563eb' }}
+                        onClick={() => {
+                          openNodeModal('proyecto');
+                          setIsLeftRailOpen(false);
+                        }}
+                        title="Agregar nodo de Proyecto"
+                      >
+                        <span style={{ fontSize: '18px' }}>🗂️</span>
+                        <div>
+                          <strong>Proyecto</strong>
+                          <small>Cliente / Orden</small>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.paletteNodeBtn}
+                        style={{ '--btn-theme': '#0d9488' }}
+                        onClick={() => {
+                          openNodeModal('juego');
+                          setIsLeftRailOpen(false);
+                        }}
+                        title="Agregar nodo de Juego o Modelo 3D"
+                      >
+                        <span style={{ fontSize: '18px' }}>🎮</span>
+                        <div>
+                          <strong>Juego / Modelo</strong>
+                          <small>Estructura física</small>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.paletteNodeBtn}
+                        style={{ '--btn-theme': '#9333ea' }}
+                        onClick={() => {
+                          openNodeModal('colaborador');
+                          setIsLeftRailOpen(false);
+                        }}
+                        title="Agregar nodo de Colaborador / Personal"
+                      >
+                        <span style={{ fontSize: '18px' }}>👷</span>
+                        <div>
+                          <strong>Colaborador</strong>
+                          <small>Operario / Personal</small>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.paletteNodeBtn}
+                        style={{ '--btn-theme': '#6366f1' }}
+                        onClick={() => {
+                          openNodeModal('area');
+                          setIsLeftRailOpen(false);
+                        }}
+                        title="Agregar estación de Taller de Manufactura"
+                      >
+                        <span style={{ fontSize: '18px' }}>🏭</span>
+                        <div>
+                          <strong>Área de Taller</strong>
+                          <small>Estación de planta</small>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.paletteNodeBtn}
+                        style={{ '--btn-theme': '#d97706' }}
+                        onClick={() => {
+                          openNodeModal('actividad');
+                          setIsLeftRailOpen(false);
+                        }}
+                        title="Agregar nodo de Actividad / Tarea"
+                      >
+                        <span style={{ fontSize: '18px' }}>📌</span>
+                        <div>
+                          <strong>Actividad</strong>
+                          <small>Tarea individual</small>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.paletteNodeBtn}
+                        style={{ '--btn-theme': '#ea580c' }}
+                        onClick={() => {
+                          openNodeModal('bloque');
+                          setIsLeftRailOpen(false);
+                        }}
+                        title="Agregar Celda Modular de Trabajo"
+                      >
+                        <span style={{ fontSize: '18px' }}>📦</span>
+                        <div>
+                          <strong>Celda Trabajo</strong>
+                          <small>Grupo modular</small>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={styles.calloutBox} style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--color-gray-400)', fontSize: '12px' }}>
+                    ℹ️ Solo los Administradores pueden editar o arrastrar nodos en el diagrama.
+                  </div>
+                )}
+
+                <div>
+                  <h2 className={styles.railTitle} style={{ marginBottom: '6px' }}>Buscar Nodo</h2>
+                  <input
+                    type="text"
+                    className={styles.searchInput}
+                    placeholder="Buscar por nombre..."
+                    value={nodeSearch}
+                    onChange={(e) => setNodeSearch(e.target.value)}
+                  />
+                  {nodeSearch.trim() && (
+                    <div className={styles.searchResults}>
+                      {nodeSearchMatches.map((n) => (
+                        <button
+                          key={n.id}
+                          type="button"
+                          className={styles.searchResultItem}
+                          onClick={() => {
+                            handleFocusNode(n);
+                            setIsLeftRailOpen(false);
+                          }}
+                        >
+                          {NODE_TYPES[n.type].icon} <span>{nodeTitle(n)}</span>
+                        </button>
+                      ))}
+                      {nodeSearchMatches.length === 0 && (
+                        <div className={styles.searchResultEmpty}>Sin coincidencias.</div>
+                      )}
+                    </div>
                   )}
                 </div>
-              )}
-            </div>
 
-            <div>
-              <h2 className={styles.railTitle}>Qué Significa Cada Línea</h2>
-              <ul className={styles.legend}>
-                <li><span className={styles.dot} style={{ background: 'var(--color-secondary)' }} /><span>Proyecto → Juego: <em>pertenece a</em></span></li>
-                <li><span className={styles.dot} style={{ background: 'var(--color-tiffany-blue)' }} /><span>Juego → Área: <em>requiere</em></span></li>
-                <li><span className={styles.dot} style={{ background: 'var(--color-princeton-orange)' }} /><span>Área ↔ Colaborador: <em>asignado a</em></span></li>
-                <li><span className={styles.dot} style={{ background: 'var(--color-princeton-orange)' }} /><span>Área → Actividad: <em>incluye</em></span></li>
-                <li><span className={styles.dot} style={{ background: 'var(--color-golden-yellow)' }} /><span>Actividad → Colaborador: <em>responsable</em></span></li>
-              </ul>
-            </div>
+                <div>
+                  <h2 className={styles.railTitle} style={{ marginBottom: '6px' }}>Qué Significa Cada Línea</h2>
+                  <ul className={styles.legend}>
+                    <li><span className={styles.dot} style={{ background: 'var(--color-secondary)' }} /><span>Proyecto → Juego: <em>pertenece a</em></span></li>
+                    <li><span className={styles.dot} style={{ background: 'var(--color-tiffany-blue)' }} /><span>Juego → Área: <em>requiere</em></span></li>
+                    <li><span className={styles.dot} style={{ background: 'var(--color-princeton-orange)' }} /><span>Área ↔ Colaborador: <em>asignado a</em></span></li>
+                    <li><span className={styles.dot} style={{ background: 'var(--color-princeton-orange)' }} /><span>Área → Actividad: <em>incluye</em></span></li>
+                    <li><span className={styles.dot} style={{ background: 'var(--color-golden-yellow)' }} /><span>Actividad → Colaborador: <em>responsable</em></span></li>
+                  </ul>
+                </div>
 
-            <p className={styles.hint}>
-              Arrastra desde el punto derecho de un nodo hasta el punto izquierdo de otro para conectar. Haz clic
-              en un nodo para ver o guardar sus datos a la derecha. Arrastra el fondo del lienzo para desplazarte
-              si tienes varios nodos. Ningún cambio real ocurre hasta que lo confirmes explícitamente en el panel
-              derecho.
-            </p>
-          </aside>
+                <p className={styles.hint}>
+                  💡 Conecta arrastrando los puntos entre nodos. Los paneles flotantes te dan el 100% de espacio libre en tu pantalla.
+                </p>
+              </motion.aside>
+            )}
+          </AnimatePresence>
 
           {/* ---------- Lienzo de Ingeniería CAD (Inventor / SolidWorks Style) ---------- */}
           <div
@@ -1660,8 +2461,8 @@ const EditorVisualPage = ({ standalone = false }) => {
                   const fromNode = findNode(edge.from);
                   const toNode = findNode(edge.to);
                   if (!fromNode || !toNode) return null;
-                  const p1 = portPos(fromNode, 'out');
-                  const p2 = portPos(toNode, 'in');
+
+                  const { path: pathData, p1, p2 } = getSmartWirePath(fromNode, toNode);
 
                   const juegoEntity = fromNode.type === 'juego' ? getLinkedEntity(fromNode) : null;
                   const areaEntity = toNode.type === 'area' ? getLinkedEntity(toNode) : null;
@@ -1669,59 +2470,77 @@ const EditorVisualPage = ({ standalone = false }) => {
                     juegoEntity && areaEntity && isAreaBlockedBySequence(juegoEntity, areaEntity.id)
                   );
 
-                  const pathData = bezierPath(p1, p2);
-                  const color = isBlockedLink ? 'var(--color-alert)' : NODE_TYPES[fromNode.type].colorVar;
+                  const nodeColor = fromNode.customColor || NODE_TYPES[fromNode.type]?.colorVar || '#ea580c';
+                  const wireColor = edge.customColor || (isBlockedLink ? '#ef4444' : nodeColor);
+                  
+                  // LAS LÍNEAS SON PUNTEADAS (DASHED) POR DEFECTO
+                  const isDashed = edge.style !== 'solid';
+                  const isSelected = selectedEdgeId === edge.id;
 
                   return (
-                    <g key={edge.id} className={styles.wireGroup}>
-                      {/* Trazo base de cable físico flexible */}
+                    <g key={edge.id} className={`${styles.wireGroup} ${isSelected ? styles.wireGroupSelected : ''}`}>
+                      {/* Trazo de halo suave / Resplandor cuando está seleccionado */}
                       <path
                         d={pathData}
-                        className={styles.wireBase}
-                        stroke={color}
+                        fill="none"
+                        stroke={isSelected ? '#ffffff' : wireColor}
+                        strokeWidth={isSelected ? '10' : '7'}
+                        strokeOpacity={isSelected ? '0.45' : '0.2'}
+                        style={{ pointerEvents: 'none' }}
                       />
-                      {/* Línea punteada técnica de conexión interactiva */}
+                      {/* Trazo de cable punteado interactivo */}
                       <path
                         d={pathData}
-                        className={`${styles.wirePath} ${styles.wireDashed}`}
-                        stroke={color}
-                        strokeDasharray={isBlockedLink ? '4 4' : '7 5'}
-                        onClick={() => {
-                          if (!canEditDiagram) return;
-                          const nextEdges = edges.filter((e) => e.id !== edge.id);
-                          setEdges(nextEdges);
-                          saveToFirestore(nodes, nextEdges);
+                        fill="none"
+                        stroke={wireColor}
+                        strokeWidth={edge.style === 'thick' ? '3.8' : (isSelected ? '3.5' : '2.8')}
+                        strokeDasharray={isDashed ? (isBlockedLink ? '5 4' : '7 5') : 'none'}
+                        className={`${styles.wirePath} ${isDashed ? styles.wireDashed : ''} ${isSelected ? styles.wireSelected : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEdgeId(isSelected ? null : edge.id);
+                          setSelectedNodeId(null);
                         }}
                       >
                         <title>
                           {isBlockedLink
-                            ? `🔒 Bloqueado: ${dynamicAreas.find((a) => a.id === AREA_SEQUENCE_DEPENDENCIES[areaEntity.id])?.name} todavía no completa su meta. Clic para eliminar este cable.`
-                            : 'Clic para desconectar este cable'}
+                            ? `🔒 Bloqueado: ${dynamicAreas.find((a) => a.id === AREA_SEQUENCE_DEPENDENCIES[areaEntity.id])?.name} todavía no completa su meta. Clic para cambiar color o desconectar.`
+                            : 'Clic en este cable para cambiar su color o desconectarlo'}
                         </title>
                       </path>
+                      {/* Puntos terminales en los puertos */}
+                      <circle cx={p1.x} cy={p1.y} r={isSelected ? '5' : '3.8'} fill={wireColor} stroke="#ffffff" strokeWidth="1.8" />
+                      <circle cx={p2.x} cy={p2.y} r={isSelected ? '5' : '3.8'} fill={wireColor} stroke="#ffffff" strokeWidth="1.8" />
                     </g>
                   );
                 })}
                 {previewWire && (
-                  <path className={styles.wirePreview} d={bezierPath({ x: previewWire.x1, y: previewWire.y1 }, { x: previewWire.x2, y: previewWire.y2 })} />
+                  <path
+                    className={styles.wirePreview}
+                    d={previewBezier({ x: previewWire.x1, y: previewWire.y1 }, { x: previewWire.x2, y: previewWire.y2 })}
+                  />
                 )}
               </svg>
 
               {nodes.map((node) => {
-                const meta = NODE_TYPES[node.type];
+                const meta = NODE_TYPES[node.type] || NODE_TYPES.bloque;
+                const nodeThemeColor = node.customColor || meta.colorVar;
+                const entity = getLinkedEntity(node);
+
                 return (
                   <div
                     key={node.id}
+                    data-type={node.type}
                     className={`${styles.node} ${selectedNodeId === node.id ? styles.selected : ''}`}
-                    style={{ left: node.x, top: node.y, width: NODE_WIDTH, '--node-color': meta.colorVar }}
+                    style={{ left: node.x, top: node.y, width: NODE_WIDTH, '--node-color': nodeThemeColor }}
                     onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                   >
                     <div className={styles.nodeHead}>
                       <span className={styles.nodeIcon}>{meta.icon}</span>
                       <span className={styles.nodeTitle}>{nodeTitle(node)}</span>
-                      {node.type !== 'area' && node.type !== 'bloque' && (
-                        <span className={styles.nodeBadge}>{node.draft ? '🆕 Nuevo' : '🔗 Existente'}</span>
-                      )}
+                      <span className={styles.nodeBadge}>
+                        {node.type === 'bloque' ? 'TRABAJO' : (node.draft ? 'NUEVO' : meta.badgeText)}
+                      </span>
                       {canEditDiagram && (
                         <button
                           type="button"
@@ -1734,38 +2553,448 @@ const EditorVisualPage = ({ standalone = false }) => {
                         </button>
                       )}
                     </div>
+
                     <div
                       className={styles.nodeBody}
                       onMouseDown={(e) => node.type === 'bloque' && e.stopPropagation()}
                       onClick={() => node.type === 'bloque' && toggleBlockExpanded(node.id)}
                       style={node.type === 'bloque' ? { cursor: 'pointer' } : undefined}
                     >
-                      <span className={styles.nodeEyebrow}>{meta.label}</span>
-                      {node.type === 'bloque' ? (
-                        <div className={styles.nodeBadgesGrid}>
-                          <div className={styles.nodeBadgeTag} title="Proyecto">
-                            🗂️ {proyectos.find((p) => p.id === node.projectId)?.name || 'Sin proyecto'}
-                          </div>
-                          <div className={styles.nodeBadgeTag} title="Juego">
-                            🎮 {juegos.find((j) => j.id === node.gameId)?.name || 'Sin juego'}
-                          </div>
-                          <div className={styles.nodeBadgeTag} title="Área">
-                            🏭 {allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId}
-                          </div>
-                          <div className={styles.nodeBadgeTag} title="Responsable">
-                            👷 {operarios.find((o) => o.id === node.operarioId)?.name || (
-                              getConnectedColaboradorNode(node.id) ? nodeTitle(getConnectedColaboradorNode(node.id)) : 'Sin asignar'
+                      {/* DISEÑO DISTINTIVO POR TIPO DE NODO */}
+                      {node.type === 'proyecto' && (
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '3px' }}>
+                            <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>🗂️ PROYECTO EJECUTIVO</span>
+                            {entity?.status && (
+                              <span style={{ fontSize: '9.5px', padding: '1px 5px', borderRadius: '4px', background: 'rgba(37, 99, 235, 0.15)', color: nodeThemeColor, fontWeight: 800 }}>
+                                {entity.status.toUpperCase()}
+                              </span>
                             )}
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
-                            <span>📌 {(node.activityIds || []).length} actividades</span>
-                            <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{expandedBlocks.has(node.id) ? '▲ Ocultar' : '▼ Ver detalles'}</span>
+                          <div className={styles.nodeTag}>
+                            {entity ? (
+                              <>
+                                <div style={{ fontSize: '12px', fontWeight: 700 }}>
+                                  🏢 Cliente: {entity.client || 'General'}
+                                </div>
+                                <div style={{ width: '100%', height: '6px', background: 'rgba(0,0,0,0.08)', borderRadius: '3px', marginTop: '6px', overflow: 'hidden' }}>
+                                  <div style={{ width: `${entity.progress ?? 0}%`, height: '100%', background: nodeThemeColor }} />
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                                  <span>Progreso Global</span>
+                                  <strong>{entity.progress ?? 0}%</strong>
+                                </div>
+                              </>
+                            ) : (
+                              node.draft ? '🆕 Borrador de Proyecto' : 'Proyecto del sistema'
+                            )}
                           </div>
                         </div>
-                      ) : (
-                        <span className={styles.nodeTag}>
-                          {nodeSummary(node)}
-                        </span>
+                      )}
+
+                      {node.type === 'juego' && (
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                            <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>🎮 MODELO DE JUEGO</span>
+                            {entity?.status && (
+                              <span style={{ fontSize: '9.5px', padding: '1px 5px', borderRadius: '4px', background: 'rgba(13, 148, 136, 0.15)', color: nodeThemeColor, fontWeight: 800 }}>
+                                {entity.status.toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+                          <div className={styles.nodeTag}>
+                            {entity ? (
+                              <>
+                                {/* Proyecto vinculado: detectado por cable o por projectId */}
+                                {(() => {
+                                  const connectedProjEdge = edges.find(
+                                    (e) =>
+                                      (e.from === node.id && findNode(e.to)?.type === 'proyecto') ||
+                                      (e.to === node.id && findNode(e.from)?.type === 'proyecto')
+                                  );
+                                  const connectedProjNode = connectedProjEdge
+                                    ? findNode(findNode(connectedProjEdge.from)?.type === 'proyecto' ? connectedProjEdge.from : connectedProjEdge.to)
+                                    : null;
+                                  const projName = connectedProjNode
+                                    ? nodeTitle(connectedProjNode)
+                                    : (entity.projectName && entity.projectName !== 'General'
+                                      ? entity.projectName
+                                      : (entity.projectId ? proyectos.find((p) => p.id === entity.projectId)?.name : null));
+
+                                  return (
+                                    <div style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--color-secondary, #2563eb)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                      <span>🗂️</span> <span>{projName ? `Proyecto: ${projName}` : 'Sin proyecto vinculado (conectar cable)'}</span>
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Áreas requeridas en ruta de fabricación */}
+                                {entity.areas && entity.areas.length > 0 && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '4px 0' }}>
+                                    {entity.areas.map((arId) => {
+                                      const aName = dynamicAreas.find((a) => a.id === arId)?.name || arId;
+                                      return (
+                                        <span key={arId} style={{ fontSize: '10px', background: 'rgba(13, 148, 136, 0.12)', color: nodeThemeColor, padding: '2px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                          🏭 {aName}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                {/* Barra de avance */}
+                                <div style={{ width: '100%', height: '5px', background: 'rgba(0,0,0,0.08)', borderRadius: '3px', marginTop: '6px', overflow: 'hidden' }}>
+                                  <div style={{ width: `${entity.progress ?? 0}%`, height: '100%', background: nodeThemeColor }} />
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '10.5px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                                  <span>Avance de Fabricación</span>
+                                  <strong>{entity.progress ?? 0}%</strong>
+                                </div>
+
+                                {/* Colaborador responsable si está conectado */}
+                                {(() => {
+                                  const connectedColabEdge = edges.find(
+                                    (e) =>
+                                      (e.from === node.id && findNode(e.to)?.type === 'colaborador') ||
+                                      (e.to === node.id && findNode(e.from)?.type === 'colaborador')
+                                  );
+                                  const colabNode = connectedColabEdge
+                                    ? findNode(findNode(connectedColabEdge.from)?.type === 'colaborador' ? connectedColabEdge.from : connectedColabEdge.to)
+                                    : null;
+                                  const directOperario = operarios.find((o) => o.id === entity.operarioId);
+                                  const respName = directOperario?.name || (colabNode ? nodeTitle(colabNode) : null);
+
+                                  return respName ? (
+                                    <div style={{ fontSize: '11px', color: 'var(--color-gray-700)', marginTop: '4px', paddingTop: '3px', borderTop: '1px dashed rgba(0,0,0,0.08)' }}>
+                                      👷 Responsable: <strong>{respName}</strong>
+                                    </div>
+                                  ) : null;
+                                })()}
+                              </>
+                            ) : (
+                              node.draft ? '🆕 Borrador de Juego' : 'Juego del catálogo'
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {node.type === 'actividad' && (
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '3px' }}>
+                            <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>📌 TAREA / ACTIVIDAD</span>
+                            {entity?.priority && (
+                              <span style={{ fontSize: '9.5px', padding: '1px 5px', borderRadius: '4px', background: entity.priority === 'alta' ? 'rgba(220, 38, 38, 0.15)' : 'rgba(217, 119, 6, 0.15)', color: entity.priority === 'alta' ? '#dc2626' : nodeThemeColor, fontWeight: 800 }}>
+                                {entity.priority.toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+                          <div className={styles.nodeTag}>
+                            {entity ? (
+                              <>
+                                <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
+                                  🏭 Área: {dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
+                                </div>
+                                {(() => {
+                                  const colabEdge = edges.find(
+                                    (e) =>
+                                      (e.from === node.id && findNode(e.to)?.type === 'colaborador') ||
+                                      (e.to === node.id && findNode(e.from)?.type === 'colaborador')
+                                  );
+                                  const connectedColabNode = colabEdge
+                                    ? findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to)
+                                    : null;
+                                  const directOperario = operarios.find((o) => o.id === (entity?.operarioId || node?.operarioId || node?.draftFields?.operarioId));
+                                  const respName = directOperario?.name || (connectedColabNode ? nodeTitle(connectedColabNode) : null);
+
+                                  return (
+                                    <div style={{ fontSize: '11px', color: respName ? 'var(--color-primary, #ea580c)' : 'var(--color-gray-500)', marginTop: '2px', fontWeight: respName ? 700 : 500 }}>
+                                      👷 Resp: <strong>{respName || 'Sin asignar (conectar cable)'}</strong>
+                                    </div>
+                                  );
+                                })()}
+                                {/* Estatus y Botones de Iniciar / Terminar en la tarjeta del nodo */}
+                                <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed rgba(0,0,0,0.1)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                    <span style={{ fontSize: '10.5px', color: 'var(--color-gray-500)' }}>Estado:</span>
+                                    <span
+                                      style={{
+                                        fontSize: '9.5px',
+                                        fontWeight: 800,
+                                        padding: '1.5px 6px',
+                                        borderRadius: '4px',
+                                        textTransform: 'uppercase',
+                                        background:
+                                          entity.status === 'completado'
+                                            ? 'rgba(16, 185, 129, 0.15)'
+                                            : entity.status === 'proceso'
+                                            ? 'rgba(37, 99, 235, 0.15)'
+                                            : 'rgba(156, 163, 175, 0.15)',
+                                        color:
+                                          entity.status === 'completado'
+                                            ? '#10b981'
+                                            : entity.status === 'proceso'
+                                            ? '#2563eb'
+                                            : '#6b7280',
+                                      }}
+                                    >
+                                      {entity.status === 'completado' ? '✅ Hecha' : entity.status === 'proceso' ? '⚡ En Proceso' : '⏳ Pendiente'}
+                                    </span>
+                                  </div>
+
+                                  {(() => {
+                                    const hasControl = canUserControlActivity(entity);
+                                    if (!hasControl) {
+                                      return (
+                                        <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', marginTop: '4px', textAlign: 'center', fontStyle: 'italic' }}>
+                                          🔒 Control de responsable / supervisor
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                        {entity.status === 'pendiente' && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleStartActivity(entity.id, entity.title);
+                                            }}
+                                            style={{
+                                              flex: 1,
+                                              padding: '4px 8px',
+                                              fontSize: '11px',
+                                              fontWeight: 700,
+                                              background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                                              color: '#ffffff',
+                                              border: 'none',
+                                              borderRadius: '5px',
+                                              cursor: 'pointer',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              gap: '4px',
+                                              boxShadow: '0 1px 3px rgba(37, 99, 235, 0.3)',
+                                            }}
+                                            title="Iniciar esta actividad y registrar fecha/hora de inicio"
+                                          >
+                                            ▶️ Iniciar Actividad
+                                          </button>
+                                        )}
+
+                                        {entity.status === 'proceso' && (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenCompleteModal(entity.id, entity.title);
+                                              }}
+                                              style={{
+                                                flex: 2,
+                                                padding: '4px 8px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                background: 'linear-gradient(135deg, #10b981, #059669)',
+                                                color: '#ffffff',
+                                                border: 'none',
+                                                borderRadius: '5px',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: '4px',
+                                                boxShadow: '0 1px 3px rgba(16, 185, 129, 0.3)',
+                                              }}
+                                              title="Marcar como terminada y registrar fecha/hora de entrega"
+                                            >
+                                              ✅ Terminar
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleResetActivityStatus(entity.id, 'pendiente');
+                                              }}
+                                              style={{
+                                                flex: 1,
+                                                padding: '4px 6px',
+                                                fontSize: '10px',
+                                                fontWeight: 600,
+                                                background: 'rgba(0,0,0,0.06)',
+                                                color: 'var(--color-gray-700)',
+                                                border: '1px solid rgba(0,0,0,0.1)',
+                                                borderRadius: '5px',
+                                                cursor: 'pointer',
+                                              }}
+                                              title="Pausar y regresar a pendiente"
+                                            >
+                                              ⏸️ Pausar
+                                            </button>
+                                          </>
+                                        )}
+
+                                        {entity.status === 'completado' && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleResetActivityStatus(entity.id, 'proceso');
+                                            }}
+                                            style={{
+                                              flex: 1,
+                                              padding: '3px 8px',
+                                              fontSize: '10px',
+                                              fontWeight: 600,
+                                              background: 'rgba(0,0,0,0.05)',
+                                              color: 'var(--color-gray-600)',
+                                              border: '1px solid rgba(0,0,0,0.1)',
+                                              borderRadius: '5px',
+                                              cursor: 'pointer',
+                                            }}
+                                            title="Reabrir esta actividad para continuarla"
+                                          >
+                                            🔄 Reabrir Actividad
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              </>
+                            ) : (
+                              node.draft ? '🆕 Borrador de Actividad' : 'Actividad del sistema'
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {node.type === 'colaborador' && (
+                        <div>
+                          <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>👷 PERSONAL / COLABORADOR</span>
+                          <div className={styles.nodeTag} style={{ marginTop: '3px' }}>
+                            {entity ? (
+                              <>
+                                <div style={{ fontSize: '12px', fontWeight: 700 }}>
+                                  🏭 Área: {dynamicAreas.find((a) => a.id === entity.currentArea)?.name || entity.currentArea}
+                                </div>
+                                <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                                  {entity.puesto || 'Operario de Producción'}
+                                </div>
+                                {(() => {
+                                  const connectedCount = edges.filter(
+                                    (e) => e.from === node.id || e.to === node.id
+                                  ).length;
+                                  return (
+                                    <div style={{ fontSize: '10.5px', color: 'var(--color-primary)', marginTop: '4px', fontWeight: 600 }}>
+                                      🔗 {connectedCount} {connectedCount === 1 ? 'asignación conectada' : 'asignaciones conectadas'}
+                                    </div>
+                                  );
+                                })()}
+                              </>
+                            ) : (
+                              'Colaborador del equipo'
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {node.type === 'area' && (
+                        <div>
+                          <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>🏭 ÁREA DE MANUFACTURA</span>
+                          <div className={styles.nodeTag} style={{ marginTop: '3px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--color-dark)' }}>
+                              {entity?.name || 'Taller de producción'}
+                            </div>
+
+                            {/* Supervisor a cargo */}
+                            {(() => {
+                              const supervisor = getSupervisorForArea(node.refId || entity?.id);
+                              return (
+                                <div style={{ fontSize: '11px', color: 'var(--color-primary, #ea580c)', marginTop: '4px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span>👤 Supervisor:</span> <span>{supervisor.name}</span>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Proyectos / Juegos vinculados por cable */}
+                            {(() => {
+                              const connectedEdges = edges.filter((e) => e.from === node.id || e.to === node.id);
+                              const connectedProjects = connectedEdges
+                                .map((e) => findNode(e.from === node.id ? e.to : e.from))
+                                .filter((n) => n?.type === 'proyecto')
+                                .map((n) => nodeTitle(n));
+
+                              const connectedGames = connectedEdges
+                                .map((e) => findNode(e.from === node.id ? e.to : e.from))
+                                .filter((n) => n?.type === 'juego')
+                                .map((n) => nodeTitle(n));
+
+                              return (
+                                <>
+                                  {connectedProjects.length > 0 && (
+                                    <div style={{ fontSize: '10.5px', color: 'var(--color-secondary, #2563eb)', marginTop: '3px', fontWeight: 600 }}>
+                                      🗂️ Proy: {connectedProjects.join(', ')}
+                                    </div>
+                                  )}
+                                  {connectedGames.length > 0 && (
+                                    <div style={{ fontSize: '10.5px', color: '#0d9488', marginTop: '2px', fontWeight: 600 }}>
+                                      🎮 Modelos: {connectedGames.join(', ')}
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+
+                            <div style={{ fontSize: '10.5px', color: 'var(--color-gray-500)', marginTop: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span>👥 {operarios.filter((o) => o.currentArea === (node.refId || entity?.id)).length} operarios</span>
+                              <span
+                                style={{
+                                  cursor: 'pointer',
+                                  color: 'var(--color-primary, #ea580c)',
+                                  fontWeight: 700,
+                                  textDecoration: 'underline',
+                                  textDecorationStyle: 'dotted',
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const targetAreaId = node.refId || entity?.id;
+                                  const targetAreaName = entity?.name || nodeTitle(node);
+                                  setAreaTasksModal({ isOpen: true, areaId: targetAreaId, areaName: targetAreaName });
+                                }}
+                                title="Clic para ver las tareas asignadas a esta estación"
+                              >
+                                📌 {actividades.filter((a) => a.areaId === (node.refId || entity?.id)).length} tareas
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {node.type === 'bloque' && (
+                        <div>
+                          <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>📦 NODO MODULAR DE TRABAJO</span>
+                          <div className={styles.nodeBadgesGrid}>
+                            <div className={styles.nodeBadgeTag} title="Proyecto">
+                              🗂️ {proyectos.find((p) => p.id === node.projectId)?.name || 'Sin proyecto'}
+                            </div>
+                            <div className={styles.nodeBadgeTag} title="Juego">
+                              🎮 {juegos.find((j) => j.id === node.gameId)?.name || 'Sin juego'}
+                            </div>
+                            <div className={styles.nodeBadgeTag} title="Área">
+                              🏭 {allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId}
+                            </div>
+                            <div className={styles.nodeBadgeTag} title="Responsable">
+                              👷 {operarios.find((o) => o.id === node.operarioId)?.name || (
+                                getConnectedColaboradorNode(node.id) ? nodeTitle(getConnectedColaboradorNode(node.id)) : 'Sin asignar'
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                              <span>📌 {(node.activityIds || []).length} actividades</span>
+                              <span style={{ fontWeight: 700, color: nodeThemeColor }}>{expandedBlocks.has(node.id) ? '▲ Ocultar' : '▼ Ver detalles'}</span>
+                            </div>
+                          </div>
+                        </div>
                       )}
                     </div>
 
@@ -1811,16 +3040,99 @@ const EditorVisualPage = ({ standalone = false }) => {
                               <div>
                                 <strong>📌 {act.title}</strong>
                                 <div className={styles.blockDropdownMeta}>
-                                  <span>{act.status}</span>
+                                  <span
+                                    style={{
+                                      fontSize: '9.5px',
+                                      fontWeight: 800,
+                                      padding: '1px 5px',
+                                      borderRadius: '3px',
+                                      textTransform: 'uppercase',
+                                      background:
+                                        act.status === 'completado'
+                                          ? 'rgba(16, 185, 129, 0.15)'
+                                          : act.status === 'proceso'
+                                          ? 'rgba(37, 99, 235, 0.15)'
+                                          : 'rgba(156, 163, 175, 0.15)',
+                                      color:
+                                        act.status === 'completado'
+                                          ? '#10b981'
+                                          : act.status === 'proceso'
+                                          ? '#2563eb'
+                                          : '#6b7280',
+                                    }}
+                                  >
+                                    {act.status}
+                                  </span>
                                   <span>· {act.priority}</span>
                                   {responsable && <span>· 👷 {responsable}</span>}
                                   {attachmentCount > 0 && <span>· 📎 {attachmentCount}</span>}
                                   {linkCount > 0 && <span>· 🔗 {linkCount}</span>}
                                 </div>
+                                {canUserControlActivity(act) && (
+                                  <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                    {act.status === 'pendiente' && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleStartActivity(act.id, act.title);
+                                        }}
+                                        style={{
+                                          fontSize: '10px',
+                                          fontWeight: 700,
+                                          padding: '2px 6px',
+                                          borderRadius: '4px',
+                                          background: '#2563eb',
+                                          color: '#ffffff',
+                                          border: 'none',
+                                          cursor: 'pointer',
+                                        }}
+                                        title="Iniciar actividad"
+                                      >
+                                        ▶️ Iniciar
+                                      </button>
+                                    )}
+                                    {act.status === 'proceso' && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenCompleteModal(act.id, act.title);
+                                        }}
+                                        style={{
+                                          fontSize: '10px',
+                                          fontWeight: 700,
+                                          padding: '2px 6px',
+                                          borderRadius: '4px',
+                                          background: '#10b981',
+                                          color: '#ffffff',
+                                          border: 'none',
+                                          cursor: 'pointer',
+                                        }}
+                                        title="Marcar como terminada"
+                                      >
+                                        ✅ Terminar
+                                      </button>
+                                    )}
+                                    {act.status === 'completado' && (
+                                      <span style={{ fontSize: '10px', color: '#10b981', fontWeight: 600 }}>
+                                        ✓ Finalizada
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                                 {linkCount > 0 && (
                                   <div className={styles.blockDropdownLinks}>
                                     {act.links.map((url) => (
-                                      <a key={url} href={url} target="_blank" rel="noreferrer">{url}</a>
+                                      <a
+                                        key={url}
+                                        href={formatExternalUrl(url)}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {url}
+                                      </a>
                                     ))}
                                   </div>
                                 )}
@@ -1828,7 +3140,10 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   <button
                                     type="button"
                                     className={styles.blockDropdownModelBtn}
-                                    onClick={() => window.open(modelUrl, '_blank', 'noreferrer')}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      window.open(formatExternalUrl(modelUrl), '_blank', 'noreferrer');
+                                    }}
                                     title={act.modelFile ? `Abrir ${act.modelFile.name}` : 'Abrir link del modelo'}
                                   >
                                     🎬 Abrir Modelo
@@ -1874,6 +3189,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                       </div>
                     )}
 
+                    {/* 4 PUERTOS DE CONEXIÓN (IZQUIERDA, DERECHA, ARRIBA, ABAJO) */}
                     {canEditDiagram && (
                       <>
                         <span
@@ -1881,6 +3197,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                           data-node-id={node.id}
                           data-side="in"
                           className={`${styles.port} ${styles.portIn}`}
+                          title="Conectar (lado izquierdo)"
                           onMouseDown={(e) => handlePortMouseDown(e, node.id, 'in')}
                         />
                         <span
@@ -1888,13 +3205,116 @@ const EditorVisualPage = ({ standalone = false }) => {
                           data-node-id={node.id}
                           data-side="out"
                           className={`${styles.port} ${styles.portOut}`}
+                          title="Conectar (lado derecho)"
                           onMouseDown={(e) => handlePortMouseDown(e, node.id, 'out')}
+                        />
+                        <span
+                          data-role="port"
+                          data-node-id={node.id}
+                          data-side="top"
+                          className={`${styles.port} ${styles.portTop}`}
+                          title="Conectar (arriba)"
+                          onMouseDown={(e) => handlePortMouseDown(e, node.id, 'top')}
+                        />
+                        <span
+                          data-role="port"
+                          data-node-id={node.id}
+                          data-side="bottom"
+                          className={`${styles.port} ${styles.portBottom}`}
+                          title="Conectar (abajo)"
+                          onMouseDown={(e) => handlePortMouseDown(e, node.id, 'bottom')}
                         />
                       </>
                     )}
                   </div>
                 );
               })}
+
+              {/* ---------- Barra Flotante Interactiva de Cable Seleccionado ---------- */}
+              {selectedEdgeId && (() => {
+                const edge = edges.find((e) => e.id === selectedEdgeId);
+                if (!edge) return null;
+                const fromNode = findNode(edge.from);
+                const toNode = findNode(edge.to);
+                if (!fromNode || !toNode) return null;
+                const { p1, p2 } = getSmartWirePath(fromNode, toNode);
+                const midX = (p1.x + p2.x) / 2;
+                const midY = (p1.y + p2.y) / 2;
+                const defaultColor = fromNode.customColor || NODE_TYPES[fromNode.type]?.colorVar || '#ea580c';
+                const currentColor = edge.customColor || defaultColor;
+
+                return (
+                  <div
+                    className={styles.wireToolbar}
+                    style={{ left: midX, top: midY }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span style={{ fontSize: '11.5px', fontWeight: 800, color: currentColor, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      〰️ Cable:
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      {PRESET_COLORS.map((c) => (
+                        <button
+                          key={c.value}
+                          type="button"
+                          className={`${styles.wireColorDot} ${currentColor === c.value ? styles.wireColorDotActive : ''}`}
+                          style={{ backgroundColor: c.value }}
+                          title={c.name}
+                          onClick={() => updateEdgeColor(edge.id, c.value)}
+                        />
+                      ))}
+                      <label title="Elegir cualquier color personalizado" style={{ cursor: 'pointer', display: 'inline-flex', margin: 0 }}>
+                        <input
+                          type="color"
+                          value={currentColor}
+                          onChange={(e) => updateEdgeColor(edge.id, e.target.value)}
+                          style={{ width: '24px', height: '24px', border: 'none', borderRadius: '50%', cursor: 'pointer', background: 'none', padding: 0 }}
+                        />
+                      </label>
+                    </div>
+
+                    <div className={styles.wireToolbarDivider} />
+
+                    <button
+                      type="button"
+                      className={styles.wireToolbarBtn}
+                      onClick={() => updateEdgeStyle(edge.id, edge.style === 'solid' ? 'dashed' : 'solid')}
+                      title="Alternar entre línea punteada y sólida"
+                    >
+                      {edge.style === 'solid' ? '━━ Sólida' : '┅┅ Punteada'}
+                    </button>
+
+                    <div className={styles.wireToolbarDivider} />
+
+                    <button
+                      type="button"
+                      className={styles.wireToolbarBtn}
+                      style={{ color: 'var(--color-alert, #ef4444)' }}
+                      onClick={() => {
+                        const nextEdges = edges.filter((ed) => ed.id !== edge.id);
+                        setEdges(nextEdges);
+                        saveToFirestore(nodes, nextEdges);
+                        setSelectedEdgeId(null);
+                        toast.info('🔌 Cable desconectado.');
+                      }}
+                      title="Eliminar este cable"
+                    >
+                      🗑️ Quitar
+                    </button>
+
+                    <button
+                      type="button"
+                      className={styles.wireToolbarBtn}
+                      onClick={() => setSelectedEdgeId(null)}
+                      title="Cerrar barra"
+                      style={{ padding: '3px 6px', opacity: 0.6 }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })()}
 
               {nodes.length === 0 && (
                 <div style={{ position: 'absolute', left: 40, top: 40, width: 360 }}>
@@ -1961,524 +3381,535 @@ const EditorVisualPage = ({ standalone = false }) => {
             </div>
           </div>
 
-          {/* ---------- Inspector ---------- */}
-          {selectedNode && (
-            <aside className={styles.inspector}>
-              <NodeInspector
-                node={selectedNode}
-                entity={getLinkedEntity(selectedNode)}
-                edges={edges}
-                findNode={findNode}
-                nodeTitle={nodeTitle}
-                updateDraftField={(key, value) => updateDraftField(selectedNode.id, key, value)}
-                onSaveProyecto={() => handleSaveProyecto(selectedNode)}
-                onSaveJuego={() => handleSaveJuego(selectedNode)}
-                onSaveActividad={() => handleSaveActividad(selectedNode)}
-                onAssignColaborador={handleAssignColaboradorToArea}
-                getConnectedAreaNode={getConnectedAreaNode}
-                getConnectedColaboradorNode={getConnectedColaboradorNode}
-                actividades={actividades}
-                operarios={operarios}
-                proyectos={proyectos}
-                juegos={juegos}
-                addProject={addProject}
-                addGame={addGame}
-                canEditDiagram={canEditDiagram}
-                updateBlockField={(field, value) => updateBlockField(selectedNode.id, field, value)}
-                updateBlockName={(value) => updateBlockName(selectedNode.id, value)}
-                onSaveBlockName={() => saveToFirestore(nodes, edges)}
-                openBlockActivityForm={() => openBlockActivityForm(selectedNode.id)}
-                handleReassignBlockActivities={(colabNode) => handleReassignBlockActivities(selectedNode, colabNode)}
-                dynamicAreas={dynamicAreas}
-                allBlockAreas={allBlockAreas}
-              />
-            </aside>
-          )}
-        </div>
-      ) : (
-        <div style={{ padding: '80px 20px', textAlign: 'center' }}>
-          <EmptyState
-            title="Selecciona un Proyecto"
-            description="Para comenzar a diseñar o ver la asignación de nodos, selecciona uno de los proyectos activos en el menú superior."
-            icon="🗂️"
-          />
-        </div>
-      )}
+          {/* ---------- Inspector Flotante Translúcido (Glassmorphism) ---------- */}
+          <AnimatePresence>
+            {selectedNode && (
+              <motion.aside
+                className={styles.inspector}
+                initial={{ opacity: 0, scale: 0.9, x: 20 }}
+                animate={{ opacity: 1, scale: 1, x: 0 }}
+                exit={{ opacity: 0, scale: 0.9, x: 20 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+              >
+                <NodeInspector
+                  node={selectedNode}
+                  onClose={() => setSelectedNodeId(null)}
+                  entity={getLinkedEntity(selectedNode)}
+                  edges={edges}
+                  setEdges={setEdges}
+                  saveToFirestore={saveToFirestore}
+                  nodes={nodes}
+                  findNode={findNode}
+                  nodeTitle={nodeTitle}
+                  updateDraftField={(key, value) => updateDraftField(selectedNode.id, key, value)}
+                  onSaveProyecto={() => handleSaveProyecto(selectedNode)}
+                  onSaveJuego={() => handleSaveJuego(selectedNode)}
+                  onSaveActividad={() => handleSaveActividad(selectedNode)}
+                  onAssignColaborador={handleAssignColaboradorToArea}
+                  getConnectedAreaNode={getConnectedAreaNode}
+                  getConnectedColaboradorNode={getConnectedColaboradorNode}
+                  actividades={actividades}
+                  operarios={operarios}
+                  proyectos={proyectos}
+                  juegos={juegos}
+                  addProject={addProject}
+                  addGame={addGame}
+                  updateProject={updateProject}
+                  canEditDiagram={canEditDiagram}
+                  updateBlockField={(field, value) => updateBlockField(selectedNode.id, field, value)}
+                  updateBlockName={(value) => updateBlockName(selectedNode.id, value)}
+                  onSaveBlockName={() => saveToFirestore(nodes, edges)}
+                  openBlockActivityForm={() => openBlockActivityForm(selectedNode.id)}
+                  handleReassignBlockActivities={(colabNode) => handleReassignBlockActivities(selectedNode, colabNode)}
+                  updateNodeColor={updateNodeColor}
+                  updateEdgeColor={updateEdgeColor}
+                  updateEdgeStyle={updateEdgeStyle}
+                  dynamicAreas={dynamicAreas}
+                  allBlockAreas={allBlockAreas}
+                  getSupervisorForArea={getSupervisorForArea}
+                  onViewAreaTasks={(areaId, areaName) => setAreaTasksModal({ isOpen: true, areaId, areaName })}
+                  onStartActivity={handleStartActivity}
+                  onOpenCompleteModal={handleOpenCompleteModal}
+                  onResetActivityStatus={handleResetActivityStatus}
+                  canUserControlActivity={canUserControlActivity}
+                />
+              </motion.aside>
+            )}
+          </AnimatePresence>
+      </div>
 
-      {/* ---------- MODAL: PICKER ---------- */}
-      <Modal isOpen={picker.isOpen} onClose={closePicker} title={picker.type ? `Agregar ${NODE_TYPES[picker.type].label}` : 'Agregar'}>
-        <input
-          type="text"
-          autoFocus
-          className={styles.pickerSearch}
-          placeholder={picker.type && NODE_TYPES[picker.type].allowCreate ? 'Buscar existente o escribir un nombre nuevo...' : 'Buscar en el catálogo...'}
-          value={picker.query}
-          onChange={(e) => setPicker((prev) => ({ ...prev, query: e.target.value }))}
-        />
-        <div className={styles.pickerList}>
-          {filteredCatalog.map((entry) => (
-            <button key={entry.id} type="button" className={styles.pickerItem} onClick={() => handlePickExisting(picker.type, entry.id)}>
-              {NODE_TYPES[picker.type]?.icon} <span>{entry.label}</span>
-              <span className={styles.pickerBadge}>🔗 existente</span>
-            </button>
-          ))}
-          {picker.type && NODE_TYPES[picker.type].allowCreate && picker.query.trim() && !filteredCatalog.some((c) => c.label.toLowerCase() === picker.query.trim().toLowerCase()) && (
-            <button
-              type="button"
-              className={`${styles.pickerItem} ${styles.pickerCreate}`}
-              onClick={() => handleCreateNewDraft(picker.type, picker.query.trim())}
-            >
-              ➕ <span>Crear &ldquo;{picker.query.trim()}&rdquo; como nuevo</span>
-            </button>
-          )}
-          {filteredCatalog.length === 0 && !(picker.type && NODE_TYPES[picker.type].allowCreate && picker.query.trim()) && (
-            <div className={styles.pickerEmpty}>
-              {picker.type === 'colaborador'
-                ? 'Sin coincidencias. Los colaboradores se dan de alta desde la página de Operarios.'
-                : 'Sin coincidencias.'}
-            </div>
-          )}
+      {/* ---------- MODAL: CONFIRMAR ELIMINAR LIENZO ---------- */}
+      <Modal
+        isOpen={deleteLienzoConfirm}
+        onClose={() => setDeleteLienzoConfirm(false)}
+        title="🗑️ Eliminar Lienzo Visual"
+      >
+        <p style={{ margin: '0 0 16px 0', fontSize: '14px', lineHeight: 1.5, color: 'var(--color-dark)' }}>
+          ¿Estás seguro de que deseas eliminar este lienzo visual? Esta acción no se puede deshacer. Los proyectos o actividades reales que se hayan creado en la base de datos se mantendrán a salvo en el sistema.
+        </p>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <Button variant="secondary" size="md" onClick={() => setDeleteLienzoConfirm(false)}>
+            Cancelar
+          </Button>
+          <Button variant="danger" size="md" onClick={handleDeleteCurrentLienzo}>
+            🗑️ Sí, Eliminar Lienzo
+          </Button>
         </div>
       </Modal>
 
-      {/* ---------- MODAL: ASISTENTE GUIADO DE CREACIÓN DE NODOS (WIZARD) ---------- */}
+      {/* ---------- MODAL: ADMINISTRAR Y ELIMINAR CUALQUIER LIENZO ---------- */}
       <Modal
-        isOpen={wizard.isOpen}
-        onClose={closeWizard}
-        title={
-          wizard.step === 1
-            ? '📦 Asistente de Creación: ¿Qué representará este nodo?'
-            : wizard.role === 'proyecto'
-            ? '🗂️ Configuración del Proyecto'
-            : wizard.role === 'juego' && wizard.step === 2
-            ? '🗂️ Paso 2: Proyecto Requerido para el Juego'
-            : wizard.role === 'juego' && wizard.step === 3
-            ? '🎮 Paso 3: Configuración del Juego / Modelo'
-            : wizard.role === 'juego' && wizard.step === 4
-            ? '🏭 Paso 4: Área y Colaborador Responsable'
-            : '📌 Configuración de Actividades del Nodo'
-        }
+        isOpen={manageLienzosModal}
+        onClose={() => setManageLienzosModal(false)}
+        title="📂 Administrar y Eliminar Lienzos Visuales"
       >
-        {/* PASO 1: SELECCIONAR QUÉ REPRESENTARÁ EL NODO */}
-        {wizard.step === 1 && (
-          <div className={styles.wizardContainer}>
-            <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', margin: '0 0 6px 0' }}>
-              Elige la función o entidad principal que representará este nodo en el diagrama:
-            </p>
-            <div className={styles.wizardRoleGrid}>
-              {/* Tarjeta 1: Juego / Modelo */}
-              <div
-                className={`${styles.wizardRoleCard} ${wizard.role === 'juego' ? styles.wizardRoleCardActive : ''}`}
-                onClick={() => setWizard((prev) => ({ ...prev, role: 'juego' }))}
-              >
-                <div className={styles.wizardRoleIcon}>🎮</div>
-                <div className={styles.wizardRoleText}>
-                  <span className={styles.wizardRoleTitle}>Juego / Modelo de Producción</span>
-                  <span className={styles.wizardRoleDesc}>
-                    Modelo físico que pasa por manufactura (Herrería, Láser, Pintura, etc.) con metas de piezas y control de calidad. Requiere un Proyecto.
-                  </span>
-                </div>
-              </div>
+        <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', margin: '0 0 12px 0' }}>
+          Desde aquí puedes revisar todos los lienzos creados, abrirlos en pantalla o eliminar los que ya no utilices:
+        </p>
 
-              {/* Tarjeta 2: Proyecto General */}
-              <div
-                className={`${styles.wizardRoleCard} ${wizard.role === 'proyecto' ? styles.wizardRoleCardActive : ''}`}
-                onClick={() => setWizard((prev) => ({ ...prev, role: 'proyecto' }))}
-              >
-                <div className={styles.wizardRoleIcon}>🗂️</div>
-                <div className={styles.wizardRoleText}>
-                  <span className={styles.wizardRoleTitle}>Proyecto General</span>
-                  <span className={styles.wizardRoleDesc}>
-                    Representa un contrato, cliente, parque o proyecto maestro en el sistema.
-                  </span>
-                </div>
-              </div>
-
-              {/* Tarjeta 3: Bloque de Actividades */}
-              <div
-                className={`${styles.wizardRoleCard} ${wizard.role === 'bloque' ? styles.wizardRoleCardActive : ''}`}
-                onClick={() => setWizard((prev) => ({ ...prev, role: 'bloque' }))}
-              >
-                <div className={styles.wizardRoleIcon}>📌</div>
-                <div className={styles.wizardRoleText}>
-                  <span className={styles.wizardRoleTitle}>Bloque Operativo de Actividades</span>
-                  <span className={styles.wizardRoleDesc}>
-                    Contenedor de tareas y actividades operativas para un área de trabajo o colaborador.
-                  </span>
-                </div>
-              </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '360px', overflowY: 'auto', paddingRight: '4px' }}>
+          {/* Lienzo General */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-gray-200)',
+              backgroundColor: lienzoActivoId === 'general' ? 'rgba(37, 99, 235, 0.08)' : 'var(--color-gray-50)',
+            }}
+          >
+            <div>
+              <strong style={{ fontSize: '13px', display: 'block', color: 'var(--color-dark)' }}>
+                🎨 Lienzo General (Boceto Principal)
+              </strong>
+              <small style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>Lienzo predeterminado del sistema</small>
             </div>
-
-            <div className={styles.wizardFooterNav}>
-              <Button variant="ghost" size="md" onClick={closeWizard}>Cancelar</Button>
-              <Button variant="primary" size="md" onClick={handleWizardNext}>Continuar →</Button>
-            </div>
-          </div>
-        )}
-
-        {/* PASO 2: PROYECTO (Para Rol Proyecto) */}
-        {wizard.step === 2 && wizard.role === 'proyecto' && (
-          <div className={styles.wizardContainer}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-              <label style={{ margin: 0, fontWeight: 600 }}>Configuración del Proyecto</label>
-              {proyectos.length > 0 && (
-                <button
-                  type="button"
-                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
-                  onClick={() => setWizard((prev) => ({ ...prev, projectMode: prev.projectMode === 'new' ? 'existing' : 'new' }))}
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {lienzoActivoId !== 'general' ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setLienzoActivoId('general');
+                    setManageLienzosModal(false);
+                  }}
                 >
-                  {wizard.projectMode === 'new' ? '✕ Usar existente' : '➕ Crear Proyecto Nuevo'}
-                </button>
+                  👁️ Abrir
+                </Button>
+              ) : (
+                <span style={{ fontSize: '11px', color: 'var(--color-primary)', fontWeight: 700, padding: '4px 8px' }}>
+                  ● En pantalla
+                </span>
               )}
             </div>
+          </div>
 
-            {wizard.projectMode === 'existing' && proyectos.length > 0 ? (
-              <div className={styles.field}>
-                <label>Seleccionar Proyecto Existente</label>
-                <select
-                  value={wizard.projectId}
-                  onChange={(e) => setWizard((prev) => ({ ...prev, projectId: e.target.value }))}
+          {/* Lienzos personalizados creados */}
+          {lienzosList
+            .filter((l) => l.id !== 'general' && !proyectos.some((p) => p.id === l.id))
+            .map((lienzo) => {
+              const isActive = lienzoActivoId === lienzo.id;
+              const nodeCount = (lienzo.nodes || []).length;
+              return (
+                <div
+                  key={lienzo.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: isActive ? '1.5px solid var(--color-primary)' : '1px solid var(--color-gray-200)',
+                    backgroundColor: isActive ? 'rgba(234, 88, 12, 0.08)' : 'var(--card-bg, #ffffff)',
+                  }}
                 >
-                  <option value="">Seleccionar Proyecto...</option>
-                  {proyectos.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className={styles.inlineCreateBox}>
-                <div className={styles.createGrid2}>
                   <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre del Proyecto *</label>
-                    <input
-                      type="text"
-                      placeholder="Nombre..."
-                      value={wizard.newProjectName}
-                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectName: e.target.value }))}
-                    />
+                    <strong style={{ fontSize: '13.5px', display: 'block', color: 'var(--color-dark)' }}>
+                      🎨 {lienzo.name || 'Lienzo Visual'}
+                    </strong>
+                    <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                      <span>📌 {nodeCount} {nodeCount === 1 ? 'nodo' : 'nodos'}</span>
+                      {isActive && <span style={{ color: 'var(--color-primary)', fontWeight: 700 }}>● Activo en pantalla</span>}
+                    </div>
                   </div>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Cliente / Entidad *</label>
-                    <input
-                      type="text"
-                      placeholder="Cliente..."
-                      value={wizard.newProjectClient}
-                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectClient: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className={styles.createGrid2}>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Inicio</label>
-                    <input
-                      type="date"
-                      value={wizard.newProjectStartDate}
-                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectStartDate: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Entrega</label>
-                    <input
-                      type="date"
-                      value={wizard.newProjectEndDate}
-                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectEndDate: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Descripción</label>
-                  <textarea
-                    rows="2"
-                    placeholder="Descripción u observaciones..."
-                    value={wizard.newProjectDesc}
-                    onChange={(e) => setWizard((prev) => ({ ...prev, newProjectDesc: e.target.value }))}
-                  />
-                </div>
-              </div>
-            )}
 
-            <div className={styles.field}>
-              <label>Nombre del Nodo en el Lienzo (Opcional)</label>
-              <input
-                type="text"
-                placeholder="Por defecto tomará el nombre del proyecto"
-                value={wizard.name}
-                onChange={(e) => setWizard((prev) => ({ ...prev, name: e.target.value }))}
-              />
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {!isActive && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setLienzoActivoId(lienzo.id);
+                          setManageLienzosModal(false);
+                        }}
+                      >
+                        👁️ Abrir
+                      </Button>
+                    )}
+                    {canEditDiagram && (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => handleDeleteLienzoById(lienzo.id, lienzo.name)}
+                        title={`Eliminar el lienzo "${lienzo.name}"`}
+                      >
+                        🗑️ Eliminar
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+          {lienzosList.filter((l) => l.id !== 'general' && !proyectos.some((p) => p.id === l.id)).length === 0 && (
+            <div style={{ padding: '20px', textAlign: 'center', fontSize: '12.5px', color: 'var(--color-gray-400)', fontStyle: 'italic' }}>
+              No tienes lienzos personalizados adicionales creados. Puedes crear uno con el botón &ldquo;➕ Nuevo Lienzo&rdquo;.
             </div>
+          )}
+        </div>
 
-            <div className={styles.wizardFooterNav}>
-              <Button variant="ghost" size="md" onClick={handleWizardBack}>← Volver</Button>
-              <Button variant="primary" size="md" onClick={handleWizardFinish}>➕ Crear Nodo en el Lienzo</Button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--color-gray-200)' }}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setManageLienzosModal(false);
+              setNewLienzoModal({ isOpen: true, name: '' });
+            }}
+          >
+            ➕ Crear Nuevo Lienzo
+          </Button>
+
+          <Button variant="secondary" size="sm" onClick={() => setManageLienzosModal(false)}>
+            Cerrar
+          </Button>
+        </div>
+      </Modal>
+
+      {/* ---------- MODAL: CONFIRMAR LIMPIAR NODOS DEL LIENZO ---------- */}
+      <Modal
+        isOpen={clearNodesConfirm}
+        onClose={() => setClearNodesConfirm(false)}
+        title="🧹 Limpiar Nodos del Lienzo Actual"
+      >
+        <p style={{ margin: '0 0 16px 0', fontSize: '14px', lineHeight: 1.5, color: 'var(--color-dark)' }}>
+          ¿Deseas remover todos los nodos y conexiones del lienzo activo? Esta acción dejará el lienzo en blanco, pero tus proyectos, juegos y colaboradores seguirán registrados a salvo en el sistema.
+        </p>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <Button variant="secondary" size="md" onClick={() => setClearNodesConfirm(false)}>
+            Cancelar
+          </Button>
+          <Button variant="danger" size="md" onClick={handleClearCurrentCanvasNodes}>
+            🧹 Sí, Limpiar Nodos
+          </Button>
+        </div>
+      </Modal>
+
+      {/* ---------- MODAL: CREAR NUEVO LIENZO / PROYECTO VISUAL ---------- */}
+      <Modal
+        isOpen={newLienzoModal.isOpen}
+        onClose={() => setNewLienzoModal({ isOpen: false, name: '' })}
+        title="🎨 Nuevo Lienzo / Proyecto Visual"
+      >
+        <div className={styles.field}>
+          <label>Nombre del Lienzo / Boceto *</label>
+          <input
+            type="text"
+            autoFocus
+            placeholder="Ej. Boceto Nueva Planta, Diagrama General..."
+            value={newLienzoModal.name}
+            onChange={(e) => setNewLienzoModal((prev) => ({ ...prev, name: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleCreateNewLienzo();
+            }}
+          />
+        </div>
+        <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', margin: '8px 0 16px 0' }}>
+          💡 Un lienzo libre te permite crear nodos, cables y dar de alta proyectos o juegos directamente desde adentro del diagrama.
+        </p>
+        <Button variant="primary" size="md" onClick={handleCreateNewLienzo} style={{ width: '100%' }}>
+          🎨 Crear y Abrir Lienzo
+        </Button>
+      </Modal>
+
+      {/* ---------- MODAL UNIFICADO: AGREGAR / CREAR NODO EN EL LIENZO ---------- */}
+      <Modal
+        isOpen={nodeModal.isOpen}
+        onClose={closeNodeModal}
+        title={
+          nodeModal.type === 'proyecto'
+            ? '🗂️ Agregar Nodo de Proyecto'
+            : nodeModal.type === 'juego'
+            ? '🎮 Agregar Nodo de Juego / Modelo'
+            : nodeModal.type === 'colaborador'
+            ? '👷 Agregar Nodo de Colaborador (Personal)'
+            : nodeModal.type === 'area'
+            ? '🏭 Agregar Nodo de Área de Manufactura'
+            : nodeModal.type === 'actividad'
+            ? '📌 Agregar Nodo de Actividad / Tarea'
+            : '📦 Crear Celda Modular de Trabajo'
+        }
+      >
+        {/* TABS: SELECCIONAR EXISTENTE vs CREAR NUEVO (para Proyecto, Juego, Actividad) */}
+        {(nodeModal.type === 'proyecto' || nodeModal.type === 'juego' || nodeModal.type === 'actividad') && (
+          <div className={styles.nodeModalTabs}>
+            <button
+              type="button"
+              className={`${styles.tabBtn} ${nodeModal.tab === 'existing' ? styles.tabBtnActive : ''}`}
+              onClick={() => setNodeModal((prev) => ({ ...prev, tab: 'existing' }))}
+            >
+              🔗 Seleccionar Existente ({catalogFor(nodeModal.type).length})
+            </button>
+            <button
+              type="button"
+              className={`${styles.tabBtn} ${nodeModal.tab === 'new' ? styles.tabBtnActive : ''}`}
+              onClick={() => setNodeModal((prev) => ({ ...prev, tab: 'new' }))}
+            >
+              ➕ Crear Nuevo Registro
+            </button>
+          </div>
+        )}
+
+        {/* 1. SELECCIONAR EXISTENTE (Colaborador, Área, Proyecto, Juego, Actividad) */}
+        {(nodeModal.tab === 'existing' || nodeModal.type === 'colaborador' || nodeModal.type === 'area') && (
+          <div>
+            <input
+              type="text"
+              className={styles.pickerSearch}
+              placeholder={
+                nodeModal.type === 'colaborador'
+                  ? 'Buscar colaborador por nombre, área o puesto...'
+                  : nodeModal.type === 'area'
+                  ? 'Buscar área de manufactura...'
+                  : 'Buscar en el catálogo...'
+              }
+              value={nodeModal.query}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, query: e.target.value }))}
+              autoFocus
+            />
+
+            <div className={styles.pickerList}>
+              {catalogFor(nodeModal.type)
+                .filter((item) => item.label.toLowerCase().includes(nodeModal.query.trim().toLowerCase()))
+                .map((item) => {
+                  const meta = NODE_TYPES[nodeModal.type] || NODE_TYPES.bloque;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={styles.pickerItem}
+                      onClick={() => handlePickExistingNode(nodeModal.type, item.id)}
+                    >
+                      <span style={{ fontSize: '18px' }}>{meta.icon}</span>
+                      <strong style={{ fontSize: '13px' }}>{item.label}</strong>
+                      <span className={styles.pickerBadge}>➕ Soltar en lienzo</span>
+                    </button>
+                  );
+                })}
+
+              {catalogFor(nodeModal.type).filter((item) => item.label.toLowerCase().includes(nodeModal.query.trim().toLowerCase())).length === 0 && (
+                <div className={styles.pickerEmpty}>
+                  {nodeModal.type === 'colaborador'
+                    ? 'Sin coincidencias. Los colaboradores se gestionan en el módulo de Operarios.'
+                    : 'Sin coincidencias en el catálogo.'}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* PASO 2: PROYECTO OBLIGATORIO PARA JUEGO */}
-        {wizard.step === 2 && wizard.role === 'juego' && (
-          <div className={styles.wizardContainer}>
-            {proyectos.length === 0 ? (
-              <div className={styles.calloutBox} style={{ background: 'rgba(234, 88, 12, 0.08)', border: '1px solid rgba(234, 88, 12, 0.3)' }}>
-                ℹ️ <strong>Todo modelo de juego debe pertenecer a un Proyecto.</strong> Como aún no hay proyectos registrados, regístralo a continuación para continuar con el juego:
-              </div>
-            ) : (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                <label style={{ margin: 0, fontWeight: 600 }}>¿A qué proyecto pertenecerá este juego?</label>
-                <button
-                  type="button"
-                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
-                  onClick={() => setWizard((prev) => ({ ...prev, projectMode: prev.projectMode === 'new' ? 'existing' : 'new' }))}
-                >
-                  {wizard.projectMode === 'new' ? '✕ Elegir proyecto existente' : '➕ Crear Proyecto Nuevo'}
-                </button>
-              </div>
-            )}
-
-            {wizard.projectMode === 'existing' && proyectos.length > 0 ? (
-              <div className={styles.field}>
-                <select
-                  value={wizard.projectId}
-                  onChange={(e) => setWizard((prev) => ({ ...prev, projectId: e.target.value, gameId: '' }))}
-                >
-                  <option value="">Selecciona el Proyecto...</option>
-                  {proyectos.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className={styles.inlineCreateBox}>
-                <div className={styles.createGrid2}>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre del Proyecto *</label>
-                    <input
-                      type="text"
-                      placeholder="Ej. Parque Metropolitano 2026..."
-                      value={wizard.newProjectName}
-                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectName: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Cliente / Entidad *</label>
-                    <input
-                      type="text"
-                      placeholder="Ej. Municipio / Constructora..."
-                      value={wizard.newProjectClient}
-                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectClient: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className={styles.createGrid2}>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Inicio</label>
-                    <input
-                      type="date"
-                      value={wizard.newProjectStartDate}
-                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectStartDate: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Entrega</label>
-                    <input
-                      type="date"
-                      value={wizard.newProjectEndDate}
-                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectEndDate: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Descripción</label>
-                  <textarea
-                    rows="2"
-                    placeholder="Descripción u observaciones del proyecto..."
-                    value={wizard.newProjectDesc}
-                    onChange={(e) => setWizard((prev) => ({ ...prev, newProjectDesc: e.target.value }))}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className={styles.wizardFooterNav}>
-              <Button variant="ghost" size="md" onClick={handleWizardBack}>← Volver</Button>
-              <Button variant="primary" size="md" onClick={handleWizardNext}>Continuar al Juego →</Button>
-            </div>
-          </div>
-        )}
-
-        {/* PASO 3: CONFIGURACIÓN DEL JUEGO / MODELO */}
-        {wizard.step === 3 && wizard.role === 'juego' && (
-          <div className={styles.wizardContainer}>
-            {wizard.projectMode === 'existing' && juegos.filter((j) => j.projectId === wizard.projectId).length > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                <label style={{ margin: 0, fontWeight: 600 }}>Modelo de Juego</label>
-                <button
-                  type="button"
-                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
-                  onClick={() => setWizard((prev) => ({ ...prev, gameMode: prev.gameMode === 'new' ? 'existing' : 'new' }))}
-                >
-                  {wizard.gameMode === 'new' ? '✕ Usar juego existente' : '➕ Crear Juego Nuevo'}
-                </button>
-              </div>
-            )}
-
-            {wizard.gameMode === 'existing' && juegos.filter((j) => j.projectId === wizard.projectId).length > 0 ? (
-              <div className={styles.field}>
-                <label>Seleccionar Juego Existente</label>
-                <select
-                  value={wizard.gameId}
-                  onChange={(e) => setWizard((prev) => ({ ...prev, gameId: e.target.value }))}
-                >
-                  <option value="">Selecciona el Juego...</option>
-                  {juegos
-                    .filter((j) => j.projectId === wizard.projectId || j.projectName === proyectos.find((p) => p.id === wizard.projectId)?.name)
-                    .map((j) => (
-                      <option key={j.id} value={j.id}>{j.name} ({j.projectName || 'General'})</option>
-                    ))}
-                </select>
-              </div>
-            ) : (
-              <div className={styles.inlineCreateBox}>
-                <label style={{ fontSize: '11.5px', color: 'var(--color-gray-700)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
-                  Nombre del Modelo / Juego *
-                </label>
+        {/* 2. CREAR NUEVO PROYECTO */}
+        {nodeModal.tab === 'new' && nodeModal.type === 'proyecto' && (
+          <div className={styles.inlineCreateBox}>
+            <div className={styles.createGrid2}>
+              <div>
+                <label className={styles.inlineLabel}>Nombre del Proyecto *</label>
                 <input
                   type="text"
-                  placeholder="Ej. Resbaladilla Acero Inoxidable..."
-                  value={wizard.newGameName}
-                  onChange={(e) => setWizard((prev) => ({ ...prev, newGameName: e.target.value }))}
+                  placeholder="Ej. Parque Central Santa Fe..."
+                  value={nodeModal.newProjName}
+                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newProjName: e.target.value }))}
+                  autoFocus
                 />
-
-                <label style={{ fontSize: '11.5px', color: 'var(--color-gray-700)', fontWeight: 600, display: 'block', marginTop: '6px', marginBottom: '2px' }}>
-                  Áreas de Manufactura Requeridas:
-                </label>
-                <div className={styles.areasGridPills}>
-                  {dynamicAreas.map((a) => {
-                    const isSelected = wizard.newGameAreas?.includes(a.id);
-                    return (
-                      <button
-                        key={a.id}
-                        type="button"
-                        className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
-                        onClick={() => handleToggleWizardGameArea(a.id)}
-                      >
-                        {isSelected ? '✓' : '＋'} {a.name}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {wizard.newGameAreas?.length > 0 && (
-                  <div className={styles.areaTargetsList}>
-                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>
-                      Metas de piezas por área:
-                    </label>
-                    {wizard.newGameAreas.map((areaId) => {
-                      const aName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
-                      return (
-                        <div key={areaId} className={styles.areaTargetItem}>
-                          <span>🏭 {aName}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <input
-                              type="number"
-                              min="1"
-                              style={{ width: '70px', padding: '3px 6px', fontSize: '12px' }}
-                              value={wizard.newGameTargets?.[areaId] ?? 10}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setWizard((prev) => ({
-                                  ...prev,
-                                  newGameTargets: { ...prev.newGameTargets, [areaId]: val }
-                                }));
-                              }}
-                            />
-                            <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>pzas</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
-            )}
-
-            <div className={styles.wizardFooterNav}>
-              <Button variant="ghost" size="md" onClick={handleWizardBack}>← Volver</Button>
-              <Button variant="primary" size="md" onClick={handleWizardNext}>Continuar a Asignación →</Button>
+              <div>
+                <label className={styles.inlineLabel}>Cliente / Empresa *</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Municipio, Inmobiliaria..."
+                  value={nodeModal.newProjClient}
+                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newProjClient: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className={styles.createGrid2}>
+              <div>
+                <label className={styles.inlineSubLabel}>Fecha de Inicio</label>
+                <input
+                  type="date"
+                  value={nodeModal.newProjStartDate}
+                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newProjStartDate: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className={styles.inlineSubLabel}>Fecha de Entrega</label>
+                <input
+                  type="date"
+                  value={nodeModal.newProjEndDate}
+                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newProjEndDate: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div>
+              <label className={styles.inlineSubLabel}>Descripción (opcional)</label>
+              <textarea
+                rows="2"
+                placeholder="Observaciones o notas generales..."
+                value={nodeModal.newProjDesc}
+                onChange={(e) => setNodeModal((prev) => ({ ...prev, newProjDesc: e.target.value }))}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+              <Button variant="secondary" size="md" onClick={closeNodeModal}>Cancelar</Button>
+              <Button variant="primary" size="md" onClick={handleCreateNewProjectNode}>🗂️ Crear y Agregar al Lienzo</Button>
             </div>
           </div>
         )}
 
-        {/* PASO 4 (Para Juego) O PASO 2 (Para Bloque): ÁREA Y RESPONSABLE */}
-        {((wizard.step === 4 && wizard.role === 'juego') || (wizard.step === 2 && wizard.role === 'bloque')) && (
-          <div className={styles.wizardContainer}>
-            <div className={styles.field}>
-              <label>Nombre del Nodo en el Lienzo</label>
-              <input
-                type="text"
-                placeholder="Ej. Estructura — Herrería"
-                value={wizard.name}
-                onChange={(e) => setWizard((prev) => ({ ...prev, name: e.target.value }))}
-              />
+        {/* 3. CREAR NUEVO JUEGO / MODELO */}
+        {nodeModal.tab === 'new' && nodeModal.type === 'juego' && (
+          <div className={styles.inlineCreateBox}>
+            <label className={styles.inlineLabel}>Nombre del Modelo / Juego *</label>
+            <input
+              type="text"
+              placeholder="Ej. Resbaladilla Acero Inox 3m..."
+              value={nodeModal.newGameName}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, newGameName: e.target.value }))}
+              autoFocus
+            />
+
+            <label className={styles.inlineSubLabel}>Proyecto Perteneciente (o conecta por cable después)</label>
+            <select
+              value={nodeModal.newGameProjectId}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, newGameProjectId: e.target.value }))}
+            >
+              <option value="">Sin proyecto específico (General)</option>
+              {proyectos.map((p) => (
+                <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
+              ))}
+            </select>
+
+            <label className={styles.inlineSubLabel}>Áreas de Manufactura Requeridas:</label>
+            <div className={styles.areasGridPills}>
+              {dynamicAreas.map((a) => {
+                const isSelected = nodeModal.newGameAreas?.includes(a.id);
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                    onClick={() => {
+                      let next = isSelected
+                        ? nodeModal.newGameAreas.filter((id) => id !== a.id)
+                        : [...nodeModal.newGameAreas, a.id];
+                      if (isSelected && a.id === 'corte-laser' && next.includes('herreria')) {
+                        next = next.filter((id) => id !== 'herreria');
+                      }
+                      if (!isSelected && a.id === 'herreria' && !next.includes('corte-laser')) {
+                        next.push('corte-laser');
+                      }
+                      setNodeModal((prev) => ({ ...prev, newGameAreas: next }));
+                    }}
+                  >
+                    {isSelected ? '✓ ' : '＋ '} {a.name}
+                  </button>
+                );
+              })}
             </div>
 
-            {wizard.role === 'bloque' && (
-              <div className={styles.field}>
-                <label>🗂️ Proyecto Ligado (Opcional)</label>
-                <select
-                  value={wizard.projectId}
-                  onChange={(e) => setWizard((prev) => ({ ...prev, projectId: e.target.value }))}
-                >
-                  <option value="">Sin proyecto ligado...</option>
-                  {proyectos.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
+              <Button variant="secondary" size="md" onClick={closeNodeModal}>Cancelar</Button>
+              <Button variant="primary" size="md" onClick={handleCreateNewGameNode}>🎮 Crear y Agregar al Lienzo</Button>
+            </div>
+          </div>
+        )}
 
-            <div className={styles.field}>
-              <label>🏭 Área Asignada</label>
-              <select
-                value={wizard.areaId}
-                onChange={(e) => setWizard((prev) => ({ ...prev, areaId: e.target.value }))}
-              >
-                <option value="">Seleccionar área...</option>
-                <optgroup label="🏭 Áreas de manufactura">
+        {/* 4. CREAR NUEVA ACTIVIDAD */}
+        {nodeModal.tab === 'new' && nodeModal.type === 'actividad' && (
+          <div className={styles.inlineCreateBox}>
+            <label className={styles.inlineLabel}>Título de la Tarea / Actividad *</label>
+            <input
+              type="text"
+              placeholder="Ej. Soldar marco principal tubular..."
+              value={nodeModal.newActTitle}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, newActTitle: e.target.value }))}
+              autoFocus
+            />
+
+            <div className={styles.createGrid2}>
+              <div>
+                <label className={styles.inlineSubLabel}>🏭 Área de Manufactura</label>
+                <select
+                  value={nodeModal.newActAreaId}
+                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newActAreaId: e.target.value }))}
+                >
                   {dynamicAreas.map((a) => (
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}
-                </optgroup>
-                <optgroup label="✏️ Otras áreas">
-                  {NON_PRODUCTION_AREAS.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
+                </select>
+              </div>
+              <div>
+                <label className={styles.inlineSubLabel}>Prioridad</label>
+                <select
+                  value={nodeModal.newActPriority}
+                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newActPriority: e.target.value }))}
+                >
+                  {PRIORITY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
-                </optgroup>
-              </select>
+                </select>
+              </div>
             </div>
 
-            <div className={styles.field}>
-              <label>👷 Colaborador Responsable (Opcional)</label>
-              <select
-                value={wizard.operarioId}
-                onChange={(e) => setWizard((prev) => ({ ...prev, operarioId: e.target.value }))}
-              >
-                <option value="">Sin asignar (o conectar por cable)</option>
-                {operarios.map((o) => {
-                  const areaName = dynamicAreas.find((a) => a.id === o.currentArea)?.name || o.currentArea;
-                  return (
-                    <option key={o.id} value={o.id}>{o.name} — {areaName}</option>
-                  );
-                })}
-              </select>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+              <Button variant="secondary" size="md" onClick={closeNodeModal}>Cancelar</Button>
+              <Button variant="primary" size="md" onClick={handleCreateNewActivityNode}>📌 Crear y Agregar al Lienzo</Button>
             </div>
+          </div>
+        )}
 
-            <div className={styles.wizardFooterNav}>
-              <Button variant="ghost" size="md" onClick={handleWizardBack}>← Volver</Button>
-              <Button variant="primary" size="md" onClick={handleWizardFinish}>➕ Crear Nodo en el Lienzo</Button>
+        {/* 5. CREAR BLOQUE / CELDA */}
+        {nodeModal.type === 'bloque' && (
+          <div className={styles.inlineCreateBox}>
+            <label className={styles.inlineLabel}>Nombre del Nodo Modular *</label>
+            <input
+              type="text"
+              placeholder="Ej. Ensamble de Célula 1..."
+              value={nodeModal.newBlockName}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, newBlockName: e.target.value }))}
+              autoFocus
+            />
+
+            <label className={styles.inlineSubLabel}>🏭 Área Principal de la Celda</label>
+            <select
+              value={nodeModal.newBlockAreaId}
+              onChange={(e) => setNodeModal((prev) => ({ ...prev, newBlockAreaId: e.target.value }))}
+            >
+              {allBlockAreas.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
+              <Button variant="secondary" size="md" onClick={closeNodeModal}>Cancelar</Button>
+              <Button variant="primary" size="md" onClick={handleCreateNewBlockNode}>📦 Crear Celda en Lienzo</Button>
             </div>
           </div>
         )}
       </Modal>
+
 
       {/* ---------- MODAL: NUEVA ACTIVIDAD DENTRO DE UN BLOQUE ---------- */}
       <Modal isOpen={blockActivityForm.isOpen} onClose={closeBlockActivityForm} title="📌 Nueva Actividad">
@@ -2730,6 +4161,134 @@ const EditorVisualPage = ({ standalone = false }) => {
           </p>
         </div>
       </Modal>
+
+      {/* ---------- MODAL: CONSULTAR TAREAS DE UN ÁREA EN EL LIENZO ---------- */}
+      <Modal
+        isOpen={areaTasksModal.isOpen}
+        onClose={() => setAreaTasksModal({ isOpen: false, areaId: null, areaName: '' })}
+        title={`📌 Tareas en Área: ${areaTasksModal.areaName || 'Estación'}`}
+      >
+        <div style={{ maxHeight: '60vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {(() => {
+            const areaTasks = actividades.filter((a) => a.areaId === areaTasksModal.areaId);
+            if (areaTasks.length === 0) {
+              return (
+                <EmptyState
+                  icon="📌"
+                  title="Sin tareas registradas"
+                  description="No hay actividades ni tareas asignadas a esta estación de manufactura actualmente."
+                />
+              );
+            }
+            return areaTasks.map((task) => {
+              const resp = operarios.find((o) => o.id === task.operarioId)?.name;
+              return (
+                <div
+                  key={task.id}
+                  style={{
+                    padding: '10px 14px',
+                    background: 'var(--color-gray-50)',
+                    border: '1px solid var(--color-gray-200)',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--color-dark)' }}>{task.title}</div>
+                    <div style={{ fontSize: '11.5px', color: 'var(--color-gray-500)', marginTop: '3px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span>Estatus: <strong>{task.status}</strong></span>
+                      <span>· Prioridad: <strong>{task.priority}</strong></span>
+                      {resp && <span style={{ color: 'var(--color-primary)' }}>· 👷 <strong>{resp}</strong></span>}
+                      {task.projectName && <span>· 🗂️ {task.projectName}</span>}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {canUserControlActivity(task) ? (
+                      <>
+                        {task.status === 'pendiente' && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => handleStartActivity(task.id, task.title)}
+                            title="Iniciar actividad"
+                          >
+                            ▶️ Iniciar
+                          </Button>
+                        )}
+                        {task.status === 'proceso' && (
+                          <Button
+                            variant="success"
+                            size="sm"
+                            onClick={() => handleOpenCompleteModal(task.id, task.title)}
+                            title="Terminar actividad"
+                          >
+                            ✅ Terminar
+                          </Button>
+                        )}
+                        {task.status === 'completado' && (
+                          <span style={{ fontSize: '11px', color: '#10b981', fontWeight: 700 }}>
+                            ✓ Completada
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ fontSize: '10.5px', color: 'var(--color-gray-400)', fontStyle: 'italic' }}>
+                        🔒 {task.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            });
+          })()}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+          <Button variant="secondary" size="md" onClick={() => setAreaTasksModal({ isOpen: false, areaId: null, areaName: '' })}>
+            Cerrar
+          </Button>
+        </div>
+      </Modal>
+
+      {/* ---------- MODAL: FINALIZAR / COMPLETAR ACTIVIDAD ---------- */}
+      <Modal
+        isOpen={completeModal.isOpen}
+        onClose={() => setCompleteModal({ isOpen: false, activityId: null, title: '', notes: '' })}
+        title={`✅ Finalizar Actividad: ${completeModal.title || 'Actividad'}`}
+      >
+        <div className={styles.field} style={{ marginBottom: '12px' }}>
+          <label>Notas de Conclusión / Comentarios de Entrega</label>
+          <textarea
+            rows="3"
+            placeholder="Describe qué se realizó o verificó..."
+            value={completeModal.notes}
+            onChange={(e) => setCompleteModal((prev) => ({ ...prev, notes: e.target.value }))}
+            style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid var(--color-gray-300)', fontSize: '13px' }}
+            autoFocus
+          />
+        </div>
+        <p style={{ fontSize: '11.5px', color: 'var(--color-gray-500)', margin: '0 0 16px 0' }}>
+          🕒 Se registrará la fecha y hora exacta de terminación para la métrica y trazabilidad en toda la app.
+        </p>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => setCompleteModal({ isOpen: false, activityId: null, title: '', notes: '' })}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="success"
+            size="md"
+            onClick={handleConfirmCompleteActivity}
+          >
+            ✅ Confirmar y Terminar
+          </Button>
+        </div>
+      </Modal>
     </motion.div>
   );
 };
@@ -2742,6 +4301,9 @@ const NodeInspector = ({
   node,
   entity,
   edges,
+  setEdges,
+  saveToFirestore,
+  nodes,
   findNode,
   nodeTitle,
   updateDraftField,
@@ -2757,16 +4319,27 @@ const NodeInspector = ({
   juegos = [],
   addProject,
   addGame,
+  updateProject,
   canEditDiagram,
   updateBlockField,
   updateBlockName,
   onSaveBlockName,
   openBlockActivityForm,
   handleReassignBlockActivities,
+  updateNodeColor,
+  updateEdgeColor,
+  updateEdgeStyle,
   dynamicAreas,
   allBlockAreas,
+  getSupervisorForArea,
+  onViewAreaTasks,
+  onStartActivity,
+  onOpenCompleteModal,
+  onResetActivityStatus,
+  canUserControlActivity,
+  onClose,
 }) => {
-  const meta = NODE_TYPES[node.type];
+  const meta = NODE_TYPES[node.type] || NODE_TYPES.bloque;
   const toast = useToast();
 
   const [isCreatingProj, setIsCreatingProj] = useState(false);
@@ -2781,6 +4354,119 @@ const NodeInspector = ({
   const [newGameName, setNewGameName] = useState('');
   const [newGameAreas, setNewGameAreas] = useState(['herreria', 'corte-laser']);
   const [newGameTargets, setNewGameTargets] = useState({ herreria: 10, 'corte-laser': 10 });
+
+  // 🗂️ Estados para editar Proyecto Existente
+  const [editProjName, setEditProjName] = useState('');
+  const [editProjClient, setEditProjClient] = useState('');
+  const [editProjStatus, setEditProjStatus] = useState('diseno');
+  const [editProjStartDate, setEditProjStartDate] = useState('');
+  const [editProjEndDate, setEditProjEndDate] = useState('');
+  const [editProjDesc, setEditProjDesc] = useState('');
+  const [isSavingProj, setIsSavingProj] = useState(false);
+
+  // 🎮 Estados para editar Juego Existente
+  const [editGameName, setEditGameName] = useState('');
+  const [editGameProjectId, setEditGameProjectId] = useState('');
+  const [editGameAreas, setEditGameAreas] = useState([]);
+  const [editGameTargets, setEditGameTargets] = useState({});
+  const [isSavingGame, setIsSavingGame] = useState(false);
+
+  // Estados para abrir acordeón de edición en Bloques
+  const [isEditingLinkedProj, setIsEditingLinkedProj] = useState(false);
+  const [isEditingLinkedGame, setIsEditingLinkedGame] = useState(false);
+
+  useEffect(() => {
+    if (entity && node.type === 'proyecto') {
+      setEditProjName(entity.name || '');
+      setEditProjClient(entity.client || '');
+      setEditProjStatus(entity.status || 'diseno');
+      setEditProjStartDate(entity.startDate || '');
+      setEditProjEndDate(entity.endDate || '');
+      setEditProjDesc(entity.description || '');
+    }
+    if (entity && node.type === 'juego') {
+      setEditGameName(entity.name || '');
+      setEditGameProjectId(entity.projectId || '');
+      setEditGameAreas(entity.areas || ['herreria', 'corte-laser']);
+      setEditGameTargets(entity.targetPieces || {});
+    }
+  }, [entity, node.type]);
+
+  const handleUpdateExistingProject = async () => {
+    if (!editProjName.trim() || !editProjClient.trim()) {
+      toast.danger('Nombre y cliente son obligatorios.');
+      return;
+    }
+    setIsSavingProj(true);
+    try {
+      const res = await updateProject(entity.id, {
+        name: editProjName.trim(),
+        client: editProjClient.trim(),
+        status: editProjStatus,
+        startDate: editProjStartDate || null,
+        endDate: editProjEndDate || null,
+        description: editProjDesc.trim() || 'Sin descripción',
+      });
+      if (res?.ok !== false) {
+        toast.success(`✅ Proyecto "${editProjName.trim()}" actualizado.`);
+      } else {
+        toast.danger(`Error: ${res.error}`);
+      }
+    } catch (e) {
+      toast.danger('No se pudo actualizar el proyecto.');
+    } finally {
+      setIsSavingProj(false);
+    }
+  };
+
+  const handleToggleEditGameArea = (areaId) => {
+    const isSelected = editGameAreas.includes(areaId);
+    let nextAreas = isSelected ? editGameAreas.filter((id) => id !== areaId) : [...editGameAreas, areaId];
+    const nextTargets = { ...editGameTargets };
+
+    if (isSelected && areaId === 'corte-laser' && nextAreas.includes('herreria')) {
+      nextAreas = nextAreas.filter((id) => id !== 'herreria');
+      delete nextTargets['herreria'];
+    }
+    if (!isSelected && areaId === 'herreria' && !nextAreas.includes('corte-laser')) {
+      nextAreas.push('corte-laser');
+      nextTargets['corte-laser'] = nextTargets['corte-laser'] || 10;
+    }
+
+    if (isSelected) {
+      delete nextTargets[areaId];
+    } else {
+      nextTargets[areaId] = nextTargets[areaId] || 10;
+    }
+
+    setEditGameAreas(nextAreas);
+    setEditGameTargets(nextTargets);
+  };
+
+  const handleUpdateExistingGame = async () => {
+    if (!editGameName.trim()) {
+      toast.danger('El nombre del juego es obligatorio.');
+      return;
+    }
+    setIsSavingGame(true);
+    try {
+      const matchingProj = proyectos.find((p) => p.id === editGameProjectId);
+      await updateDoc(doc(db, 'juegos', entity.id), {
+        name: editGameName.trim(),
+        projectId: editGameProjectId || null,
+        projectName: matchingProj?.name || entity.projectName || 'General',
+        areas: editGameAreas,
+        targetPieces: editGameTargets,
+        updatedAt: new Date().toISOString(),
+      });
+      toast.success(`✅ Juego "${editGameName.trim()}" actualizado.`);
+    } catch (e) {
+      console.error('Error actualizando juego:', e);
+      toast.danger('No se pudo actualizar el juego.');
+    } finally {
+      setIsSavingGame(false);
+    }
+  };
 
   const incoming = edges.filter((e) => e.to === node.id);
   const outgoing = edges.filter((e) => e.from === node.id);
@@ -2865,8 +4551,22 @@ const NodeInspector = ({
 
   return (
     <>
-      <p className={styles.inspectorEyebrow}>{meta.label}</p>
-      <h2 className={styles.inspectorTitle}>{nodeTitle(node)}</h2>
+      <div className={styles.inspectorHeader}>
+        <div>
+          <p className={styles.inspectorEyebrow}>{meta.label}</p>
+          <h2 className={styles.inspectorTitle} style={{ margin: 0 }}>{nodeTitle(node)}</h2>
+        </div>
+        {onClose && (
+          <button
+            type="button"
+            className={styles.floatingCloseBtn}
+            onClick={onClose}
+            title="Cerrar inspector y deseleccionar"
+          >
+            ✕
+          </button>
+        )}
+      </div>
 
       {node.draft && node.type === 'proyecto' && (
         <>
@@ -2938,19 +4638,163 @@ const NodeInspector = ({
 
       {!node.draft && entity && node.type === 'proyecto' && (
         <>
-          <div className={styles.field}><label>Nombre</label><input type="text" value={entity.name} disabled /></div>
-          <div className={styles.field}><label>Cliente</label><input type="text" value={entity.client || ''} disabled /></div>
-          <div className={styles.field}><label>Estado</label><input type="text" value={entity.status} disabled /></div>
-          <div className={styles.field}><label>Progreso</label><input type="text" value={`${entity.progress ?? 0}%`} disabled /></div>
+          <div className={styles.field}>
+            <label>Nombre del Proyecto *</label>
+            <input
+              type="text"
+              value={editProjName}
+              disabled={!canEditDiagram}
+              onChange={(e) => setEditProjName(e.target.value)}
+            />
+          </div>
+          <div className={styles.field}>
+            <label>Cliente *</label>
+            <input
+              type="text"
+              value={editProjClient}
+              disabled={!canEditDiagram}
+              onChange={(e) => setEditProjClient(e.target.value)}
+            />
+          </div>
+          <div className={styles.field}>
+            <label>Estado del Proyecto</label>
+            <select
+              value={editProjStatus}
+              disabled={!canEditDiagram}
+              onChange={(e) => setEditProjStatus(e.target.value)}
+            >
+              <option value="diseno">En Diseño</option>
+              <option value="progreso">En Progreso</option>
+              <option value="pausado">Pausado</option>
+              <option value="completado">Completado</option>
+            </select>
+          </div>
+          <div className={styles.createGrid2}>
+            <div className={styles.field}>
+              <label>Fecha Inicio</label>
+              <input
+                type="date"
+                value={editProjStartDate}
+                disabled={!canEditDiagram}
+                onChange={(e) => setEditProjStartDate(e.target.value)}
+              />
+            </div>
+            <div className={styles.field}>
+              <label>Fecha Entrega</label>
+              <input
+                type="date"
+                value={editProjEndDate}
+                disabled={!canEditDiagram}
+                onChange={(e) => setEditProjEndDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className={styles.field}>
+            <label>Descripción</label>
+            <textarea
+              rows="3"
+              value={editProjDesc}
+              disabled={!canEditDiagram}
+              onChange={(e) => setEditProjDesc(e.target.value)}
+            />
+          </div>
+          <div className={styles.field}>
+            <label>Progreso General</label>
+            <input type="text" value={`${entity.progress ?? 0}%`} disabled />
+          </div>
+          {canEditDiagram && (
+            <Button
+              variant="primary"
+              size="md"
+              onClick={handleUpdateExistingProject}
+              isLoading={isSavingProj}
+              style={{ width: '100%', marginTop: '8px' }}
+            >
+              💾 Guardar Cambios del Proyecto
+            </Button>
+          )}
         </>
       )}
 
       {!node.draft && entity && node.type === 'juego' && (
         <>
-          <div className={styles.field}><label>Nombre</label><input type="text" value={entity.name} disabled /></div>
-          <div className={styles.field}><label>Proyecto</label><input type="text" value={entity.projectName} disabled /></div>
-          <div className={styles.field}><label>Estado</label><input type="text" value={entity.status} disabled /></div>
-          <div className={styles.field}><label>Progreso</label><input type="text" value={`${entity.progress ?? 0}%`} disabled /></div>
+          <div className={styles.field}>
+            <label>Nombre del Juego / Modelo *</label>
+            <input
+              type="text"
+              value={editGameName}
+              disabled={!canEditDiagram}
+              onChange={(e) => setEditGameName(e.target.value)}
+            />
+          </div>
+          <div className={styles.field}>
+            <label>Proyecto Perteneciente</label>
+            <select
+              value={editGameProjectId}
+              disabled={!canEditDiagram}
+              onChange={(e) => setEditGameProjectId(e.target.value)}
+            >
+              <option value="">Sin proyecto específico (General)</option>
+              {proyectos.map((p) => (
+                <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className={styles.field}>
+            <label>Áreas Requeridas para este Juego</label>
+            <div className={styles.areasGridPills} style={{ marginTop: '4px' }}>
+              {dynamicAreas.map((a) => {
+                const isSelected = editGameAreas.includes(a.id);
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                    onClick={() => canEditDiagram && handleToggleEditGameArea(a.id)}
+                    style={{ cursor: canEditDiagram ? 'pointer' : 'default' }}
+                  >
+                    {isSelected ? '✓ ' : '+ '} {a.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className={styles.field}>
+            <label>Metas de Piezas por Área</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '8px', marginTop: '4px' }}>
+              {editGameAreas.map((areaId) => {
+                const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+                return (
+                  <div key={areaId} style={{ background: 'var(--color-gray-50)', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--color-gray-200)' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, display: 'block', marginBottom: '2px' }}>{areaName}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editGameTargets[areaId] || 10}
+                      disabled={!canEditDiagram}
+                      onChange={(e) => setEditGameTargets((prev) => ({ ...prev, [areaId]: Number(e.target.value) || 1 }))}
+                      style={{ width: '100%', padding: '4px', fontSize: '12px' }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {canEditDiagram && (
+            <Button
+              variant="primary"
+              size="md"
+              onClick={handleUpdateExistingGame}
+              isLoading={isSavingGame}
+              style={{ width: '100%', margin: '8px 0 16px 0' }}
+            >
+              💾 Guardar Cambios del Juego
+            </Button>
+          )}
+
           {(entity.areas || [])
             .filter((areaId) => isAreaBlockedBySequence(entity, areaId))
             .map((areaId) => {
@@ -2967,7 +4811,7 @@ const NodeInspector = ({
               );
             })}
 
-          <p className={styles.inspectorEyebrow} style={{ marginTop: '16px' }}>Manufactura por Área</p>
+          <p className={styles.inspectorEyebrow} style={{ marginTop: '16px' }}>Avance de Manufactura</p>
           <div className={styles.areaStatusList}>
             {[...(entity.areas || []), 'producto-terminado'].map((areaId) => {
               const areaName = areaId === 'producto-terminado'
@@ -3002,17 +4846,177 @@ const NodeInspector = ({
         <>
           <div className={styles.field}><label>Título</label><input type="text" value={entity.title} disabled /></div>
           <div className={styles.field}><label>Área</label><input type="text" value={dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId} disabled /></div>
-          <div className={styles.field}><label>Estado</label><input type="text" value={entity.status} disabled /></div>
           <div className={styles.field}><label>Prioridad</label><input type="text" value={entity.priority} disabled /></div>
           <div className={styles.field}>
             <label>Responsable</label>
-            <input type="text" value={operarios.find((o) => o.id === entity.operarioId)?.name || 'Sin asignar'} disabled />
+            <input
+              type="text"
+              value={(() => {
+                const colabEdge = edges.find(
+                  (e) =>
+                    (e.from === node.id && findNode(e.to)?.type === 'colaborador') ||
+                    (e.to === node.id && findNode(e.from)?.type === 'colaborador')
+                );
+                const connectedColabNode = colabEdge
+                  ? findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to)
+                  : null;
+                const directOperario = operarios.find((o) => o.id === (entity?.operarioId || node?.operarioId || node?.draftFields?.operarioId));
+                return directOperario?.name || (connectedColabNode ? nodeTitle(connectedColabNode) : 'Sin asignar (conectar cable a colaborador)');
+              })()}
+              disabled
+            />
+          </div>
+
+          <div className={styles.field}>
+            <label>Estado del Trabajo</label>
+            <div style={{ padding: '10px 12px', background: 'var(--color-gray-50)', borderRadius: '8px', border: '1px solid var(--color-gray-200)', marginTop: '4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-dark)' }}>Estado Actual:</span>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    textTransform: 'uppercase',
+                    background:
+                      entity.status === 'completado'
+                        ? 'rgba(16, 185, 129, 0.15)'
+                        : entity.status === 'proceso'
+                        ? 'rgba(37, 99, 235, 0.15)'
+                        : 'rgba(156, 163, 175, 0.15)',
+                    color:
+                      entity.status === 'completado'
+                        ? '#10b981'
+                        : entity.status === 'proceso'
+                        ? '#2563eb'
+                        : '#6b7280',
+                  }}
+                >
+                  {entity.status === 'completado' ? '✅ Completada' : entity.status === 'proceso' ? '⚡ En Proceso' : '⏳ Pendiente'}
+                </span>
+              </div>
+
+              {entity.startedAt && (
+                <div style={{ fontSize: '11px', color: 'var(--color-gray-600)', marginTop: '6px' }}>
+                  🕒 Inicio: <strong>{new Date(entity.startedAt).toLocaleString()}</strong>
+                </div>
+              )}
+              {entity.completedAt && (
+                <div style={{ fontSize: '11px', color: '#10b981', marginTop: '3px' }}>
+                  ✅ Fin: <strong>{new Date(entity.completedAt).toLocaleString()}</strong>
+                </div>
+              )}
+              {entity.completionNotes && (
+                <div style={{ fontSize: '11px', color: 'var(--color-gray-600)', marginTop: '5px', fontStyle: 'italic', borderTop: '1px dashed var(--color-gray-200)', paddingTop: '4px' }}>
+                  &ldquo;{entity.completionNotes}&rdquo;
+                </div>
+              )}
+            </div>
+
+            {(() => {
+              const hasControl = canUserControlActivity ? canUserControlActivity(entity) : true;
+              if (!hasControl) {
+                return (
+                  <div style={{ padding: '8px', background: 'rgba(0,0,0,0.04)', borderRadius: '6px', marginTop: '10px', fontSize: '11.5px', color: 'var(--color-gray-600)', textAlign: 'center' }}>
+                    🔒 Solo el colaborador asignado o el supervisor de esta área pueden iniciar o terminar esta actividad.
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' }}>
+                  {entity.status === 'pendiente' && (
+                    <Button
+                      variant="primary"
+                      size="md"
+                      onClick={() => onStartActivity && onStartActivity(entity.id, entity.title)}
+                      style={{ width: '100%' }}
+                    >
+                      ▶️ Iniciar Actividad
+                    </Button>
+                  )}
+                  {entity.status === 'proceso' && (
+                    <>
+                      <Button
+                        variant="success"
+                        size="md"
+                        onClick={() => onOpenCompleteModal && onOpenCompleteModal(entity.id, entity.title)}
+                        style={{ width: '100%' }}
+                      >
+                        ✅ Marcar como Terminada
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => onResetActivityStatus && onResetActivityStatus(entity.id, 'pendiente')}
+                        style={{ width: '100%' }}
+                      >
+                        ⏸️ Regresar a Pendiente
+                      </Button>
+                    </>
+                  )}
+                  {entity.status === 'completado' && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => onResetActivityStatus && onResetActivityStatus(entity.id, 'proceso')}
+                      style={{ width: '100%' }}
+                    >
+                      🔄 Reabrir Actividad
+                    </Button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </>
       )}
 
       {!node.draft && entity && node.type === 'area' && (
-        <div className={styles.field}><label>Nombre del Área</label><input type="text" value={entity.name} disabled /></div>
+        <>
+          <div className={styles.field}><label>Nombre del Área</label><input type="text" value={entity.name} disabled /></div>
+          {(() => {
+            const supervisor = (getSupervisorForArea && getSupervisorForArea(node.refId || entity.id)) || {
+              name: 'Supervisor de Área',
+              role: 'Supervisor',
+            };
+            return (
+              <div className={styles.field}>
+                <label>👤 Supervisor Oficial a Cargo</label>
+                <input type="text" value={`${supervisor.name} (${supervisor.role})`} disabled />
+              </div>
+            );
+          })()}
+          <div className={styles.field}>
+            <label>👥 Operarios en esta Estación</label>
+            <input
+              type="text"
+              value={`${operarios.filter((o) => o.currentArea === (node.refId || entity.id)).length} operarios registrados`}
+              disabled
+            />
+          </div>
+          <div className={styles.field}>
+            <label>📌 Tareas Asignadas a esta Área</label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={`${actividades.filter((a) => a.areaId === (node.refId || entity.id)).length} tareas registradas`}
+                disabled
+                style={{ flex: 1 }}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => onViewAreaTasks && onViewAreaTasks(node.refId || entity.id, entity.name)}
+                title="Ver lista completa de tareas de esta área"
+              >
+                📋 Ver
+              </Button>
+            </div>
+          </div>
+        </>
       )}
 
       {!node.draft && entity && node.type === 'colaborador' && (
@@ -3088,19 +5092,119 @@ const NodeInspector = ({
               )}
             </div>
             {!isCreatingProj ? (
-              <select
-                value={node.projectId || ''}
-                disabled={!canEditDiagram}
-                onChange={(e) => {
-                  updateBlockField('projectId', e.target.value);
-                  updateBlockField('gameId', '');
-                }}
-              >
-                <option value="">Sin proyecto asignado...</option>
-                {proyectos.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
-                ))}
-              </select>
+              <>
+                <select
+                  value={node.projectId || ''}
+                  disabled={!canEditDiagram}
+                  onChange={(e) => {
+                    updateBlockField('projectId', e.target.value);
+                    updateBlockField('gameId', '');
+                  }}
+                >
+                  <option value="">Sin proyecto asignado...</option>
+                  {proyectos.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
+                  ))}
+                </select>
+
+                {node.projectId && canEditDiagram && (
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    onClick={() => {
+                      const p = proyectos.find((proj) => proj.id === node.projectId);
+                      if (p) {
+                        setEditProjName(p.name || '');
+                        setEditProjClient(p.client || '');
+                        setEditProjStatus(p.status || 'diseno');
+                        setEditProjStartDate(p.startDate || '');
+                        setEditProjEndDate(p.endDate || '');
+                        setEditProjDesc(p.description || '');
+                      }
+                      setIsEditingLinkedProj((prev) => !prev);
+                    }}
+                  >
+                    {isEditingLinkedProj ? '✕ Cerrar edición de proyecto' : '✏️ Modificar datos de este Proyecto'}
+                  </button>
+                )}
+
+                {isEditingLinkedProj && node.projectId && (
+                  <div className={styles.inlineCreateBox} style={{ marginTop: '8px', borderLeft: '3px solid var(--color-primary)' }}>
+                    <p style={{ margin: '0 0 6px 0', fontSize: '11.5px', fontWeight: 700, color: 'var(--color-primary)' }}>
+                      ✏️ Modificar Proyecto: {proyectos.find((p) => p.id === node.projectId)?.name}
+                    </p>
+                    <div className={styles.createGrid2}>
+                      <div>
+                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Nombre *</label>
+                        <input
+                          type="text"
+                          value={editProjName}
+                          onChange={(e) => setEditProjName(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Cliente *</label>
+                        <input
+                          type="text"
+                          value={editProjClient}
+                          onChange={(e) => setEditProjClient(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className={styles.createGrid2}>
+                      <div>
+                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Fecha Inicio</label>
+                        <input
+                          type="date"
+                          value={editProjStartDate}
+                          onChange={(e) => setEditProjStartDate(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Fecha Entrega</label>
+                        <input
+                          type="date"
+                          value={editProjEndDate}
+                          onChange={(e) => setEditProjEndDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Descripción</label>
+                      <textarea
+                        rows="2"
+                        value={editProjDesc}
+                        onChange={(e) => setEditProjDesc(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={async () => {
+                        if (!editProjName.trim() || !editProjClient.trim()) {
+                          toast.danger('Nombre y cliente son obligatorios.');
+                          return;
+                        }
+                        const res = await updateProject(node.projectId, {
+                          name: editProjName.trim(),
+                          client: editProjClient.trim(),
+                          status: editProjStatus,
+                          startDate: editProjStartDate || null,
+                          endDate: editProjEndDate || null,
+                          description: editProjDesc.trim() || 'Sin descripción',
+                        });
+                        if (res?.ok !== false) {
+                          toast.success('✅ Proyecto actualizado en el sistema.');
+                          setIsEditingLinkedProj(false);
+                        }
+                      }}
+                      style={{ alignSelf: 'flex-start', marginTop: '4px' }}
+                    >
+                      💾 Guardar Cambios del Proyecto
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
               <div className={styles.inlineCreateBox}>
                 <div className={styles.createGrid2}>
@@ -3172,18 +5276,123 @@ const NodeInspector = ({
               )}
             </div>
             {!isCreatingGame ? (
-              <select
-                value={node.gameId || ''}
-                disabled={!canEditDiagram}
-                onChange={(e) => updateBlockField('gameId', e.target.value)}
-              >
-                <option value="">Sin juego asignado...</option>
-                {juegos
-                  .filter((j) => !node.projectId || j.projectId === node.projectId || j.projectName === proyectos.find((p) => p.id === node.projectId)?.name)
-                  .map((j) => (
-                    <option key={j.id} value={j.id}>{j.name} ({j.projectName || 'General'})</option>
-                  ))}
-              </select>
+              <>
+                <select
+                  value={node.gameId || ''}
+                  disabled={!canEditDiagram}
+                  onChange={(e) => updateBlockField('gameId', e.target.value)}
+                >
+                  <option value="">Sin juego asignado...</option>
+                  {juegos
+                    .filter((j) => !node.projectId || j.projectId === node.projectId || j.projectName === proyectos.find((p) => p.id === node.projectId)?.name)
+                    .map((j) => (
+                      <option key={j.id} value={j.id}>{j.name} ({j.projectName || 'General'})</option>
+                    ))}
+                </select>
+
+                {node.gameId && canEditDiagram && (
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 'none', color: 'var(--color-tiffany-blue)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    onClick={() => {
+                      const g = juegos.find((j) => j.id === node.gameId);
+                      if (g) {
+                        setEditGameName(g.name || '');
+                        setEditGameProjectId(g.projectId || '');
+                        setEditGameAreas(g.areas || ['herreria', 'corte-laser']);
+                        setEditGameTargets(g.targetPieces || {});
+                      }
+                      setIsEditingLinkedGame((prev) => !prev);
+                    }}
+                  >
+                    {isEditingLinkedGame ? '✕ Cerrar edición de juego' : '✏️ Modificar datos de este Juego'}
+                  </button>
+                )}
+
+                {isEditingLinkedGame && node.gameId && (
+                  <div className={styles.inlineCreateBox} style={{ marginTop: '8px', borderLeft: '3px solid var(--color-tiffany-blue)' }}>
+                    <p style={{ margin: '0 0 6px 0', fontSize: '11.5px', fontWeight: 700, color: 'var(--color-tiffany-blue)' }}>
+                      ✏️ Modificar Juego: {juegos.find((j) => j.id === node.gameId)?.name}
+                    </p>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Nombre *</label>
+                    <input
+                      type="text"
+                      value={editGameName}
+                      onChange={(e) => setEditGameName(e.target.value)}
+                    />
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginTop: '4px', marginBottom: '2px' }}>
+                      Áreas de Manufactura:
+                    </label>
+                    <div className={styles.areasGridPills}>
+                      {dynamicAreas.map((a) => {
+                        const isSelected = editGameAreas.includes(a.id);
+                        return (
+                          <button
+                            key={a.id}
+                            type="button"
+                            className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                            onClick={() => handleToggleEditGameArea(a.id)}
+                          >
+                            {isSelected ? '✓' : '＋'} {a.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {editGameAreas.length > 0 && (
+                      <div className={styles.areaTargetsList}>
+                        <label style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
+                          Metas de piezas por área:
+                        </label>
+                        {editGameAreas.map((areaId) => {
+                          const aName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+                          return (
+                            <div key={areaId} className={styles.areaTargetItem}>
+                              <span>🏭 {aName}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  style={{ width: '70px', padding: '3px 6px', fontSize: '12px' }}
+                                  value={editGameTargets[areaId] ?? 10}
+                                  onChange={(e) => {
+                                    const val = Number(e.target.value) || 1;
+                                    setEditGameTargets((prev) => ({ ...prev, [areaId]: val }));
+                                  }}
+                                />
+                                <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>pzas</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={async () => {
+                        if (!editGameName.trim()) {
+                          toast.danger('El nombre del juego es obligatorio.');
+                          return;
+                        }
+                        const matchingProj = proyectos.find((p) => p.id === editGameProjectId);
+                        await updateDoc(doc(db, 'juegos', node.gameId), {
+                          name: editGameName.trim(),
+                          projectId: editGameProjectId || null,
+                          projectName: matchingProj?.name || 'General',
+                          areas: editGameAreas,
+                          targetPieces: editGameTargets,
+                          updatedAt: new Date().toISOString(),
+                        });
+                        toast.success('✅ Juego actualizado en el sistema.');
+                        setIsEditingLinkedGame(false);
+                      }}
+                      style={{ alignSelf: 'flex-start', marginTop: '6px' }}
+                    >
+                      💾 Guardar Cambios del Juego
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
               <div className={styles.inlineCreateBox}>
                 <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre del Modelo / Juego *</label>
@@ -3349,20 +5558,136 @@ const NodeInspector = ({
         <p style={{ fontSize: '12.5px', color: 'var(--color-alert)' }}>Este registro ya no existe.</p>
       )}
 
-      <div className={styles.calloutBox} style={{ marginTop: '18px', background: 'rgba(255, 51, 0, 0.06)', border: '1px solid rgba(255, 51, 0, 0.2)' }}>
-        <strong style={{ display: 'block', marginBottom: '4px', color: 'var(--color-primary)' }}>Conexiones</strong>
-        {incoming.length === 0 && outgoing.length === 0 && <span className={styles.emptyConns}>Sin conexiones todavía.</span>}
-        {incoming.map((e) => {
-          const other = findNode(e.from);
-          return other ? (
-            <div key={e.id} className={styles.connRow}><span className={styles.connArrow}>←</span><span>{NODE_TYPES[other.type].icon} {nodeTitle(other)}</span></div>
-          ) : null;
-        })}
+      {/* 🎨 PERSONALIZAR COLOR DEL NODO */}
+      {canEditDiagram && (
+        <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.12)' }}>
+          <label style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', display: 'block', marginBottom: '8px' }}>
+            🎨 Color Personalizado del Nodo
+          </label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+            {PRESET_COLORS.map((c) => {
+              const isSelected = (node.customColor || meta.colorVar) === c.value;
+              return (
+                <button
+                  key={c.value}
+                  type="button"
+                  onClick={() => updateNodeColor(node.id, c.value)}
+                  title={c.name}
+                  style={{
+                    width: '26px',
+                    height: '26px',
+                    borderRadius: '50%',
+                    backgroundColor: c.value,
+                    border: isSelected ? '2.5px solid #ffffff' : '1.5px solid rgba(0,0,0,0.15)',
+                    boxShadow: isSelected ? `0 0 0 2px ${c.value}, 0 2px 8px rgba(0,0,0,0.3)` : 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                    transform: isSelected ? 'scale(1.15)' : 'scale(1)',
+                    transition: 'transform 0.15s ease',
+                  }}
+                />
+              );
+            })}
+            <label title="Elegir color personalizado" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', margin: 0 }}>
+              <input
+                type="color"
+                value={node.customColor || meta.colorVar || '#ea580c'}
+                onChange={(e) => updateNodeColor(node.id, e.target.value)}
+                style={{ width: '28px', height: '28px', padding: '0', border: '1.5px solid rgba(255,255,255,0.3)', borderRadius: '6px', cursor: 'pointer', background: 'none' }}
+              />
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* ⚡ CABLES Y CONEXIONES CON CAMBIO DE COLOR */}
+      <div className={styles.calloutBox} style={{ marginTop: '16px', background: 'rgba(234, 88, 12, 0.06)', border: '1px solid rgba(234, 88, 12, 0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <strong style={{ color: 'var(--color-primary)', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            ⚡ Conexiones ({incoming.length + outgoing.length})
+          </strong>
+        </div>
+
+        {incoming.length === 0 && outgoing.length === 0 && (
+          <span className={styles.emptyConns}>Sin cables conectados todavía. Arrastra desde los puntos laterales, superior o inferior.</span>
+        )}
+
         {outgoing.map((e) => {
           const other = findNode(e.to);
-          return other ? (
-            <div key={e.id} className={styles.connRow}><span className={styles.connArrow}>→</span><span>{NODE_TYPES[other.type].icon} {nodeTitle(other)}</span></div>
-          ) : null;
+          if (!other) return null;
+          const otherMeta = NODE_TYPES[other.type] || NODE_TYPES.bloque;
+          const wireColor = e.customColor || node.customColor || meta.colorVar;
+
+          return (
+            <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)', gap: '6px' }}>
+              <span style={{ fontSize: '11.5px' }}>
+                <span className={styles.connArrow} style={{ color: wireColor }}>→</span> Conecta a <strong>{otherMeta.icon} {nodeTitle(other)}</strong>
+              </span>
+              {canEditDiagram && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="color"
+                    value={wireColor}
+                    onChange={(evt) => updateEdgeColor(e.id, evt.target.value)}
+                    title="Cambiar color de este cable"
+                    style={{ width: '22px', height: '22px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 'none', color: 'var(--color-alert, #ef4444)', cursor: 'pointer', fontSize: '13px', padding: '2px 4px' }}
+                    onClick={() => {
+                      const nextEdges = edges.filter((ed) => ed.id !== e.id);
+                      setEdges(nextEdges);
+                      saveToFirestore(nodes, nextEdges);
+                      toast.info('Cable desconectado.');
+                    }}
+                    title="Desconectar este cable"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {incoming.map((e) => {
+          const other = findNode(e.from);
+          if (!other) return null;
+          const otherMeta = NODE_TYPES[other.type] || NODE_TYPES.bloque;
+          const wireColor = e.customColor || other.customColor || otherMeta.colorVar;
+
+          return (
+            <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)', gap: '6px' }}>
+              <span style={{ fontSize: '11.5px' }}>
+                <span className={styles.connArrow} style={{ color: wireColor }}>←</span> Recibe de <strong>{otherMeta.icon} {nodeTitle(other)}</strong>
+              </span>
+              {canEditDiagram && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="color"
+                    value={wireColor}
+                    onChange={(evt) => updateEdgeColor(e.id, evt.target.value)}
+                    title="Cambiar color de este cable"
+                    style={{ width: '22px', height: '22px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 'none', color: 'var(--color-alert, #ef4444)', cursor: 'pointer', fontSize: '13px', padding: '2px 4px' }}
+                    onClick={() => {
+                      const nextEdges = edges.filter((ed) => ed.id !== e.id);
+                      setEdges(nextEdges);
+                      saveToFirestore(nodes, nextEdges);
+                      toast.info('Cable desconectado.');
+                    }}
+                    title="Desconectar este cable"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+          );
         })}
       </div>
     </>
