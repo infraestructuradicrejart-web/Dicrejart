@@ -408,6 +408,84 @@ const EditorVisualPage = ({ standalone = false }) => {
     }
   }, [lienzoActivoId]);
 
+  const findNode = useCallback((id) => nodes.find((n) => n.id === id) || null, [nodes]);
+
+  /** Devuelve el registro real (Proyecto/Juego/Actividad/Colaborador/Área) que representa un nodo, si ya está vinculado */
+  const getLinkedEntity = useCallback(
+    (node) => {
+      if (!node || node.draft) return null;
+      if (node.type === 'proyecto') return proyectos.find((p) => p.id === node.refId);
+      if (node.type === 'juego') return juegos.find((j) => j.id === node.refId);
+      if (node.type === 'actividad') return actividades.find((a) => a.id === node.refId);
+      if (node.type === 'colaborador') return operarios.find((o) => o.id === node.refId);
+      if (node.type === 'area') return dynamicAreas.find((a) => a.id === node.refId);
+      return null;
+    },
+    [proyectos, juegos, actividades, operarios, dynamicAreas]
+  );
+
+  const nodeTitle = useCallback(
+    (node) => {
+      // Un Bloque no representa un único registro real (Firestore) sino un grupo de
+      // actividades, así que no pasa por getLinkedEntity — su "entidad" es su propio nombre.
+      if (node.type === 'bloque') return node.blockName || 'Bloque sin nombre';
+      if (node.draft) return node.draftFields.name || node.draftFields.title || 'Sin nombre';
+      const entity = getLinkedEntity(node);
+      if (!entity) return '(no encontrado)';
+      return entity.name || entity.title || 'Sin nombre';
+    },
+    [getLinkedEntity]
+  );
+
+  /**
+   * Obtiene el supervisor / encargado oficial de un área de manufactura
+   */
+  const getSupervisorForArea = useCallback(
+    (areaId) => {
+      if (!areaId) return { id: null, name: 'Supervisor de Área', role: 'Supervisor de Área' };
+      const areaObj = dynamicAreas.find((a) => a.id === areaId);
+
+      // 1. Buscar en usuarios registrados con rol supervisor-area o encargado-area
+      const supervisorUser = (users || []).find(
+        (u) =>
+          u.status === 'activo' &&
+          ((u.roleType === 'supervisor-area' && (u.areaIds || []).includes(areaId)) ||
+           (u.roleType === 'encargado-area' && u.areaId === areaId))
+      );
+      if (supervisorUser) {
+        return {
+          id: supervisorUser.id,
+          name: supervisorUser.name,
+          role: supervisorUser.role || 'Supervisor de Área',
+          email: supervisorUser.email,
+        };
+      }
+
+      // 2. Buscar en plantilla de operarios con puesto de Supervisor o Encargado en esa área
+      const supervisorOp = (operarios || []).find(
+        (o) =>
+          o.currentArea === areaId &&
+          (o.puesto?.toLowerCase().includes('supervisor') || o.puesto?.toLowerCase().includes('encargado'))
+      );
+      if (supervisorOp) {
+        return {
+          id: supervisorOp.id,
+          name: supervisorOp.name,
+          role: supervisorOp.puesto || 'Supervisor de Área',
+          email: supervisorOp.email || null,
+        };
+      }
+
+      return {
+        id: null,
+        name: `Supervisor de ${areaObj?.name || areaId}`,
+        role: 'Supervisor de Área',
+        email: null,
+      };
+    },
+    [dynamicAreas, users, operarios]
+  );
+
   /**
    * Guarda de forma transparente el estado actual del lienzo en Firestore y en localStorage
    */
@@ -669,84 +747,6 @@ const EditorVisualPage = ({ standalone = false }) => {
       toast.danger('No se pudo crear el lienzo.');
     }
   };
-
-  const findNode = useCallback((id) => nodes.find((n) => n.id === id) || null, [nodes]);
-
-  /** Devuelve el registro real (Proyecto/Juego/Actividad/Colaborador/Área) que representa un nodo, si ya está vinculado */
-  const getLinkedEntity = useCallback(
-    (node) => {
-      if (!node || node.draft) return null;
-      if (node.type === 'proyecto') return proyectos.find((p) => p.id === node.refId);
-      if (node.type === 'juego') return juegos.find((j) => j.id === node.refId);
-      if (node.type === 'actividad') return actividades.find((a) => a.id === node.refId);
-      if (node.type === 'colaborador') return operarios.find((o) => o.id === node.refId);
-      if (node.type === 'area') return dynamicAreas.find((a) => a.id === node.refId);
-      return null;
-    },
-    [proyectos, juegos, actividades, operarios, dynamicAreas]
-  );
-
-  const nodeTitle = useCallback(
-    (node) => {
-      // Un Bloque no representa un único registro real (Firestore) sino un grupo de
-      // actividades, así que no pasa por getLinkedEntity — su "entidad" es su propio nombre.
-      if (node.type === 'bloque') return node.blockName || 'Bloque sin nombre';
-      if (node.draft) return node.draftFields.name || node.draftFields.title || 'Sin nombre';
-      const entity = getLinkedEntity(node);
-      if (!entity) return '(no encontrado)';
-      return entity.name || entity.title || 'Sin nombre';
-    },
-    [getLinkedEntity]
-  );
-
-  /**
-   * Obtiene el supervisor / encargado oficial de un área de manufactura
-   */
-  const getSupervisorForArea = useCallback(
-    (areaId) => {
-      if (!areaId) return { id: null, name: 'Supervisor de Área', role: 'Supervisor de Área' };
-      const areaObj = dynamicAreas.find((a) => a.id === areaId);
-
-      // 1. Buscar en usuarios registrados con rol supervisor-area o encargado-area
-      const supervisorUser = (users || []).find(
-        (u) =>
-          u.status === 'activo' &&
-          ((u.roleType === 'supervisor-area' && (u.areaIds || []).includes(areaId)) ||
-           (u.roleType === 'encargado-area' && u.areaId === areaId))
-      );
-      if (supervisorUser) {
-        return {
-          id: supervisorUser.id,
-          name: supervisorUser.name,
-          role: supervisorUser.role || 'Supervisor de Área',
-          email: supervisorUser.email,
-        };
-      }
-
-      // 2. Buscar en plantilla de operarios con puesto de Supervisor o Encargado en esa área
-      const supervisorOp = (operarios || []).find(
-        (o) =>
-          o.currentArea === areaId &&
-          (o.puesto?.toLowerCase().includes('supervisor') || o.puesto?.toLowerCase().includes('encargado'))
-      );
-      if (supervisorOp) {
-        return {
-          id: supervisorOp.id,
-          name: supervisorOp.name,
-          role: supervisorOp.puesto || 'Supervisor de Área',
-          email: supervisorOp.email || null,
-        };
-      }
-
-      return {
-        id: null,
-        name: `Supervisor de ${areaObj?.name || areaId}`,
-        role: 'Supervisor de Área',
-        email: null,
-      };
-    },
-    [dynamicAreas, users, operarios]
-  );
 
   /** Áreas de un Juego real que están bloqueadas por secuencia (ej. Herrería esperando Corte Láser) */
   const getBlockedAreas = useCallback(
