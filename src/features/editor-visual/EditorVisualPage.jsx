@@ -63,6 +63,14 @@ const PRESET_COLORS = [
   { name: 'Grafito Oscuro', value: '#475569' },
 ];
 
+const DEFAULT_NODE_META = {
+  icon: '📦',
+  label: 'Bloque de Trabajo',
+  badgeText: 'BLOQUE',
+  colorVar: '#ea580c',
+  allowCreate: true,
+};
+
 const NODE_TYPES = {
   recurso: { icon: '📎', label: 'Ayuda Visual / Archivo', badgeText: 'AYUDA VISUAL', colorVar: '#06b6d4', allowCreate: true },
   proyecto: { icon: '🗂️', label: 'Proyecto', badgeText: 'PROYECTO', colorVar: '#2563eb', allowCreate: true },
@@ -70,6 +78,7 @@ const NODE_TYPES = {
   actividad: { icon: '📌', label: 'Actividad', badgeText: 'ACTIVIDAD', colorVar: '#d97706', allowCreate: true },
   area: { icon: '🏭', label: 'Área de Taller', badgeText: 'TALLER', colorVar: '#6366f1', allowCreate: false },
   colaborador: { icon: '👷', label: 'Colaborador', badgeText: 'PERSONAL', colorVar: '#9333ea', allowCreate: false },
+  bloque: { icon: '📦', label: 'Bloque de Trabajo', badgeText: 'BLOQUE', colorVar: '#ea580c', allowCreate: true },
 };
 
 const PRIORITY_OPTIONS = [
@@ -3050,8 +3059,8 @@ const EditorVisualPage = ({ standalone = false }) => {
               </svg>
 
               {nodes.map((node) => {
-                const meta = NODE_TYPES[node.type] || NODE_TYPES.bloque;
-                const nodeThemeColor = node.customColor || meta.colorVar;
+                const meta = NODE_TYPES[node.type] || DEFAULT_NODE_META;
+                const nodeThemeColor = node.customColor || meta.colorVar || '#ea580c';
                 const entity = getLinkedEntity(node);
 
                 return (
@@ -4978,7 +4987,7 @@ const NodeInspector = ({
   lienzoActivoId = 'general',
   onClose,
 }) => {
-  const meta = NODE_TYPES[node.type] || NODE_TYPES.bloque;
+  const meta = NODE_TYPES[node.type] || DEFAULT_NODE_META;
   const toast = useToast();
 
   const [isCreatingProj, setIsCreatingProj] = useState(false);
@@ -5874,7 +5883,7 @@ const NodeInspector = ({
           </label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
             {PRESET_COLORS.map((c) => {
-              const isSelected = (node.customColor || meta.colorVar) === c.value;
+              const isSelected = (node.customColor || meta.colorVar || '#ea580c') === c.value;
               return (
                 <button
                   key={c.value}
@@ -5923,8 +5932,8 @@ const NodeInspector = ({
         {outgoing.map((e) => {
           const other = findNode(e.to);
           if (!other) return null;
-          const otherMeta = NODE_TYPES[other.type] || NODE_TYPES.bloque;
-          const wireColor = e.customColor || node.customColor || meta.colorVar;
+          const otherMeta = NODE_TYPES[other.type] || DEFAULT_NODE_META;
+          const wireColor = e.customColor || node.customColor || meta.colorVar || '#ea580c';
 
           return (
             <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)', gap: '6px' }}>
@@ -5962,8 +5971,8 @@ const NodeInspector = ({
         {incoming.map((e) => {
           const other = findNode(e.from);
           if (!other) return null;
-          const otherMeta = NODE_TYPES[other.type] || NODE_TYPES.bloque;
-          const wireColor = e.customColor || other.customColor || otherMeta.colorVar;
+          const otherMeta = NODE_TYPES[other.type] || DEFAULT_NODE_META;
+          const wireColor = e.customColor || other.customColor || otherMeta.colorVar || '#ea580c';
 
           return (
             <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)', gap: '6px' }}>
