@@ -31,6 +31,11 @@ import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
 import { getTodayLocalDateStr } from '../utils/dateUtils';
 import { checkOvertimeEligibility, calculateScheduleFromOvertime } from '../utils/overtimeRules';
+import {
+  triggerDailyRHNotification,
+  triggerRHOvertimeNotification,
+  triggerRHWeeklyOvertimeSummary,
+} from '../services/rhNotificationService';
 
 export const OperariosContext = createContext(null);
 
@@ -152,23 +157,108 @@ export const OperariosProvider = ({ children }) => {
   // verifyAreaAuthorizer valida, con la contraseña real de un tercero, que tenga
   // autoridad (Admin, Encargado o Supervisor) sobre un área específica
   const { verifyAreaAuthorizer, user } = useContext(AuthContext) || {};
-  const { limits } = useContext(ConfigContext) || {};
+  const { limits, generalConfig, updateGeneralConfig } = useContext(ConfigContext) || {};
   const movimientosPersonalLimit = limits?.movimientosPersonalLimit || DEFAULT_LIMITS.movimientosPersonalLimit;
   const horasExtraLimit = limits?.horasExtraLimit || DEFAULT_LIMITS.horasExtraLimit;
   
   const { resolveAreaId } = useAreas();
 
   // ============================================
-  // NOTIFICACIONES PROGRAMADAS DE RH (10:00 AM faltas, horas extra, resumen semanal)
+  // SCHEDULER AUTOMÁTICO DE NOTIFICACIONES A RH
+  // (Monitorea y despacha automáticamente a las 10:00 AM, 17:30 y Miércoles 18:00
+  // mientras haya algún usuario conectado en la aplicación)
   // ============================================
-  // El disparo automático de estos tres correos vivía aquí antes (un setInterval que
-  // revisaba la hora cada minuto), pero SOLO corría mientras alguien tuviera la app
-  // abierta en el navegador — si nadie la tenía abierta a la hora programada, el correo
-  // simplemente no salía. Ahora ese chequeo corre en el servidor cada 10 minutos
-  // (Cloud Function programada `rhScheduledNotificationsCheck` en functions/index.js),
-  // sin depender de ningún navegador. El botón "Probar / Enviar Ahora" en Admin sigue
-  // funcionando igual (llama a triggerDailyRHNotification/triggerRHOvertimeNotification/
-  // triggerRHWeeklyOvertimeSummary directo, con force:true) para pruebas manuales.
+  useEffect(() => {
+    if (!db || !user || !generalConfig) return;
+
+    const checkAndTriggerRHNotifications = async () => {
+      const now = new Date();
+      const todayStr = getTodayLocalDateStr(now);
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+      const nowMinutes = currentHours * 60 + currentMinutes;
+      const dayOfWeek = now.getDay(); // 0 = Domingo, 1-5 = L-V, 6 = Sábado
+
+      // 1. Reporte diario de faltas + ausencias (10:00 AM)
+      if (
+        generalConfig.notificarFaltasRH !== false &&
+        generalConfig.lastRHNotificationDate !== todayStr
+      ) {
+        const [th, tm] = (generalConfig.horaNotificacionRH || '10:00').split(':').map(Number);
+        const targetMinutes = (th || 10) * 60 + (tm || 0);
+        if (nowMinutes >= targetMinutes) {
+          try {
+            await triggerDailyRHNotification({
+              operarios,
+              horasExtra,
+              generalConfig,
+              updateGeneralConfig,
+              force: false,
+              user: null,
+            });
+          } catch (err) {
+            console.error('Auto-trigger diario de faltas RH:', err);
+          }
+        }
+      }
+
+      // 2. Relación de horas extras autorizadas hoy (Lun-Vie 17:30, Sáb 12:00, no domingo)
+      if (
+        generalConfig.notificarHorasExtraRH !== false &&
+        generalConfig.lastRHOvertimeNotificationDate !== todayStr &&
+        dayOfWeek !== 0
+      ) {
+        const horaConfigurada = dayOfWeek === 6
+          ? (generalConfig.horaNotificacionHorasExtraRHSabado || '12:00')
+          : (generalConfig.horaNotificacionHorasExtraRHSemana || '17:30');
+        const [th, tm] = horaConfigurada.split(':').map(Number);
+        const targetMinutes = (th || 17) * 60 + (tm || 30);
+
+        if (nowMinutes >= targetMinutes) {
+          try {
+            await triggerRHOvertimeNotification({
+              horasExtra,
+              generalConfig,
+              updateGeneralConfig,
+              force: false,
+              user: null,
+              horaLabel: horaConfigurada,
+            });
+          } catch (err) {
+            console.error('Auto-trigger diario de horas extras RH:', err);
+          }
+        }
+      }
+
+      // 3. Resumen semanal de horas extra (Miércoles 18:00)
+      if (
+        generalConfig.notificarResumenSemanalRH !== false &&
+        generalConfig.lastRHWeeklySummaryDate !== todayStr &&
+        dayOfWeek === 3
+      ) {
+        const [th, tm] = (generalConfig.horaResumenSemanalRH || '18:00').split(':').map(Number);
+        const targetMinutes = (th || 18) * 60 + (tm || 0);
+
+        if (nowMinutes >= targetMinutes) {
+          try {
+            await triggerRHWeeklyOvertimeSummary({
+              horasExtra,
+              generalConfig,
+              updateGeneralConfig,
+              force: false,
+              user: null,
+            });
+          } catch (err) {
+            console.error('Auto-trigger semanal de horas extras RH:', err);
+          }
+        }
+      }
+    };
+
+    checkAndTriggerRHNotifications();
+    const interval = setInterval(checkAndTriggerRHNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [operarios, horasExtra, generalConfig, updateGeneralConfig, user]);
 
   // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE
