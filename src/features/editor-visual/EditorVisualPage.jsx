@@ -3681,75 +3681,156 @@ const EditorVisualPage = ({ standalone = false }) => {
                               );
                             })()}
 
-                            {/* BOTONES DE ACCIÓN DIRECTOS */}
+                            {/* BOTONES DE ACCIÓN HIPER-INTELIGENTES SEGÚN EL TIPO DE RECURSO */}
                             <div className={styles.resourceActions}>
+                              {/* Caso A: Es solo Imagen (Archivo o Render) */}
+                              {info.previewImgSrc && !info.rawUrl && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPreviewResourceModal({
+                                        isOpen: true,
+                                        title: nodeTitle(node),
+                                        resourceType: 'imagen',
+                                        url: info.previewImgSrc,
+                                        fileData: node.draftFields?.fileData || null,
+                                        notes: node.draftFields?.notes || '',
+                                      });
+                                    }}
+                                    title="Ampliar imagen en pantalla completa"
+                                  >
+                                    🔍 Ampliar
+                                  </button>
+                                  {info.fileUrl && !info.fileUrl.startsWith('data:') && (
+                                    <button
+                                      type="button"
+                                      className={styles.resourceActionBtn}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
+                                      }}
+                                      title="Descargar imagen en alta resolución"
+                                    >
+                                      📥 Descargar
+                                    </button>
+                                  )}
+                                </>
+                              )}
+
+                              {/* Caso B: Es Enlace Web (Drive, Figma, Cloud o Web) */}
                               {info.rawUrl && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
+                                    }}
+                                    title={`Abrir directamente: ${info.rawUrl}`}
+                                  >
+                                    🌐 Ir al Enlace ↗
+                                  </button>
+                                  {info.previewImgSrc && (
+                                    <button
+                                      type="button"
+                                      className={styles.resourceActionBtn}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPreviewResourceModal({
+                                          isOpen: true,
+                                          title: nodeTitle(node),
+                                          resourceType: 'imagen',
+                                          url: info.rawUrl || info.previewImgSrc,
+                                          fileData: node.draftFields?.fileData || null,
+                                          notes: node.draftFields?.notes || '',
+                                        });
+                                      }}
+                                      title="Ampliar vista previa"
+                                    >
+                                      🔍 Vista Previa
+                                    </button>
+                                  )}
+                                </>
+                              )}
+
+                              {/* Caso C: Es Modelo 3D CAD (SolidWorks, Inventor, STEP, DWG) */}
+                              {info.isModel && !info.rawUrl && (
+                                <>
+                                  {info.fileUrl && (
+                                    <button
+                                      type="button"
+                                      className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
+                                      }}
+                                      title="Descargar archivo CAD a tu computadora"
+                                    >
+                                      📥 Descargar CAD
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className={styles.resourceActionBtn}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      window.open('https://viewer.autodesk.com/', '_blank', 'noopener,noreferrer');
+                                    }}
+                                    title="Abrir en visor web oficial gratuito de Autodesk"
+                                  >
+                                    📐 Autodesk Viewer ↗
+                                  </button>
+                                </>
+                              )}
+
+                              {/* Caso D: Es Documento / Plano PDF */}
+                              {info.isPdf && !info.rawUrl && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (info.effectiveUrl) window.open(formatExternalUrl(info.effectiveUrl), '_blank', 'noopener,noreferrer');
+                                    }}
+                                    title="Abrir plano PDF en visor del navegador"
+                                  >
+                                    📄 Abrir PDF ↗
+                                  </button>
+                                  {info.fileUrl && (
+                                    <button
+                                      type="button"
+                                      className={styles.resourceActionBtn}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
+                                      }}
+                                      title="Descargar archivo PDF"
+                                    >
+                                      📥 Descargar
+                                    </button>
+                                  )}
+                                </>
+                              )}
+
+                              {/* Caso E: Sin contenido todavía */}
+                              {!info.previewImgSrc && !info.rawUrl && !info.isModel && !info.isPdf && (
                                 <button
                                   type="button"
                                   className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
+                                    setSelectedNodeId(node.id);
                                   }}
-                                  title="Abrir enlace en pestaña nueva"
+                                  title="Cargar archivo o pegar enlace en el panel lateral"
                                 >
-                                  🌐 Ir al Enlace ↗
+                                  ⚙️ Configurar Archivo / URL
                                 </button>
                               )}
-
-                              {info.fileUrl && !info.rawUrl && info.isModel && (
-                                <button
-                                  type="button"
-                                  className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
-                                  }}
-                                  title="Descargar archivo CAD"
-                                >
-                                  📥 Descargar CAD
-                                </button>
-                              )}
-
-                              {info.previewImgSrc && (
-                                <button
-                                  type="button"
-                                  className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setPreviewResourceModal({
-                                      isOpen: true,
-                                      title: nodeTitle(node),
-                                      resourceType: info.resType,
-                                      url: info.rawUrl || info.previewImgSrc,
-                                      fileData: node.draftFields?.fileData || null,
-                                      notes: node.draftFields?.notes || '',
-                                    });
-                                  }}
-                                  title="Ver y ampliar esta ayuda visual"
-                                >
-                                  🔍 Ampliar
-                                </button>
-                              )}
-
-                              <button
-                                type="button"
-                                className={styles.resourceActionBtn}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPreviewResourceModal({
-                                    isOpen: true,
-                                    title: nodeTitle(node),
-                                    resourceType: info.resType,
-                                    url: info.rawUrl || info.fileUrl || '',
-                                    fileData: node.draftFields?.fileData || null,
-                                    notes: node.draftFields?.notes || '',
-                                  });
-                                }}
-                                title="Ver detalles o notas técnicas"
-                              >
-                                📋 Info / Ficha
-                              </button>
                             </div>
                           </div>
                         );
