@@ -853,20 +853,15 @@ const EditorVisualPage = ({ standalone = false }) => {
         if (targetId !== fromId && targetSide !== side) {
           const from = side === 'out' ? fromId : targetId;
           const to = side === 'out' ? targetId : fromId;
-          let didCreateEdge = false;
-          setEdges((latestEdges) => {
-            const alreadyExists = latestEdges.some((ed) => ed.from === from && ed.to === to);
-            if (!alreadyExists) {
-              const nextEdges = [...latestEdges, { id: nextEdgeId(), from, to }];
-              saveToFirestore(nodes, nextEdges);
-              didCreateEdge = true;
-              return nextEdges;
-            }
-            return latestEdges;
-          });
 
-          // Al conectar nodos con cables, se propaga y sincroniza automáticamente su relación en Firestore:
-          if (didCreateEdge) {
+          const alreadyExists = edges.some((ed) => (ed.from === from && ed.to === to) || (ed.from === to && ed.to === from));
+          if (!alreadyExists) {
+            const newEdge = { id: nextEdgeId(), from, to };
+            const nextEdges = [...edges, newEdge];
+            setEdges(nextEdges);
+            saveToFirestore(nodes, nextEdges);
+
+            // Al conectar nodos con cables, se propaga y sincroniza automáticamente su relación en Firestore:
             const fromNode = findNode(from);
             const toNode = findNode(to);
             if (fromNode && toNode) {
@@ -914,7 +909,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                 }
               }
 
-              // 3. Colaborador ↔ Actividad: Asignar colaborador a la tarea y notificar al supervisor del área
+              // 3. Colaborador ↔ Actividad: Asignar colaborador a la tarea y reflejar en Firestore
               if (colabNode && actNode) {
                 const operario = operarios.find((o) => o.id === colabNode.refId);
                 const operarioName = operario?.name || nodeTitle(colabNode);
@@ -930,8 +925,9 @@ const EditorVisualPage = ({ standalone = false }) => {
                     operarioId: colabNode.refId,
                     updatedAt: new Date().toISOString(),
                   }).then(() => {
+                    updateActividad(actId, { operarioId: colabNode.refId });
                     toast.success(`👷 ${operarioName} asignado a la actividad "${actTitle}".`);
-                    // Notificar al supervisor de área (los avisos de tareas a colaboradores los coordina el supervisor)
+                    // Notificar al supervisor de área
                     if (areaId) {
                       sendSystemChatMessage({
                         targetUserId: supervisor.id,
@@ -952,30 +948,173 @@ const EditorVisualPage = ({ standalone = false }) => {
                 }
               }
 
-              // 4. Colaborador ↔ Bloque: Asignar al bloque y reasignar actividades
+              // 4. Colaborador ↔ Bloque: Asignar al bloque y a TODAS sus actividades en Firestore
               if (colabNode && blockNode) {
-                updateBlockField(blockNode.id, 'operarioId', colabNode.refId);
-                if ((blockNode.activityIds || []).length > 0) {
-                  handleReassignBlockActivities(blockNode, colabNode);
+                const operario = operarios.find((o) => o.id === colabNode.refId);
+                const operarioName = operario?.name || nodeTitle(colabNode);
+                const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, operarioId: colabNode.refId } : n));
+                setNodes(nextNodes);
+                saveToFirestore(nextNodes, nextEdges);
+
+                const activityIds = blockNode.activityIds || [];
+                if (activityIds.length > 0) {
+                  activityIds.forEach(async (actId) => {
+                    try {
+                      await updateDoc(doc(db, 'actividades', actId), {
+                        operarioId: colabNode.refId,
+                        updatedAt: new Date().toISOString(),
+                      });
+                      updateActividad(actId, { operarioId: colabNode.refId });
+                    } catch (e) {
+                      console.error('Error al reasignar actividad de bloque:', e);
+                    }
+                  });
+                  toast.success(`👷 ${operarioName} asignado al Bloque y a sus ${activityIds.length} actividad(es).`);
+                } else {
+                  toast.success(`👷 ${operarioName} asignado al Bloque de Trabajo.`);
                 }
-                toast.success(`👷 ${nodeTitle(colabNode)} asignado al Bloque de Trabajo.`);
               }
 
-              // 5. Proyecto ↔ Bloque
+              // 5. Proyecto ↔ Bloque: Asignar proyecto al bloque y propagar a sus actividades
               if (projNode && blockNode) {
                 const projId = projNode.refId || (projNode.draft ? null : projNode.id);
-                updateBlockField(blockNode.id, 'projectId', projId);
-                toast.success(`🔗 Bloque vinculado al Proyecto "${nodeTitle(projNode)}".`);
+                const projEntity = getLinkedEntity(projNode);
+                const projName = projEntity?.name || nodeTitle(projNode);
+                const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, projectId: projId } : n));
+                setNodes(nextNodes);
+                saveToFirestore(nextNodes, nextEdges);
+
+                const activityIds = blockNode.activityIds || [];
+                if (activityIds.length > 0 && projId) {
+                  activityIds.forEach(async (actId) => {
+                    try {
+                      await updateDoc(doc(db, 'actividades', actId), {
+                        projectId: projId,
+                        projectName: projName,
+                        updatedAt: new Date().toISOString(),
+                      });
+                      updateActividad(actId, { projectId: projId, projectName: projName });
+                    } catch (e) {}
+                  });
+                }
+                toast.success(`🔗 Bloque vinculado al Proyecto "${projName}".`);
               }
 
-              // 6. Juego ↔ Bloque
+              // 6. Proyecto ↔ Actividad: Vincular proyecto directamente
+              if (projNode && actNode) {
+                const projId = projNode.refId || (projNode.draft ? null : projNode.id);
+                const projEntity = getLinkedEntity(projNode);
+                const projName = projEntity?.name || nodeTitle(projNode);
+                const actId = actNode.refId || (actNode.draft ? null : actNode.id);
+                if (actId && !actNode.draft) {
+                  updateDoc(doc(db, 'actividades', actId), {
+                    projectId: projId,
+                    projectName: projName,
+                    updatedAt: new Date().toISOString(),
+                  }).then(() => {
+                    updateActividad(actId, { projectId: projId, projectName: projName });
+                    toast.success(`🔗 Actividad vinculada al Proyecto "${projName}".`);
+                  });
+                }
+              }
+
+              // 7. Juego ↔ Bloque
               if (gameNode && blockNode) {
                 const gameId = gameNode.refId || (gameNode.draft ? null : gameNode.id);
-                updateBlockField(blockNode.id, 'gameId', gameId);
+                const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, gameId } : n));
+                setNodes(nextNodes);
+                saveToFirestore(nextNodes, nextEdges);
+
+                const activityIds = blockNode.activityIds || [];
+                if (activityIds.length > 0 && gameId) {
+                  activityIds.forEach(async (actId) => {
+                    try {
+                      await updateDoc(doc(db, 'actividades', actId), {
+                        gameId,
+                        updatedAt: new Date().toISOString(),
+                      });
+                      updateActividad(actId, { gameId });
+                    } catch (e) {}
+                  });
+                }
                 toast.success(`🔗 Bloque vinculado al Juego "${nodeTitle(gameNode)}".`);
               }
 
-              // 7. Área ↔ Proyecto: Notificar al supervisor del área que hay un nuevo proyecto que le corresponde trabajar
+              // 8. Juego ↔ Actividad
+              if (gameNode && actNode) {
+                const gameId = gameNode.refId || (gameNode.draft ? null : gameNode.id);
+                const actId = actNode.refId || (actNode.draft ? null : actNode.id);
+                if (actId && !actNode.draft) {
+                  updateDoc(doc(db, 'actividades', actId), {
+                    gameId,
+                    updatedAt: new Date().toISOString(),
+                  }).then(() => {
+                    updateActividad(actId, { gameId });
+                    toast.success(`🔗 Actividad vinculada al Juego "${nodeTitle(gameNode)}".`);
+                  });
+                }
+              }
+
+              // 9. Área ↔ Bloque: Vincular área y propagar a sus actividades
+              if (areaNode && blockNode) {
+                const areaEntity = getLinkedEntity(areaNode);
+                const areaId = areaNode.refId || areaEntity?.id;
+                const areaName = areaEntity?.name || nodeTitle(areaNode);
+                const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, areaId } : n));
+                setNodes(nextNodes);
+                saveToFirestore(nextNodes, nextEdges);
+
+                const activityIds = blockNode.activityIds || [];
+                if (activityIds.length > 0 && areaId) {
+                  activityIds.forEach(async (actId) => {
+                    try {
+                      await updateDoc(doc(db, 'actividades', actId), {
+                        areaId,
+                        updatedAt: new Date().toISOString(),
+                      });
+                      updateActividad(actId, { areaId });
+                    } catch (e) {}
+                  });
+                }
+                toast.success(`🏭 Bloque asignado al Área "${areaName}".`);
+              }
+
+              // 10. Área ↔ Actividad: Asignar área a la actividad y notificar al supervisor
+              if (areaNode && actNode) {
+                const areaEntity = getLinkedEntity(areaNode);
+                const areaId = areaNode.refId || areaEntity?.id;
+                const areaName = areaEntity?.name || nodeTitle(areaNode);
+                const actTitle = nodeTitle(actNode);
+                const actId = actNode.refId || (actNode.draft ? null : actNode.id);
+                const supervisor = getSupervisorForArea(areaId);
+
+                if (actId && !actNode.draft) {
+                  updateDoc(doc(db, 'actividades', actId), {
+                    areaId: areaId,
+                    updatedAt: new Date().toISOString(),
+                  }).then(() => {
+                    updateActividad(actId, { areaId });
+                    toast.success(`🏭 Actividad "${actTitle}" asignada al área "${areaName}".`);
+                    // Notificar al supervisor de área
+                    sendSystemChatMessage({
+                      targetUserId: supervisor.id,
+                      targetUserName: supervisor.name,
+                      text: `📌 [Nueva Tarea Asignada a ${areaName}] La actividad "${actTitle}" ha sido asignada al área "${areaName}". Supervisor responsable: ${supervisor.name}.`,
+                      senderId: user?.id || 'admin',
+                      senderName: user?.name || 'Administración',
+                      isGlobal: true,
+                    });
+                  }).catch((err) => {
+                    console.error('Error al actualizar área de actividad:', err);
+                    updateActividad(actId, { areaId });
+                  });
+                } else if (actNode.draft) {
+                  updateDraftField(actNode.id, 'areaId', areaId);
+                  toast.success(`🏭 Actividad asignada al área "${areaName}".`);
+                }
+              }
+
+              // 11. Área ↔ Proyecto: Notificar al supervisor del área que hay un nuevo proyecto que le corresponde trabajar
               if (areaNode && projNode) {
                 const areaEntity = getLinkedEntity(areaNode);
                 const areaId = areaNode.refId || areaEntity?.id;
@@ -998,7 +1137,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                 toast.success(`📢 Notificación enviada al supervisor (${supervisor.name}) de ${areaName} para el Proyecto "${projName}".`);
               }
 
-              // 8. Juego ↔ Área: Añadir área a la ruta de manufactura del juego y notificar al supervisor
+              // 12. Juego ↔ Área: Añadir área a la ruta de manufactura del juego y notificar al supervisor
               if (gameNode && areaNode) {
                 const areaId = areaNode.refId;
                 const areaEntity = getLinkedEntity(areaNode);
@@ -1033,40 +1172,6 @@ const EditorVisualPage = ({ standalone = false }) => {
                 });
 
                 toast.success(`📢 Supervisor (${supervisor.name}) notificado sobre el modelo "${gameName}".`);
-              }
-
-              // 9. Área ↔ Actividad: Asignar área a la actividad y notificar al supervisor
-              if (areaNode && actNode) {
-                const areaEntity = getLinkedEntity(areaNode);
-                const areaId = areaNode.refId || areaEntity?.id;
-                const areaName = areaEntity?.name || nodeTitle(areaNode);
-                const actTitle = nodeTitle(actNode);
-                const actId = actNode.refId || (actNode.draft ? null : actNode.id);
-                const supervisor = getSupervisorForArea(areaId);
-
-                if (actId && !actNode.draft) {
-                  updateDoc(doc(db, 'actividades', actId), {
-                    areaId: areaId,
-                    updatedAt: new Date().toISOString(),
-                  }).then(() => {
-                    toast.success(`🏭 Actividad "${actTitle}" asignada al área "${areaName}".`);
-                    // Notificar al supervisor de área
-                    sendSystemChatMessage({
-                      targetUserId: supervisor.id,
-                      targetUserName: supervisor.name,
-                      text: `📌 [Nueva Tarea Asignada a ${areaName}] La actividad "${actTitle}" ha sido asignada al área "${areaName}". Le corresponde al supervisor (${supervisor.name}) coordinar su realización.`,
-                      senderId: user?.id || 'admin',
-                      senderName: user?.name || 'Administración',
-                      isGlobal: true,
-                    });
-                  }).catch((err) => {
-                    console.error('Error al actualizar área de actividad:', err);
-                    updateActividad(actId, { areaId });
-                  });
-                } else if (actNode.draft) {
-                  updateDraftField(actNode.id, 'areaId', areaId);
-                  toast.success(`🏭 Actividad asignada al área "${areaName}".`);
-                }
               }
             }
           }
@@ -1719,8 +1824,58 @@ const EditorVisualPage = ({ standalone = false }) => {
       toast.danger('Ingresa un título para la actividad.');
       return;
     }
-    const colaboradorNode = getConnectedColaboradorNode(blockNode.id);
-    const assignedOperarioId = blockNode.operarioId || colaboradorNode?.refId || null;
+
+    // 1. Resolver colaborador responsable conectado al bloque
+    const colabEdge = edges.find(
+      (e) =>
+        (e.from === blockNode.id && findNode(e.to)?.type === 'colaborador') ||
+        (e.to === blockNode.id && findNode(e.from)?.type === 'colaborador')
+    );
+    const connectedColabNode = colabEdge
+      ? findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to)
+      : null;
+    const assignedOperarioId = blockNode.operarioId || connectedColabNode?.refId || null;
+
+    // 2. Resolver proyecto vinculado
+    const projEdge = edges.find(
+      (e) =>
+        (e.from === blockNode.id && findNode(e.to)?.type === 'proyecto') ||
+        (e.to === blockNode.id && findNode(e.from)?.type === 'proyecto')
+    );
+    const connectedProjNode = projEdge
+      ? findNode(findNode(projEdge.from)?.type === 'proyecto' ? projEdge.from : projEdge.to)
+      : null;
+    const assignedProjectId =
+      blockNode.projectId ||
+      connectedProjNode?.refId ||
+      (lienzoActivoId !== 'general' && !lienzosList.some((l) => l.id === lienzoActivoId && l.isStandalone)
+        ? lienzoActivoId
+        : null);
+    const assignedProject = proyectos.find((p) => p.id === assignedProjectId);
+    const assignedProjectName = assignedProject?.name || (connectedProjNode ? nodeTitle(connectedProjNode) : null);
+
+    // 3. Resolver juego vinculado
+    const gameEdge = edges.find(
+      (e) =>
+        (e.from === blockNode.id && findNode(e.to)?.type === 'juego') ||
+        (e.to === blockNode.id && findNode(e.from)?.type === 'juego')
+    );
+    const connectedGameNode = gameEdge
+      ? findNode(findNode(gameEdge.from)?.type === 'juego' ? gameEdge.from : gameEdge.to)
+      : null;
+    const assignedGameId = blockNode.gameId || connectedGameNode?.refId || null;
+
+    // 4. Resolver área vinculada
+    const areaEdge = edges.find(
+      (e) =>
+        (e.from === blockNode.id && findNode(e.to)?.type === 'area') ||
+        (e.to === blockNode.id && findNode(e.from)?.type === 'area')
+    );
+    const connectedAreaNode = areaEdge
+      ? findNode(findNode(areaEdge.from)?.type === 'area' ? areaEdge.from : areaEdge.to)
+      : null;
+    const assignedAreaId = blockNode.areaId || connectedAreaNode?.refId || (dynamicAreas[0]?.id || 'herreria');
+
     const links = blockActivityForm.linksText
       .split('\n')
       .map((l) => l.trim())
@@ -1730,9 +1885,10 @@ const EditorVisualPage = ({ standalone = false }) => {
     const newId = await addActividad({
       title: blockActivityForm.title.trim(),
       description: blockActivityForm.description || 'Sin descripción.',
-      areaId: blockNode.areaId,
-      projectId: blockNode.projectId || null,
-      gameId: blockNode.gameId || null,
+      areaId: assignedAreaId,
+      projectId: assignedProjectId,
+      projectName: assignedProjectName,
+      gameId: assignedGameId,
       operarioId: assignedOperarioId,
       dueDate: blockActivityForm.dueDate || null,
       priority: blockActivityForm.priority,

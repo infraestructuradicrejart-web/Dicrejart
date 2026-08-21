@@ -14,4 +14,5 @@
  */
 export const NON_PRODUCTION_AREAS = [
   { id: 'diseno', name: 'Diseño' },
+  { id: 'arquitectura', name: 'Arquitectura' },
 ];
