@@ -56,15 +56,17 @@ service firebase.storage {
 
     // Recursos, planos, modelos 3D y ayudas visuales del editor visual (Canvas)
     match /lienzos_recursos/{lienzoId}/{fileName} {
-      allow read: if true;
-      allow create, update: if request.resource.size < 50 * 1024 * 1024;
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                            && request.resource.size < 50 * 1024 * 1024;
       allow delete: if request.auth != null;
     }
 
     // Permiso para cualquier recurso adjunto en lienzo visual
     match /recursos_canvas/{allPaths=**} {
-      allow read: if true;
-      allow create, update: if request.resource.size < 50 * 1024 * 1024;
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                            && request.resource.size < 50 * 1024 * 1024;
       allow delete: if request.auth != null;
     }
   }
