@@ -851,21 +851,21 @@ export const OperariosProvider = ({ children }) => {
     };
 
     try {
-      let nextHistorial = [...(op.estadoHistorial || [])];
+      const currentHistorial = [...(op.estadoHistorial || [])];
 
-      // Si se rectifica o cambia a 'activo', anular cualquier falta o ausencia previa no concluida
-      if (tipo === 'activo') {
-        nextHistorial = nextHistorial.map((h) => {
-          if (h && h.tipo !== 'activo' && (!h.hasta || h.hasta >= todayStr || h.tipo === 'falta' || h.desde === targetDesde)) {
-            return { ...h, anulado: true, notas: h.notas ? `${h.notas} (Corregido a En Planta)` : 'Corregido a En Planta' };
-          }
-          return h;
-        });
+      // Si el estado previo era una falta o ausencia no registrada en el historial, preservarla intacta
+      if (op.estado && op.estado.tipo && op.estado.tipo !== 'activo') {
+        const yaExiste = currentHistorial.some(
+          (h) => h.tipo === op.estado.tipo && (h.desde === op.estado.desde || h.registradoAt === op.estado.registradoAt)
+        );
+        if (!yaExiste) {
+          currentHistorial.push(op.estado);
+        }
       }
 
       const updates = {
         estado: nuevoEstado,
-        estadoHistorial: [...nextHistorial, nuevoEstado],
+        estadoHistorial: [...currentHistorial, nuevoEstado],
       };
 
       // Si se marca como ausente (falta, permiso, etc.) para la fecha de hoy, restablecer horario
