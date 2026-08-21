@@ -14,7 +14,8 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import PropTypes from 'prop-types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { doc, setDoc, updateDoc, onSnapshot, collection, deleteDoc } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '../../config/firebase';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
 import PageHeader from '../../components/ui/PageHeader';
@@ -29,6 +30,7 @@ import { AREA_SEQUENCE_DEPENDENCIES, isAreaBlockedBySequence } from '../../conte
 import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import { compressImage } from '../../utils/imageCompressor';
 import styles from './EditorVisualPage.module.css';
 
 /** Dimensiones del Gran Espacio de Trabajo CAD (Inventor / SolidWorks style) */
@@ -75,6 +77,15 @@ const PRIORITY_OPTIONS = [
   { value: 'media', label: 'Media' },
   { value: 'alta', label: 'Alta' },
 ];
+
+const formatExternalUrl = (url) => {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+};
 
 const PROJECT_STATUS_OPTIONS = [
   { value: 'diseno', label: 'En Diseño' },
@@ -167,6 +178,98 @@ const getSmartWirePath = (fromNode, toNode) => {
 
   const path = `M ${p1.x} ${p1.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
   return { path, p1, p2 };
+};
+
+/**
+ * Extrae la metadata y la URL de imagen o documento para previsualización directa en el nodo
+ */
+const getResourcePreviewInfo = (nodeOrDraft) => {
+  if (!nodeOrDraft) {
+    return { resType: 'imagen', previewImgSrc: null, rawUrl: '', fileName: '', fileSize: 0, isPdf: false, isModel: false, isLink: false, effectiveUrl: '' };
+  }
+
+  const fields = nodeOrDraft.draftFields || nodeOrDraft;
+  const resType = fields.resourceType || 'imagen';
+  const fileData = fields.fileData;
+  const rawUrl = (fields.url || nodeOrDraft.url || '').trim();
+
+  // 1. Archivo subido o local
+  const fileUrl = fileData?.url || fileData?.dataUrl;
+  const fileName = fileData?.name || '';
+  const fileSize = fileData?.size || 0;
+
+  // 2. Extraer ID de Google Drive para previsualización directa de imagen
+  let googleDriveImgSrc = null;
+  let googleDriveFileId = null;
+  if (rawUrl) {
+    const driveMatch = rawUrl.match(/(?:\/d\/|id=)([a-zA-Z0-9_-]{25,})/i);
+    if (driveMatch && driveMatch[1]) {
+      googleDriveFileId = driveMatch[1];
+      // Endpoint oficial y de alta disponibilidad de Google para thumbnails de Drive
+      googleDriveImgSrc = `https://lh3.googleusercontent.com/d/${googleDriveFileId}`;
+    }
+  }
+
+  // 3. Determinar imagen a previsualizar
+  let previewImgSrc = null;
+  if (fileUrl && (fileData?.type?.startsWith('image/') || fileUrl.startsWith('data:image') || !fileData?.type)) {
+    previewImgSrc = fileUrl;
+  } else if (googleDriveImgSrc && resType === 'imagen') {
+    previewImgSrc = googleDriveImgSrc;
+  } else if (rawUrl && resType === 'imagen') {
+    previewImgSrc = googleDriveImgSrc || rawUrl;
+  } else if (rawUrl && (rawUrl.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i) || rawUrl.startsWith('data:image') || rawUrl.includes('images.unsplash.com') || rawUrl.includes('firebasestorage'))) {
+    previewImgSrc = rawUrl;
+  }
+
+  const isPdf = resType === 'documento' || fileData?.type?.includes('pdf') || rawUrl.toLowerCase().endsWith('.pdf') || rawUrl.includes('.pdf?');
+  const isModel = resType === 'modelo' || rawUrl.match(/\.(step|stp|skp|dwg|dxf|obj|stl)($|\?)/i) || fileData?.name?.match(/\.(step|stp|skp|dwg|dxf|obj|stl)$/i);
+  const isLink = resType === 'link' || (!previewImgSrc && !isPdf && !isModel && Boolean(rawUrl));
+
+  return {
+    resType,
+    previewImgSrc,
+    rawUrl,
+    fileUrl,
+    fileName,
+    fileSize,
+    isPdf,
+    isModel,
+    isLink,
+    googleDriveFileId,
+    effectiveUrl: fileUrl || rawUrl,
+  };
+};
+
+/**
+ * Sube un archivo a Firebase Storage con compresión automática para imágenes
+ */
+const uploadResourceFile = async (file, lienzoId = 'general') => {
+  if (!file) return null;
+  const isImage = file.type?.startsWith('image/');
+  let toUpload = file;
+  if (isImage) {
+    try {
+      toUpload = await compressImage(file, { maxWidth: 1920, maxHeight: 1920, quality: 0.85 });
+    } catch (e) {
+      console.warn('Compresión falló, subiendo original:', e);
+      toUpload = file;
+    }
+  }
+
+  const safeName = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `lienzos_recursos/${lienzoId}/${Date.now()}_${safeName}`;
+  const fileRef = ref(storage, path);
+  await uploadBytes(fileRef, toUpload);
+  const downloadUrl = await getDownloadURL(fileRef);
+
+  return {
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    url: downloadUrl,
+    storagePath: path,
+  };
 };
 
 /**
@@ -503,12 +606,30 @@ const EditorVisualPage = ({ standalone = false }) => {
   const saveToFirestore = useCallback(async (newNodes, newEdges, newOffset) => {
     if (!db || !lienzoActivoId || !canEditDiagram) return;
 
+    // Sanitizar nodos: si un recurso ya tiene url de Storage, remover dataUrl pesado para no inflar Firestore
+    const sanitizedNodes = (newNodes || []).map((node) => {
+      if (node.type === 'recurso') {
+        const fileData = node.draftFields?.fileData;
+        if (fileData?.url && fileData?.dataUrl) {
+          const { dataUrl, ...restFileData } = fileData;
+          return {
+            ...node,
+            draftFields: {
+              ...node.draftFields,
+              fileData: restFileData,
+            },
+          };
+        }
+      }
+      return node;
+    });
+
     // Respaldo inmediato en localStorage para evitar cualquier pérdida al recargar
     try {
       localStorage.setItem(
         `dicrejart_canvas_backup_${lienzoActivoId}`,
         JSON.stringify({
-          nodes: newNodes,
+          nodes: sanitizedNodes,
           edges: newEdges,
           worldOffset: newOffset || worldOffset,
           savedAt: Date.now(),
@@ -526,7 +647,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
       await setDoc(doc(db, 'lienzos', lienzoActivoId), {
         name: canvasName,
-        nodes: newNodes,
+        nodes: sanitizedNodes,
         edges: newEdges,
         worldOffset: newOffset || worldOffset,
         updatedAt: new Date().toISOString(),
@@ -538,6 +659,28 @@ const EditorVisualPage = ({ standalone = false }) => {
       setSaveStatus('error');
     }
   }, [lienzoActivoId, lienzosList, proyectos, worldOffset, canEditDiagram, user]);
+
+  /**
+   * Actualiza un campo de borrador de cualquier nodo y persiste de inmediato
+   */
+  const updateDraftField = useCallback((nodeId, field, value) => {
+    setNodes((prevNodes) => {
+      const nextNodes = prevNodes.map((n) => {
+        if (n.id === nodeId) {
+          const updatedDraft = { ...(n.draftFields || {}), [field]: value };
+          return {
+            ...n,
+            draftFields: updatedDraft,
+            ...(field === 'title' ? { title: value } : {}),
+            ...(field === 'url' ? { url: value } : {}),
+          };
+        }
+        return n;
+      });
+      saveToFirestore(nextNodes, edges);
+      return nextNodes;
+    });
+  }, [edges, saveToFirestore]);
 
   /**
    * Recorre todas las conexiones existentes en el lienzo y sincroniza automáticamente
@@ -1547,6 +1690,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     newRecursoType: 'imagen',
     newRecursoUrl: '',
     newRecursoFileData: null,
+    pendingFile: null,
     newRecursoNotes: '',
   };
 
@@ -1644,19 +1788,51 @@ const EditorVisualPage = ({ standalone = false }) => {
     }
   };
 
-  const handleCreateNewRecursoNode = () => {
+  const handleCreateNewRecursoNode = async () => {
+    const title = nodeModal.newRecursoTitle.trim() || 'Ayuda Visual / Archivo';
+    const chosenType = nodeModal.newRecursoType || 'imagen';
+    const url = nodeModal.newRecursoUrl.trim() || '';
+    const pendingFile = nodeModal.pendingFile;
+
+    closeNodeModal();
+
+    const tempId = nextNodeId();
+    const localUrl = pendingFile ? URL.createObjectURL(pendingFile) : '';
+
+    const initialFileData = pendingFile ? {
+      name: pendingFile.name,
+      size: pendingFile.size,
+      type: pendingFile.type,
+      dataUrl: localUrl,
+      isUploading: true,
+    } : nodeModal.newRecursoFileData || null;
+
     spawnNode('recurso', {
+      id: tempId,
       draft: false,
       draftFields: {
-        title: nodeModal.newRecursoTitle.trim() || 'Ayuda Visual / Archivo',
-        resourceType: nodeModal.newRecursoType || 'imagen',
-        url: nodeModal.newRecursoUrl.trim() || '',
-        fileData: nodeModal.newRecursoFileData || null,
+        title,
+        resourceType: chosenType,
+        url,
+        fileData: initialFileData,
         notes: nodeModal.newRecursoNotes.trim() || '',
       },
     });
-    closeNodeModal();
-    toast.success(`📎 Ayuda Visual "${nodeModal.newRecursoTitle.trim() || 'Ayuda Visual'}" agregada al lienzo.`);
+
+    toast.success(`📎 Ayuda Visual "${title}" agregada al lienzo.`);
+
+    if (pendingFile) {
+      toast.info(`⏳ Guardando "${pendingFile.name}" en la nube...`);
+      try {
+        const uploaded = await uploadResourceFile(pendingFile, lienzoActivoId);
+        if (uploaded) {
+          updateDraftField(tempId, 'fileData', uploaded);
+          toast.success(`☁️ "${pendingFile.name}" guardado permanentemente.`);
+        }
+      } catch (err) {
+        console.error('Error subiendo archivo:', err);
+      }
+    }
   };
 
   /**
@@ -2160,12 +2336,6 @@ const EditorVisualPage = ({ standalone = false }) => {
     setNodes(nextNodes);
     saveToFirestore(nextNodes, edges);
     toast.success(`✅ Actividad "${node.draftFields.title}" creada en el sistema.`);
-  };
-
-  const updateDraftField = (nodeId, key, value) => {
-    setNodes((prev) =>
-      prev.map((n) => (n.id === nodeId ? { ...n, draftFields: { ...n.draftFields, [key]: value } } : n))
-    );
   };
 
   // ============================================
@@ -3238,12 +3408,19 @@ const EditorVisualPage = ({ standalone = false }) => {
 
                           {/* MINIATURA / VISTA PREVIA SEGÚN TIPO */}
                           {(() => {
-                            const resType = node.draftFields?.resourceType || 'imagen';
-                            const fileData = node.draftFields?.fileData;
-                            const url = node.draftFields?.url;
-                            const previewImgSrc = fileData?.dataUrl || (resType === 'imagen' && url ? url : null);
+                            const info = getResourcePreviewInfo(node);
+                            const isUploading = node.draftFields?.fileData?.isUploading || node.draftFields?.isUploading;
 
-                            if (previewImgSrc) {
+                            if (isUploading) {
+                              return (
+                                <div className={styles.resourceThumbnailBox} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(6, 182, 212, 0.08)', gap: '6px' }}>
+                                  <div style={{ fontSize: '18px', animation: 'spin 1s linear infinite' }}>⏳</div>
+                                  <span style={{ fontSize: '10.5px', color: '#0891b2', fontWeight: 600 }}>Guardando en la nube...</span>
+                                </div>
+                              );
+                            }
+
+                            if (info.previewImgSrc) {
                               return (
                                 <div
                                   className={styles.resourceThumbnailBox}
@@ -3252,15 +3429,22 @@ const EditorVisualPage = ({ standalone = false }) => {
                                     setPreviewResourceModal({
                                       isOpen: true,
                                       title: nodeTitle(node),
-                                      resourceType: resType,
-                                      url: url || previewImgSrc,
-                                      fileData,
+                                      resourceType: info.resType,
+                                      url: info.rawUrl || info.previewImgSrc,
+                                      fileData: node.draftFields?.fileData,
                                       notes: node.draftFields?.notes || '',
                                     });
                                   }}
                                   title="Clic para ampliar vista previa"
                                 >
-                                  <img src={previewImgSrc} alt={nodeTitle(node)} className={styles.resourceThumbnailImg} />
+                                  <img
+                                    src={info.previewImgSrc}
+                                    alt={nodeTitle(node)}
+                                    className={styles.resourceThumbnailImg}
+                                    onError={(e) => {
+                                      e.target.style.opacity = '0.5';
+                                    }}
+                                  />
                                   <div className={styles.resourcePreviewHover}>
                                     <span>🔍 Ampliar</span>
                                   </div>
@@ -3268,7 +3452,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                               );
                             }
 
-                            if (resType === 'documento' || fileData?.type?.includes('pdf') || url?.endsWith('.pdf')) {
+                            if (info.isPdf) {
                               return (
                                 <div
                                   className={styles.resourceDocBadge}
@@ -3278,8 +3462,8 @@ const EditorVisualPage = ({ standalone = false }) => {
                                       isOpen: true,
                                       title: nodeTitle(node),
                                       resourceType: 'documento',
-                                      url,
-                                      fileData,
+                                      url: info.effectiveUrl,
+                                      fileData: node.draftFields?.fileData,
                                       notes: node.draftFields?.notes || '',
                                     });
                                   }}
@@ -3287,40 +3471,17 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   <span style={{ fontSize: '20px' }}>📄</span>
                                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                                     <div style={{ fontSize: '11px', fontWeight: 700, color: '#dc2626' }}>
-                                      {fileData?.name || 'Documento PDF'}
+                                      {info.fileName || 'Documento PDF'}
                                     </div>
                                     <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
-                                      {fileData?.size ? `${Math.round(fileData.size / 1024)} KB` : 'Ver documento'}
+                                      {info.fileSize ? `${Math.round(info.fileSize / 1024)} KB` : 'Ver / Descargar PDF'}
                                     </div>
                                   </div>
                                 </div>
                               );
                             }
 
-                            if (resType === 'link' || url) {
-                              return (
-                                <div
-                                  className={styles.resourceLinkBadge}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (url) window.open(url, '_blank', 'noopener,noreferrer');
-                                  }}
-                                  title={url ? `Abrir: ${url}` : 'Sin URL asignada'}
-                                >
-                                  <span style={{ fontSize: '18px' }}>🔗</span>
-                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#2563eb' }}>
-                                      {url ? url.replace(/^https?:\/\//, '').split('/')[0] : 'Enlace Web'}
-                                    </div>
-                                    <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
-                                      {url ? 'Clic para abrir enlace' : 'Configurar URL en panel'}
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            }
-
-                            if (resType === 'modelo') {
+                            if (info.isModel) {
                               return (
                                 <div
                                   className={styles.resourceModelBadge}
@@ -3330,8 +3491,8 @@ const EditorVisualPage = ({ standalone = false }) => {
                                       isOpen: true,
                                       title: nodeTitle(node),
                                       resourceType: 'modelo',
-                                      url,
-                                      fileData,
+                                      url: info.effectiveUrl,
+                                      fileData: node.draftFields?.fileData,
                                       notes: node.draftFields?.notes || '',
                                     });
                                   }}
@@ -3339,10 +3500,33 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   <span style={{ fontSize: '18px' }}>🧊</span>
                                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                                     <div style={{ fontSize: '11px', fontWeight: 700, color: '#0d9488' }}>
-                                      {fileData?.name || 'Modelo CAD 3D'}
+                                      {info.fileName || 'Modelo CAD 3D'}
                                     </div>
                                     <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
-                                      {fileData?.size ? `${Math.round(fileData.size / 1024)} KB` : 'Ficha 3D'}
+                                      {info.fileSize ? `${Math.round(info.fileSize / 1024)} KB` : 'Ficha 3D'}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (info.rawUrl) {
+                              return (
+                                <div
+                                  className={styles.resourceLinkBadge}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
+                                  }}
+                                  title={`Abrir: ${info.rawUrl}`}
+                                >
+                                  <span style={{ fontSize: '18px' }}>🔗</span>
+                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#2563eb' }}>
+                                      {info.rawUrl.replace(/^https?:\/\//, '').split('/')[0]}
+                                    </div>
+                                    <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
+                                      Clic para abrir enlace
                                     </div>
                                   </div>
                                 </div>
@@ -3397,11 +3581,12 @@ const EditorVisualPage = ({ standalone = false }) => {
                               className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
                               onClick={(e) => {
                                 e.stopPropagation();
+                                const info = getResourcePreviewInfo(node);
                                 setPreviewResourceModal({
                                   isOpen: true,
                                   title: nodeTitle(node),
-                                  resourceType: node.draftFields?.resourceType || 'imagen',
-                                  url: node.draftFields?.url || '',
+                                  resourceType: info.resType,
+                                  url: info.rawUrl || info.fileUrl || '',
                                   fileData: node.draftFields?.fileData || null,
                                   notes: node.draftFields?.notes || '',
                                 });
@@ -3411,26 +3596,29 @@ const EditorVisualPage = ({ standalone = false }) => {
                               🔍 Ver / Expandir
                             </button>
 
-                            {(node.draftFields?.fileData?.dataUrl || node.draftFields?.url) && (
-                              <button
-                                type="button"
-                                className={styles.resourceActionBtn}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (node.draftFields?.fileData?.dataUrl) {
-                                    const a = document.createElement('a');
-                                    a.href = node.draftFields.fileData.dataUrl;
-                                    a.download = node.draftFields.fileData.name || 'archivo_ayuda_visual';
-                                    a.click();
-                                  } else if (node.draftFields?.url) {
-                                    window.open(node.draftFields.url, '_blank', 'noopener,noreferrer');
-                                  }
-                                }}
-                                title="Descargar archivo u abrir enlace"
-                              >
-                                {node.draftFields?.fileData ? '📥 Descargar' : '🔗 Abrir'}
-                              </button>
-                            )}
+                            {(() => {
+                              const info = getResourcePreviewInfo(node);
+                              const hasAction = info.fileUrl || info.rawUrl;
+                              if (!hasAction) return null;
+
+                              return (
+                                <button
+                                  type="button"
+                                  className={styles.resourceActionBtn}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (info.fileUrl && !info.fileUrl.startsWith('data:')) {
+                                      window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
+                                    } else if (info.rawUrl) {
+                                      window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
+                                    }
+                                  }}
+                                  title={info.fileName ? `Descargar / Abrir ${info.fileName}` : 'Abrir enlace'}
+                                >
+                                  {info.fileName ? '📥 Archivo' : '🔗 Abrir'}
+                                </button>
+                              );
+                            })()}
                           </div>
                         </div>
                       )}
@@ -3679,6 +3867,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                   onOpenCompleteModal={handleOpenCompleteModal}
                   onResetActivityStatus={handleResetActivityStatus}
                   canUserControlActivity={canUserControlActivity}
+                  lienzoActivoId={lienzoActivoId}
                 />
               </motion.aside>
             )}
@@ -4169,25 +4358,24 @@ const EditorVisualPage = ({ standalone = false }) => {
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        setNodeModal((prev) => ({
-                          ...prev,
-                          newRecursoFileData: {
-                            name: file.name,
-                            size: file.size,
-                            type: file.type,
-                            dataUrl: reader.result,
-                          },
-                        }));
-                      };
-                      reader.readAsDataURL(file);
+                      const isImg = file.type?.startsWith('image/');
+                      setNodeModal((prev) => ({
+                        ...prev,
+                        pendingFile: file,
+                        newRecursoType: isImg ? 'imagen' : file.type?.includes('pdf') ? 'documento' : prev.newRecursoType,
+                        newRecursoFileData: {
+                          name: file.name,
+                          size: file.size,
+                          type: file.type,
+                          dataUrl: URL.createObjectURL(file),
+                        },
+                      }));
                     }
                   }}
                 />
                 {nodeModal.newRecursoFileData && (
                   <div style={{ fontSize: '11.5px', color: '#10b981', fontWeight: 600, marginTop: '4px' }}>
-                    ✓ Archivo listo: {nodeModal.newRecursoFileData.name} ({Math.round(nodeModal.newRecursoFileData.size / 1024)} KB)
+                    ✓ Archivo seleccionado: {nodeModal.newRecursoFileData.name} ({Math.round(nodeModal.newRecursoFileData.size / 1024)} KB)
                   </div>
                 )}
               </div>
@@ -4217,105 +4405,125 @@ const EditorVisualPage = ({ standalone = false }) => {
         onClose={() => setPreviewResourceModal((prev) => ({ ...prev, isOpen: false }))}
         title={`📎 ${previewResourceModal.title || 'Ayuda Visual / Archivo'}`}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'center' }}>
-          {/* VISTA PREVIA DE IMAGEN */}
-          {(previewResourceModal.resourceType === 'imagen' || previewResourceModal.fileData?.type?.startsWith('image/') || previewResourceModal.url?.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i)) && (
-            <div style={{ width: '100%', maxHeight: '65vh', overflow: 'auto', background: 'rgba(0,0,0,0.05)', borderRadius: '12px', padding: '8px', display: 'flex', justifyContent: 'center' }}>
-              <img
-                src={previewResourceModal.fileData?.dataUrl || previewResourceModal.url}
-                alt={previewResourceModal.title}
-                style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)' }}
-              />
-            </div>
-          )}
-
-          {/* VISTA PREVIA DE DOCUMENTO / PDF */}
-          {(previewResourceModal.resourceType === 'documento' || previewResourceModal.fileData?.type?.includes('pdf') || previewResourceModal.url?.endsWith('.pdf')) && (
-            <div style={{ width: '100%', padding: '24px', background: 'var(--color-gray-50)', border: '1px solid var(--color-gray-200)', borderRadius: '12px', textAlign: 'center' }}>
-              <span style={{ fontSize: '48px', display: 'block', marginBottom: '8px' }}>📄</span>
-              <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', color: 'var(--color-dark)' }}>
-                {previewResourceModal.fileData?.name || previewResourceModal.title || 'Documento PDF'}
-              </h4>
-              {previewResourceModal.fileData?.size && (
-                <p style={{ margin: 0, fontSize: '12px', color: 'var(--color-gray-500)' }}>
-                  Tamaño: {Math.round(previewResourceModal.fileData.size / 1024)} KB
-                </p>
+        {(() => {
+          const info = getResourcePreviewInfo(previewResourceModal);
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'center' }}>
+              {/* VISTA PREVIA DE IMAGEN */}
+              {info.previewImgSrc && (
+                <div style={{ width: '100%', maxHeight: '65vh', overflow: 'auto', background: 'rgba(0,0,0,0.05)', borderRadius: '12px', padding: '8px', display: 'flex', justifyContent: 'center' }}>
+                  <img
+                    src={info.previewImgSrc}
+                    alt={previewResourceModal.title || 'Vista previa'}
+                    style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)' }}
+                  />
+                </div>
               )}
-            </div>
-          )}
 
-          {/* ENLACE WEB */}
-          {(previewResourceModal.resourceType === 'link' || (!previewResourceModal.fileData && previewResourceModal.url)) && (
-            <div style={{ width: '100%', padding: '20px', background: 'rgba(37, 99, 235, 0.06)', border: '1.5px dashed rgba(37, 99, 235, 0.3)', borderRadius: '12px', textAlign: 'center' }}>
-              <span style={{ fontSize: '36px', display: 'block', marginBottom: '8px' }}>🌐</span>
-              <strong style={{ fontSize: '14px', color: '#2563eb', display: 'block', marginBottom: '6px' }}>Enlace Web / Cloud</strong>
-              <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', wordBreak: 'break-all', margin: '0 0 12px 0' }}>
-                {previewResourceModal.url || 'Sin enlace configurado'}
-              </p>
-              {previewResourceModal.url && (
+              {/* VISTA PREVIA DE DOCUMENTO / PDF */}
+              {info.isPdf && !info.previewImgSrc && (
+                <div style={{ width: '100%', padding: '24px', background: 'var(--color-gray-50)', border: '1px solid var(--color-gray-200)', borderRadius: '12px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '48px', display: 'block', marginBottom: '8px' }}>📄</span>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', color: 'var(--color-dark)' }}>
+                    {info.fileName || previewResourceModal.title || 'Documento PDF'}
+                  </h4>
+                  {info.fileSize ? (
+                    <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: 'var(--color-gray-500)' }}>
+                      Tamaño: {Math.round(info.fileSize / 1024)} KB
+                    </p>
+                  ) : null}
+                  {info.effectiveUrl && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => window.open(formatExternalUrl(info.effectiveUrl), '_blank', 'noopener,noreferrer')}
+                    >
+                      📄 Abrir Documento en Pestaña Nueva
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {/* ENLACE WEB */}
+              {info.isLink && !info.previewImgSrc && (
+                <div style={{ width: '100%', padding: '20px', background: 'rgba(37, 99, 235, 0.06)', border: '1.5px dashed rgba(37, 99, 235, 0.3)', borderRadius: '12px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '36px', display: 'block', marginBottom: '8px' }}>🌐</span>
+                  <strong style={{ fontSize: '14px', color: '#2563eb', display: 'block', marginBottom: '6px' }}>Enlace Web / Cloud</strong>
+                  <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', wordBreak: 'break-all', margin: '0 0 12px 0' }}>
+                    {info.rawUrl || 'Sin enlace configurado'}
+                  </p>
+                  {info.rawUrl && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer')}
+                    >
+                      🔗 Abrir Enlace en Pestaña Nueva
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {/* MODELO 3D */}
+              {info.isModel && !info.previewImgSrc && (
+                <div style={{ width: '100%', padding: '20px', background: 'rgba(13, 148, 136, 0.06)', border: '1.5px dashed rgba(13, 148, 136, 0.3)', borderRadius: '12px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '36px', display: 'block', marginBottom: '8px' }}>🧊</span>
+                  <strong style={{ fontSize: '14px', color: '#0d9488', display: 'block', marginBottom: '6px' }}>
+                    {info.fileName || 'Modelo CAD 3D'}
+                  </strong>
+                  <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', margin: '0 0 12px 0' }}>
+                    Ficha de diseño técnico para manufactura
+                  </p>
+                  {info.effectiveUrl && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => window.open(formatExternalUrl(info.effectiveUrl), '_blank', 'noopener,noreferrer')}
+                    >
+                      📥 Abrir / Descargar Modelo CAD
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {/* NOTAS TÉCNICAS */}
+              {previewResourceModal.notes && (
+                <div style={{ width: '100%', padding: '12px 14px', background: 'rgba(234, 88, 12, 0.08)', borderLeft: '4px solid #ea580c', borderRadius: '6px' }}>
+                  <strong style={{ fontSize: '12px', color: '#ea580c', display: 'block', marginBottom: '2px' }}>📝 Notas e Instrucciones:</strong>
+                  <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--color-dark)', whiteSpace: 'pre-wrap' }}>
+                    {previewResourceModal.notes}
+                  </p>
+                </div>
+              )}
+
+              {/* ACCIONES DEL MODAL */}
+              <div style={{ width: '100%', display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '10px', borderTop: '1px solid var(--color-gray-200)' }}>
+                {(info.fileUrl || info.rawUrl) && (
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={() => {
+                      if (info.fileUrl && !info.fileUrl.startsWith('data:')) {
+                        window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
+                      } else if (info.rawUrl) {
+                        window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
+                      }
+                    }}
+                  >
+                    {info.fileName ? '📥 Abrir / Descargar' : '🔗 Abrir Enlace'}
+                  </Button>
+                )}
                 <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => window.open(formatExternalUrl(previewResourceModal.url), '_blank', 'noopener,noreferrer')}
+                  variant="secondary"
+                  size="md"
+                  onClick={() => setPreviewResourceModal((prev) => ({ ...prev, isOpen: false }))}
                 >
-                  🔗 Abrir Enlace en Pestaña Nueva
+                  ✕ Cerrar
                 </Button>
-              )}
+              </div>
             </div>
-          )}
-
-          {/* MODELO 3D */}
-          {previewResourceModal.resourceType === 'modelo' && (
-            <div style={{ width: '100%', padding: '20px', background: 'rgba(13, 148, 136, 0.06)', border: '1.5px dashed rgba(13, 148, 136, 0.3)', borderRadius: '12px', textAlign: 'center' }}>
-              <span style={{ fontSize: '36px', display: 'block', marginBottom: '8px' }}>🧊</span>
-              <strong style={{ fontSize: '14px', color: '#0d9488', display: 'block', marginBottom: '6px' }}>
-                {previewResourceModal.fileData?.name || 'Modelo CAD 3D'}
-              </strong>
-              <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', margin: '0 0 12px 0' }}>
-                Ficha de diseño técnico para producción
-              </p>
-            </div>
-          )}
-
-          {/* NOTAS TÉCNICAS */}
-          {previewResourceModal.notes && (
-            <div style={{ width: '100%', padding: '12px 14px', background: 'rgba(234, 88, 12, 0.08)', borderLeft: '4px solid #ea580c', borderRadius: '6px' }}>
-              <strong style={{ fontSize: '12px', color: '#ea580c', display: 'block', marginBottom: '2px' }}>📝 Notas e Instrucciones:</strong>
-              <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--color-dark)', whiteSpace: 'pre-wrap' }}>
-                {previewResourceModal.notes}
-              </p>
-            </div>
-          )}
-
-          {/* ACCIONES DEL MODAL */}
-          <div style={{ width: '100%', display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '10px', borderTop: '1px solid var(--color-gray-200)' }}>
-            {(previewResourceModal.fileData?.dataUrl || previewResourceModal.url) && (
-              <Button
-                variant="primary"
-                size="md"
-                onClick={() => {
-                  if (previewResourceModal.fileData?.dataUrl) {
-                    const a = document.createElement('a');
-                    a.href = previewResourceModal.fileData.dataUrl;
-                    a.download = previewResourceModal.fileData.name || 'descarga_ayuda_visual';
-                    a.click();
-                  } else if (previewResourceModal.url) {
-                    window.open(formatExternalUrl(previewResourceModal.url), '_blank', 'noopener,noreferrer');
-                  }
-                }}
-              >
-                {previewResourceModal.fileData ? '📥 Descargar Archivo' : '🔗 Abrir Enlace'}
-              </Button>
-            )}
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setPreviewResourceModal((prev) => ({ ...prev, isOpen: false }))}
-            >
-              ✕ Cerrar
-            </Button>
-          </div>
-        </div>
+          );
+        })()}
       </Modal>
 
       {/* ---------- MODAL: CÓMO FUNCIONA ---------- */}
@@ -4556,6 +4764,7 @@ const NodeInspector = ({
   onOpenCompleteModal,
   onResetActivityStatus,
   canUserControlActivity,
+  lienzoActivoId = 'general',
   onClose,
 }) => {
   const meta = NODE_TYPES[node.type] || NODE_TYPES.bloque;
@@ -5282,152 +5491,179 @@ const NodeInspector = ({
         </>
       )}
 
-      {node.type === 'recurso' && (
-        <>
-          {/* Título de la Ayuda Visual */}
-          <div className={styles.field}>
-            <label>Título / Nombre</label>
-            <input
-              type="text"
-              value={node.draftFields?.title || node.title || ''}
-              disabled={!canEditDiagram}
-              placeholder="Ej. Plano de Corte Rev 3..."
-              onChange={(e) => updateDraftField(node.id, 'title', e.target.value)}
-            />
-          </div>
+      {node.type === 'recurso' && (() => {
+        const info = getResourcePreviewInfo(node);
+        const isUploading = node.draftFields?.fileData?.isUploading || node.draftFields?.isUploading;
 
-          {/* Tipo de Recurso */}
-          <div className={styles.field}>
-            <label>Tipo de Recurso</label>
-            <select
-              value={node.draftFields?.resourceType || 'imagen'}
-              disabled={!canEditDiagram}
-              onChange={(e) => updateDraftField(node.id, 'resourceType', e.target.value)}
-            >
-              <option value="imagen">🖼️ Imagen / Fotografía / Render</option>
-              <option value="documento">📄 Documento / Plano PDF</option>
-              <option value="link">🔗 Enlace Web (Drive, Figma, Cloud)</option>
-              <option value="modelo">🎬 Modelo 3D / CAD (.step, .skp, .dwg)</option>
-            </select>
-          </div>
-
-          {/* URL o Enlace Externo */}
-          <div className={styles.field}>
-            <label>
-              {(node.draftFields?.resourceType || 'imagen') === 'link' ? '🔗 URL del Enlace *' : '🔗 URL Externa o en la Nube'}
-            </label>
-            <input
-              type="text"
-              value={node.draftFields?.url || ''}
-              disabled={!canEditDiagram}
-              placeholder="https://drive.google.com/... o https://figma.com/..."
-              onChange={(e) => updateDraftField(node.id, 'url', e.target.value)}
-            />
-          </div>
-
-          {/* Subir Archivo Local */}
-          {canEditDiagram && (node.draftFields?.resourceType || 'imagen') !== 'link' && (
+        return (
+          <>
+            {/* Título de la Ayuda Visual */}
             <div className={styles.field}>
-              <label>📁 Cargar / Cambiar Archivo</label>
+              <label>Título / Nombre</label>
               <input
-                type="file"
-                accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                      updateDraftField(node.id, 'fileData', {
+                type="text"
+                value={node.draftFields?.title || node.title || ''}
+                disabled={!canEditDiagram}
+                placeholder="Ej. Plano de Corte Rev 3..."
+                onChange={(e) => updateDraftField('title', e.target.value)}
+              />
+            </div>
+
+            {/* Tipo de Recurso */}
+            <div className={styles.field}>
+              <label>Tipo de Recurso</label>
+              <select
+                value={node.draftFields?.resourceType || 'imagen'}
+                disabled={!canEditDiagram}
+                onChange={(e) => updateDraftField('resourceType', e.target.value)}
+              >
+                <option value="imagen">🖼️ Imagen / Fotografía / Render</option>
+                <option value="documento">📄 Documento / Plano PDF</option>
+                <option value="link">🔗 Enlace Web (Drive, Figma, Cloud)</option>
+                <option value="modelo">🎬 Modelo 3D / CAD (.step, .skp, .dwg)</option>
+              </select>
+            </div>
+
+            {/* URL o Enlace Externo */}
+            <div className={styles.field}>
+              <label>
+                {(node.draftFields?.resourceType || 'imagen') === 'link' ? '🔗 URL del Enlace *' : '🔗 URL Externa o en la Nube'}
+              </label>
+              <input
+                type="text"
+                value={node.draftFields?.url || ''}
+                disabled={!canEditDiagram}
+                placeholder="https://drive.google.com/... o https://figma.com/..."
+                onChange={(e) => updateDraftField('url', e.target.value)}
+              />
+            </div>
+
+            {/* Subir Archivo Local / Nube */}
+            {canEditDiagram && (node.draftFields?.resourceType || 'imagen') !== 'link' && (
+              <div className={styles.field}>
+                <label>📁 Cargar / Cambiar Archivo</label>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const isImg = file.type?.startsWith('image/');
+                      const localBlobUrl = URL.createObjectURL(file);
+
+                      // Preview inmediato local
+                      updateDraftField('fileData', {
                         name: file.name,
                         size: file.size,
                         type: file.type,
-                        dataUrl: reader.result,
+                        dataUrl: localBlobUrl,
+                        isUploading: true,
                       });
-                      toast.success(`📎 Archivo "${file.name}" cargado en el nodo.`);
-                    };
-                    reader.readAsDataURL(file);
-                  }
-                }}
+                      if (isImg) updateDraftField('resourceType', 'imagen');
+                      else if (file.type?.includes('pdf')) updateDraftField('resourceType', 'documento');
+
+                      toast.info(`⏳ Guardando "${file.name}" en la nube...`);
+
+                      try {
+                        const uploaded = await uploadResourceFile(file, lienzoActivoId);
+                        if (uploaded) {
+                          updateDraftField('fileData', uploaded);
+                          toast.success(`✅ Archivo "${file.name}" guardado permanentemente.`);
+                        }
+                      } catch (err) {
+                        console.error('Error al subir archivo a Storage:', err);
+                        toast.danger('No se pudo subir a Storage, pero el archivo se mantendrá en tu sesión local.');
+                      }
+                    }
+                  }}
+                />
+
+                {isUploading && (
+                  <div style={{ marginTop: '5px', fontSize: '11.5px', color: '#0284c7', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>⏳</span> Subiendo a la nube de Firebase...
+                  </div>
+                )}
+
+                {info.fileName && !isUploading && (
+                  <div style={{ marginTop: '5px', fontSize: '11.5px', color: '#10b981', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(16, 185, 129, 0.08)', padding: '4px 8px', borderRadius: '4px' }}>
+                    <span>✓ {info.fileName} {info.fileSize ? `(${Math.round(info.fileSize / 1024)} KB)` : ''}</span>
+                    <button
+                      type="button"
+                      style={{ background: 'none', border: 'none', color: 'var(--color-alert, #ef4444)', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+                      onClick={() => updateDraftField('fileData', null)}
+                      title="Quitar archivo adjunto"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Notas Técnicas / Instrucciones */}
+            <div className={styles.field}>
+              <label>📝 Notas e Instrucciones Técnicas</label>
+              <textarea
+                rows="3"
+                value={node.draftFields?.notes || ''}
+                disabled={!canEditDiagram}
+                placeholder="Especificaciones, cotas críticas, instrucciones de ensamble..."
+                onChange={(e) => updateDraftField('notes', e.target.value)}
               />
-              {node.draftFields?.fileData && (
-                <div style={{ marginTop: '4px', fontSize: '11.5px', color: '#10b981', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>✓ {node.draftFields.fileData.name} ({Math.round(node.draftFields.fileData.size / 1024)} KB)</span>
-                  <button
-                    type="button"
-                    style={{ background: 'none', border: 'none', color: 'var(--color-alert)', cursor: 'pointer', fontSize: '12px' }}
-                    onClick={() => updateDraftField(node.id, 'fileData', null)}
-                    title="Quitar archivo"
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
             </div>
-          )}
 
-          {/* Notas Técnicas / Instrucciones */}
-          <div className={styles.field}>
-            <label>📝 Notas e Instrucciones Técnicas</label>
-            <textarea
-              rows="3"
-              value={node.draftFields?.notes || ''}
-              disabled={!canEditDiagram}
-              placeholder="Especificaciones, cotas críticas, instrucciones de ensamble..."
-              onChange={(e) => updateDraftField(node.id, 'notes', e.target.value)}
-            />
-          </div>
+            {/* Estado de Asignación / Conexión por cable */}
+            <div style={{ marginTop: '10px' }}>
+              <label style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', display: 'block', marginBottom: '4px' }}>
+                🔌 Conexión en el Diagrama
+              </label>
+              {(() => {
+                const connectedEdge = edges.find(
+                  (e) =>
+                    (e.from === node.id && (findNode(e.to)?.type === 'actividad' || findNode(e.to)?.type === 'proyecto')) ||
+                    (e.to === node.id && (findNode(e.from)?.type === 'actividad' || findNode(e.from)?.type === 'proyecto'))
+                );
+                const targetNode = connectedEdge
+                  ? findNode(findNode(connectedEdge.from)?.type === 'actividad' || findNode(connectedEdge.from)?.type === 'proyecto' ? connectedEdge.from : connectedEdge.to)
+                  : null;
 
-          {/* Estado de Asignación / Conexión por cable */}
-          <div style={{ marginTop: '10px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', display: 'block', marginBottom: '4px' }}>
-              🔌 Conexión en el Diagrama
-            </label>
-            {(() => {
-              const connectedEdge = edges.find(
-                (e) =>
-                  (e.from === node.id && (findNode(e.to)?.type === 'actividad' || findNode(e.to)?.type === 'proyecto')) ||
-                  (e.to === node.id && (findNode(e.from)?.type === 'actividad' || findNode(e.from)?.type === 'proyecto'))
-              );
-              const targetNode = connectedEdge
-                ? findNode(findNode(connectedEdge.from)?.type === 'actividad' || findNode(connectedEdge.from)?.type === 'proyecto' ? connectedEdge.from : connectedEdge.to)
-                : null;
-
-              if (targetNode) {
+                if (targetNode) {
+                  return (
+                    <div style={{ padding: '8px 10px', background: 'rgba(37, 99, 235, 0.08)', borderRadius: '6px', border: '1px solid rgba(37, 99, 235, 0.25)', fontSize: '12px', color: 'var(--color-dark)' }}>
+                      <strong>{targetNode.type === 'proyecto' ? '🗂️ Asignado al Proyecto:' : '📌 Asignado a la Actividad:'}</strong>
+                      <div style={{ marginTop: '2px', fontWeight: 600, color: 'var(--color-primary)' }}>{nodeTitle(targetNode)}</div>
+                    </div>
+                  );
+                }
                 return (
-                  <div style={{ padding: '8px 10px', background: 'rgba(37, 99, 235, 0.08)', borderRadius: '6px', border: '1px solid rgba(37, 99, 235, 0.25)', fontSize: '12px', color: 'var(--color-dark)' }}>
-                    <strong>{targetNode.type === 'proyecto' ? '🗂️ Asignado al Proyecto:' : '📌 Asignado a la Actividad:'}</strong>
-                    <div style={{ marginTop: '2px', fontWeight: 600, color: 'var(--color-primary)' }}>{nodeTitle(targetNode)}</div>
+                  <div style={{ padding: '8px 10px', background: 'rgba(255, 255, 255, 0.04)', borderRadius: '6px', border: '1px dashed var(--color-gray-300)', fontSize: '11.5px', color: 'var(--color-gray-500)' }}>
+                    💡 Arrastra un cable desde este nodo hasta una <strong>Actividad</strong> o <strong>Proyecto</strong> para vincularlo directamente.
                   </div>
                 );
-              }
-              return (
-                <div style={{ padding: '8px 10px', background: 'rgba(255, 255, 255, 0.04)', borderRadius: '6px', border: '1px dashed var(--color-gray-300)', fontSize: '11.5px', color: 'var(--color-gray-500)' }}>
-                  💡 Arrastra un cable desde este nodo hasta una <strong>Actividad</strong> o <strong>Proyecto</strong> para vincularlo directamente.
-                </div>
-              );
-            })()}
-          </div>
+              })()}
+            </div>
 
-          {/* Botón para Abrir Vista Previa */}
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => {
-              setPreviewResourceModal({
-                isOpen: true,
-                title: nodeTitle(node),
-                resourceType: node.draftFields?.resourceType || 'imagen',
-                url: node.draftFields?.url || '',
-                fileData: node.draftFields?.fileData || null,
-                notes: node.draftFields?.notes || '',
-              });
-            }}
-            style={{ width: '100%', marginTop: '12px' }}
-          >
-            🔍 Ver en Pantalla Completa / Descargar
-          </Button>
-        </>
-      )}
+            {/* Botón para Abrir Vista Previa */}
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setPreviewResourceModal({
+                  isOpen: true,
+                  title: nodeTitle(node),
+                  resourceType: info.resType,
+                  url: info.rawUrl || info.fileUrl || '',
+                  fileData: node.draftFields?.fileData || null,
+                  notes: node.draftFields?.notes || '',
+                });
+              }}
+              style={{ width: '100%', marginTop: '12px' }}
+            >
+              🔍 Ver en Pantalla Completa / Descargar
+            </Button>
+          </>
+        );
+      })()}
 
       {!node.draft && !entity && node.type !== 'recurso' && (
         <p style={{ fontSize: '12.5px', color: 'var(--color-alert)' }}>Este registro ya no existe.</p>
