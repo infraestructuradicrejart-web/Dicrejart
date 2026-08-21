@@ -22,6 +22,8 @@ import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import useProgressiveList from '../../hooks/useProgressiveList';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
+import useAreas from '../../hooks/useAreas';
+import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import styles from './ProyectosPage.module.css';
 
 /**
@@ -68,6 +70,12 @@ const ProyectosPage = () => {
   // ============================================
   const { proyectos: allProyectos, juegos, addProject, deleteProject, updateProject } = useProduccion();
   const { user } = useAuth();
+  const { areas: dynamicAreas } = useAreas();
+  const allAvailableAreas = React.useMemo(
+    () => [...dynamicAreas, ...NON_PRODUCTION_AREAS],
+    [dynamicAreas]
+  );
+
   const isEncargado = user?.roleType === 'encargado-area';
   const isReadOnly = isReadOnlySection(user, 'proyectos');
 
@@ -92,8 +100,25 @@ const ProyectosPage = () => {
     name: '',
     client: '',
     description: '',
+    itemsToManufacture: '',
+    areas: ['arquitectura', 'diseno', 'herreria', 'corte-laser'],
     startDate: '',
     endDate: '',
+  });
+
+  // Estado para Modal de edición completa de Proyecto
+  const [editProjectModal, setEditProjectModal] = useState({
+    isOpen: false,
+    projectId: null,
+    name: '',
+    client: '',
+    description: '',
+    itemsToManufacture: '',
+    areas: [],
+    startDate: '',
+    endDate: '',
+    status: 'diseno',
+    isSaving: false,
   });
 
   const [extendDateModal, setExtendDateModal] = useState({
@@ -192,8 +217,20 @@ const ProyectosPage = () => {
       name: '',
       client: '',
       description: '',
+      itemsToManufacture: '',
+      areas: ['arquitectura', 'diseno', 'herreria', 'corte-laser'],
       startDate: '',
       endDate: '',
+    });
+  };
+
+  const handleToggleNewProjectArea = (areaId) => {
+    setNewProject((prev) => {
+      const current = prev.areas || [];
+      const next = current.includes(areaId)
+        ? current.filter((id) => id !== areaId)
+        : [...current, areaId];
+      return { ...prev, areas: next };
     });
   };
 
@@ -215,15 +252,96 @@ const ProyectosPage = () => {
     const today = getTodayLocalDateStr();
 
     addProject({
-      name: newProject.name,
-      client: newProject.client,
-      description: newProject.description,
+      name: newProject.name.trim(),
+      client: newProject.client.trim(),
+      description: newProject.description.trim() || 'Sin descripción',
+      itemsToManufacture: newProject.itemsToManufacture.trim() || '',
+      areas: newProject.areas || [],
       startDate: newProject.startDate || today,
       endDate: newProject.endDate || today,
     });
 
     toast.success('🏗️ Proyecto registrado con éxito.');
     handleCloseModal();
+  };
+
+  // ============================================
+  // EDICIÓN COMPLETA DE PROYECTO
+  // ============================================
+  const handleOpenEditProject = (proj) => {
+    setEditProjectModal({
+      isOpen: true,
+      projectId: proj.id,
+      name: proj.name || '',
+      client: proj.client || '',
+      description: proj.description || '',
+      itemsToManufacture: proj.itemsToManufacture || '',
+      areas: proj.areas || [],
+      startDate: proj.startDate || '',
+      endDate: proj.endDate || '',
+      status: proj.status || 'diseno',
+      isSaving: false,
+    });
+  };
+
+  const handleCloseEditProject = () => {
+    setEditProjectModal({
+      isOpen: false,
+      projectId: null,
+      name: '',
+      client: '',
+      description: '',
+      itemsToManufacture: '',
+      areas: [],
+      startDate: '',
+      endDate: '',
+      status: 'diseno',
+      isSaving: false,
+    });
+  };
+
+  const handleToggleEditProjectArea = (areaId) => {
+    setEditProjectModal((prev) => {
+      const current = prev.areas || [];
+      const next = current.includes(areaId)
+        ? current.filter((id) => id !== areaId)
+        : [...current, areaId];
+      return { ...prev, areas: next };
+    });
+  };
+
+  const handleUpdateProjectSubmit = async (e) => {
+    e.preventDefault();
+    const { projectId, name, client, description, itemsToManufacture, areas, startDate, endDate, status } = editProjectModal;
+    if (!name.trim() || !client.trim()) {
+      toast.danger('Nombre y cliente son obligatorios.');
+      return;
+    }
+
+    setEditProjectModal((prev) => ({ ...prev, isSaving: true }));
+    try {
+      const res = await updateProject(projectId, {
+        name: name.trim(),
+        client: client.trim(),
+        description: description.trim() || 'Sin descripción',
+        itemsToManufacture: itemsToManufacture.trim() || '',
+        areas: areas || [],
+        startDate: startDate || null,
+        endDate: endDate || null,
+        status: status || 'diseno',
+      });
+
+      if (res?.ok !== false) {
+        toast.success(`✅ Proyecto "${name.trim()}" actualizado correctamente.`);
+        handleCloseEditProject();
+      } else {
+        toast.danger(`Error: ${res.error || 'No se pudo actualizar'}`);
+        setEditProjectModal((prev) => ({ ...prev, isSaving: false }));
+      }
+    } catch (err) {
+      toast.danger('Error inesperado al actualizar el proyecto.');
+      setEditProjectModal((prev) => ({ ...prev, isSaving: false }));
+    }
   };
 
   const handleDeleteProject = (e, projectId, projectName) => {
@@ -412,8 +530,31 @@ const ProyectosPage = () => {
                 <Card variant="default" className={styles.projectCard}>
                   <div className={styles.projectHeader}>
                     <span className={styles.projectId}>{proj.id}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       {getStatusBadge(proj.status)}
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditProject(proj)}
+                          style={{
+                            background: 'rgba(37, 99, 235, 0.08)',
+                            border: '1px solid rgba(37, 99, 235, 0.25)',
+                            color: 'var(--color-secondary, #2563eb)',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            padding: '3px 6px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                            transition: 'all 0.2s',
+                          }}
+                          title="Actualizar / Editar Proyecto"
+                        >
+                          ✏️ Editar
+                        </button>
+                      )}
                       {!isReadOnly && proj.progress === 0 && (
                         <button
                           type="button"
@@ -444,6 +585,40 @@ const ProyectosPage = () => {
                   <p className={styles.clientText}>
                     <strong>Cliente:</strong> {proj.client}
                   </p>
+                  
+                  {/* Detalle de lo que se fabricará en este proyecto */}
+                  {proj.itemsToManufacture && (
+                    <div className={styles.itemsSection}>
+                      <span className={styles.itemsTitle}>🛠️ A Fabricar:</span>
+                      <span className={styles.itemsText}>{proj.itemsToManufacture}</span>
+                    </div>
+                  )}
+
+                  {/* Áreas involucradas en el proyecto */}
+                  {proj.areas && proj.areas.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      <span style={{ fontSize: '10.5px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--color-gray-500)', letterSpacing: '0.4px' }}>
+                        Áreas Involucradas:
+                      </span>
+                      <div className={styles.projectAreasContainer}>
+                        {proj.areas.map((aId) => {
+                          const areaObj = allAvailableAreas.find((a) => a.id === aId);
+                          const aName = areaObj?.name || aId;
+                          const isTech = aId === 'arquitectura' || aId === 'diseno' || aId === 'supervision';
+                          return (
+                            <span
+                              key={aId}
+                              className={`${styles.projectAreaTag} ${isTech ? styles.projectAreaTagTechnical : ''}`}
+                              title={`Área: ${aName}`}
+                            >
+                              {areaObj?.icon || (isTech ? '📐' : '🏭')} {aName}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <p className={styles.descText}>{proj.description}</p>
 
                   {/* Juegos vinculados y sus avances */}
@@ -545,7 +720,7 @@ const ProyectosPage = () => {
       <Modal isOpen={isModalOpen} onClose={handleCloseModal} title="Registrar Nuevo Proyecto">
         <form onSubmit={handleCreateProject} className={styles.form}>
           <div className={styles.formGroup}>
-            <label className={styles.label}>Nombre del Proyecto</label>
+            <label className={styles.label}>Nombre del Proyecto *</label>
             <input
               type="text"
               name="name"
@@ -558,7 +733,7 @@ const ProyectosPage = () => {
           </div>
 
           <div className={styles.formGroup}>
-            <label className={styles.label}>Cliente</label>
+            <label className={styles.label}>Cliente *</label>
             <input
               type="text"
               name="client"
@@ -571,14 +746,45 @@ const ProyectosPage = () => {
           </div>
 
           <div className={styles.formGroup}>
-            <label className={styles.label}>Descripción</label>
+            <label className={styles.label}>🛠️ ¿Qué se fabricará en este proyecto? (Productos / Modelos / Piezas)</label>
+            <textarea
+              name="itemsToManufacture"
+              className={styles.textarea}
+              placeholder="Ej: 2 Módulos de Juegos Infantiles, 4 Bancas Metálicas, 1 Columpio Quíntuple y 3 Botes de Basura..."
+              value={newProject.itemsToManufacture}
+              onChange={handleFormChange}
+              rows="3"
+            />
+          </div>
+
+          <div className={styles.formGroup}>
+            <label className={styles.label}>🏭 Áreas Involucradas en el Proyecto (Selecciona todas las que apliquen):</label>
+            <div className={styles.areasGridPills}>
+              {allAvailableAreas.map((area) => {
+                const isSelected = (newProject.areas || []).includes(area.id);
+                return (
+                  <button
+                    key={area.id}
+                    type="button"
+                    className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                    onClick={() => handleToggleNewProjectArea(area.id)}
+                  >
+                    {isSelected ? '✓' : '+'} {area.icon || '🏭'} {area.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className={styles.formGroup}>
+            <label className={styles.label}>Descripción General</label>
             <textarea
               name="description"
               className={styles.textarea}
-              placeholder="Detalla los juegos e instalaciones..."
+              placeholder="Notas generales, ubicación o especificaciones técnicas..."
               value={newProject.description}
               onChange={handleFormChange}
-              rows="3"
+              rows="2"
             />
           </div>
 
@@ -615,6 +821,119 @@ const ProyectosPage = () => {
           </div>
         </form>
       </Modal>
+
+      {/* MODAL: EDITAR / ACTUALIZAR PROYECTO */}
+      {editProjectModal.isOpen && (
+        <Modal isOpen={editProjectModal.isOpen} onClose={handleCloseEditProject} title={`✏️ Actualizar Proyecto: ${editProjectModal.name || editProjectModal.projectId}`}>
+          <form onSubmit={handleUpdateProjectSubmit} className={styles.form}>
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Nombre del Proyecto *</label>
+              <input
+                type="text"
+                className={styles.textInput}
+                value={editProjectModal.name}
+                onChange={(e) => setEditProjectModal((prev) => ({ ...prev, name: e.target.value }))}
+                required
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Cliente *</label>
+              <input
+                type="text"
+                className={styles.textInput}
+                value={editProjectModal.client}
+                onChange={(e) => setEditProjectModal((prev) => ({ ...prev, client: e.target.value }))}
+                required
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Estado del Proyecto</label>
+              <select
+                className={styles.textInput}
+                value={editProjectModal.status}
+                onChange={(e) => setEditProjectModal((prev) => ({ ...prev, status: e.target.value }))}
+              >
+                <option value="diseno">📐 En Diseño / Arquitectura</option>
+                <option value="progreso">⚙️ En Progreso de Manufactura</option>
+                <option value="pausado">⏸️ Pausado</option>
+                <option value="completado">✅ Completado</option>
+              </select>
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>🛠️ ¿Qué se fabricará en este proyecto? (Productos / Modelos / Piezas)</label>
+              <textarea
+                className={styles.textarea}
+                placeholder="Detalla los juegos, mobiliario o estructuras que se van a producir..."
+                value={editProjectModal.itemsToManufacture}
+                onChange={(e) => setEditProjectModal((prev) => ({ ...prev, itemsToManufacture: e.target.value }))}
+                rows="3"
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>🏭 Áreas Involucradas en el Proyecto:</label>
+              <div className={styles.areasGridPills}>
+                {allAvailableAreas.map((area) => {
+                  const isSelected = (editProjectModal.areas || []).includes(area.id);
+                  return (
+                    <button
+                      key={area.id}
+                      type="button"
+                      className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                      onClick={() => handleToggleEditProjectArea(area.id)}
+                    >
+                      {isSelected ? '✓' : '+'} {area.icon || '🏭'} {area.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label}>Descripción General</label>
+              <textarea
+                className={styles.textarea}
+                value={editProjectModal.description}
+                onChange={(e) => setEditProjectModal((prev) => ({ ...prev, description: e.target.value }))}
+                rows="2"
+              />
+            </div>
+
+            <div className={styles.row}>
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Fecha de Inicio</label>
+                <input
+                  type="date"
+                  className={styles.textInput}
+                  value={editProjectModal.startDate}
+                  onChange={(e) => setEditProjectModal((prev) => ({ ...prev, startDate: e.target.value }))}
+                />
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Fecha Límite</label>
+                <input
+                  type="date"
+                  className={styles.textInput}
+                  value={editProjectModal.endDate}
+                  onChange={(e) => setEditProjectModal((prev) => ({ ...prev, endDate: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className={styles.formActions}>
+              <Button type="button" variant="secondary" size="md" onClick={handleCloseEditProject}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary" size="md" isLoading={editProjectModal.isSaving}>
+                💾 Guardar Cambios
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* MODAL: CONFIRMACIÓN DE ELIMINACIÓN DE PROYECTO */}
       {deleteConfirmation.isOpen && (

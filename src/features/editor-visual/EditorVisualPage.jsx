@@ -115,78 +115,17 @@ const nextEdgeId = () => {
 };
 
 /**
- * Trazo Bezier para previsualización durante arrastre manual
+ * Trazo Bezier para previsualización durante arrastre manual desde un puerto
  */
-const previewBezier = (p1, p2) => {
+const previewBezier = (p1, p2, dir1 = null) => {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   const dist = Math.hypot(dx, dy);
-  const curvature = Math.max(30, Math.min(dist * 0.45, 140));
-  const signX = dx >= 0 ? 1 : -1;
-  return `M ${p1.x} ${p1.y} C ${p1.x + signX * curvature} ${p1.y}, ${p2.x - signX * curvature} ${p2.y}, ${p2.x} ${p2.y}`;
-};
-
-/**
- * Genera el trazo de cable inteligente anti-enredo adaptando dinámicamente
- * los puertos más cercanos (derecha, izquierda, arriba o abajo) según la posición relativa de los nodos.
- */
-const getSmartWirePath = (fromNode, toNode) => {
-  if (!fromNode || !toNode) return { path: '', p1: { x: 0, y: 0 }, p2: { x: 0, y: 0 } };
-
-  const fromHeight = fromNode.type === 'recurso' ? 140 : 85;
-  const toHeight = toNode.type === 'recurso' ? 140 : 85;
-
-  const c1x = fromNode.x + NODE_WIDTH / 2;
-  const c1y = fromNode.y + fromHeight / 2;
-  const c2x = toNode.x + NODE_WIDTH / 2;
-  const c2y = toNode.y + toHeight / 2;
-
-  const dx = c2x - c1x;
-  const dy = c2y - c1y;
-
-  let p1, p2, dir1, dir2;
-
-  // Decide si domina flujo horizontal o vertical
-  if (Math.abs(dx) >= Math.abs(dy) * 0.75) {
-    if (dx >= 0) {
-      // toNode está a la derecha
-      p1 = { x: fromNode.x + NODE_WIDTH, y: fromNode.y + 40 };
-      p2 = { x: toNode.x, y: toNode.y + 40 };
-      dir1 = { x: 1, y: 0 };
-      dir2 = { x: -1, y: 0 };
-    } else {
-      // toNode está a la izquierda
-      p1 = { x: fromNode.x, y: fromNode.y + 40 };
-      p2 = { x: toNode.x + NODE_WIDTH, y: toNode.y + 40 };
-      dir1 = { x: -1, y: 0 };
-      dir2 = { x: 1, y: 0 };
-    }
-  } else {
-    if (dy >= 0) {
-      // toNode está abajo
-      p1 = { x: fromNode.x + NODE_WIDTH / 2, y: fromNode.y + fromHeight };
-      p2 = { x: toNode.x + NODE_WIDTH / 2, y: toNode.y };
-      dir1 = { x: 0, y: 1 };
-      dir2 = { x: 0, y: -1 };
-    } else {
-      // toNode está arriba
-      p1 = { x: fromNode.x + NODE_WIDTH / 2, y: fromNode.y };
-      p2 = { x: toNode.x + NODE_WIDTH / 2, y: toNode.y + toHeight };
-      dir1 = { x: 0, y: -1 };
-      dir2 = { x: 0, y: 1 };
-    }
-  }
-
-  const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-  const curvature = Math.max(35, Math.min(dist * 0.4, 150));
-
-  const cp1x = p1.x + dir1.x * curvature;
-  const cp1y = p1.y + dir1.y * curvature;
-  const cp2x = p2.x + dir2.x * curvature;
-  const cp2y = p2.y + dir2.y * curvature;
-
-  const path = `M ${p1.x} ${p1.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
-  return { path, p1, p2 };
+  const curvature = Math.max(25, Math.min(dist * 0.45, 140));
+  const d = dir1 || (dx >= 0 ? { x: 1, y: 0 } : { x: -1, y: 0 });
+  const cp1x = p1.x + d.x * curvature;
+  const cp1y = p1.y + d.y * curvature;
+  return `M ${p1.x} ${p1.y} Q ${cp1x} ${cp1y}, ${p2.x} ${p2.y}`;
 };
 
 /**
@@ -198,9 +137,10 @@ const getResourcePreviewInfo = (nodeOrDraft) => {
   }
 
   const fields = nodeOrDraft.draftFields || nodeOrDraft;
-  const resType = fields.resourceType || 'imagen';
   const fileData = fields.fileData;
   const rawUrl = (fields.url || nodeOrDraft.url || '').trim();
+  const explicitType = fields.resourceType || nodeOrDraft.resourceType;
+  const resType = explicitType || (fileData ? 'imagen' : (rawUrl ? 'link' : 'imagen'));
 
   // 1. Archivo subido o local
   const fileUrl = fileData?.url || fileData?.dataUrl;
@@ -271,21 +211,32 @@ const getResourcePreviewInfo = (nodeOrDraft) => {
     }
   }
 
-  // 4. Determinar si hay imagen a previsualizar
+  // 4. Distinción limpia: Archivo de Imagen subido vs Enlace Web/Nube
+  const isUploadedImage = Boolean(
+    fileData?.type?.startsWith('image/') ||
+    fileUrl?.startsWith('data:image') ||
+    (fileUrl && fileUrl.includes('firebasestorage.googleapis.com')) ||
+    (fileData && lowerFileName.match(/\.(jpeg|jpg|png|webp|gif|svg|avif)($|\?)/i))
+  );
+
+  const isDirectImageLink = Boolean(
+    rawUrl &&
+    !linkProvider?.isDrive &&
+    !linkProvider?.isFigma &&
+    !rawUrl.includes('autodesk') &&
+    (rawUrl.startsWith('data:image') || rawUrl.match(/\.(jpeg|jpg|png|webp|gif|svg|avif)($|\?)/i))
+  );
+
+  const isImage = (resType === 'imagen' && !rawUrl && !linkProvider) || isUploadedImage || isDirectImageLink;
+
   let previewImgSrc = null;
-  if (fileUrl && (fileData?.type?.startsWith('image/') || fileUrl.startsWith('data:image') || (!fileData?.type && !cadBrand && !lowerFileName.endsWith('.pdf')))) {
-    previewImgSrc = fileUrl;
-  } else if (googleDriveImgSrc && resType === 'imagen') {
-    previewImgSrc = googleDriveImgSrc;
-  } else if (rawUrl && resType === 'imagen') {
-    previewImgSrc = googleDriveImgSrc || rawUrl;
-  } else if (rawUrl && (rawUrl.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i) || rawUrl.startsWith('data:image') || rawUrl.includes('images.unsplash.com') || rawUrl.includes('firebasestorage'))) {
-    previewImgSrc = rawUrl;
+  if (isImage) {
+    previewImgSrc = fileUrl || (isDirectImageLink ? rawUrl : null);
   }
 
   const isPdf = resType === 'documento' || fileData?.type?.includes('pdf') || lowerFileName.endsWith('.pdf') || lowerFileName.includes('.pdf?');
   const isModel = Boolean(cadBrand) || resType === 'modelo';
-  const isLink = resType === 'link' || (!previewImgSrc && !isPdf && !isModel && Boolean(rawUrl));
+  const isLink = !isImage && !isPdf && !isModel && Boolean(rawUrl || linkProvider || resType === 'link');
 
   return {
     resType,
@@ -305,6 +256,127 @@ const getResourcePreviewInfo = (nodeOrDraft) => {
     googleDriveFileId,
     effectiveUrl: fileUrl || rawUrl,
   };
+};
+
+/**
+ * Coordenadas EXACTAS de los 4 puertos físicos (in, out, top, bottom) colocados en cualquier tipo de nodo
+ */
+const getNodePortCoords = (node, side, nodeSizes = {}) => {
+  if (!node) return { x: 0, y: 0, dir: { x: 1, y: 0 }, side: side || 'out' };
+
+  const info = node.type === 'recurso' ? getResourcePreviewInfo(node) : null;
+  const isLinkResource = node.type === 'recurso' && Boolean(
+    info?.isLink ||
+    node.draftFields?.resourceType === 'link' ||
+    (node.draftFields?.url && !node.draftFields?.fileData && !node.draftFields?.url?.match(/\.(jpeg|jpg|png|webp|gif|svg|avif)($|\?)/i))
+  );
+  const isImageResource = node.type === 'recurso' && !isLinkResource && Boolean(
+    info?.previewImgSrc ||
+    node.draftFields?.resourceType === 'imagen' ||
+    node.draftFields?.fileData?.dataUrl ||
+    node.draftFields?.fileData?.url
+  );
+
+  // 1. Caso: Emblema de enlace flotante (círculo 68x68 centrado horizontalmente en 140px)
+  if (isLinkResource) {
+    const cx = node.x + 70;
+    const cy = node.y + 34;
+    const r = 34;
+    switch (side) {
+      case 'in':
+        return { x: cx - r, y: cy, dir: { x: -1, y: 0 }, side: 'in' };
+      case 'out':
+        return { x: cx + r, y: cy, dir: { x: 1, y: 0 }, side: 'out' };
+      case 'top':
+        return { x: cx, y: cy - r, dir: { x: 0, y: -1 }, side: 'top' };
+      case 'bottom':
+        return { x: cx, y: cy + r, dir: { x: 0, y: 1 }, side: 'bottom' };
+      default:
+        return { x: cx + r, y: cy, dir: { x: 1, y: 0 }, side: 'out' };
+    }
+  }
+
+  // 2. Caso: Tarjeta de imagen o Tarjeta estándar de nodo
+  const measured = nodeSizes[node.id];
+  const width = measured?.width || (isImageResource ? 230 : NODE_WIDTH);
+  const height = measured?.height || (isImageResource ? 180 : (node.type === 'bloque' ? 140 : node.type === 'actividad' ? 120 : 100));
+
+  switch (side) {
+    case 'in':
+      return { x: node.x, y: node.y + height / 2, dir: { x: -1, y: 0 }, side: 'in' };
+    case 'out':
+      return { x: node.x + width, y: node.y + height / 2, dir: { x: 1, y: 0 }, side: 'out' };
+    case 'top':
+      return { x: node.x + width / 2, y: node.y, dir: { x: 0, y: -1 }, side: 'top' };
+    case 'bottom':
+      return { x: node.x + width / 2, y: node.y + height, dir: { x: 0, y: 1 }, side: 'bottom' };
+    default:
+      return { x: node.x + width, y: node.y + height / 2, dir: { x: 1, y: 0 }, side: 'out' };
+  }
+};
+
+/**
+ * Obtiene los 4 puertos oficiales del nodo
+ */
+const getAllNodePorts = (node, nodeSizes) => {
+  return ['in', 'out', 'top', 'bottom'].map((s) => getNodePortCoords(node, s, nodeSizes));
+};
+
+/**
+ * Genera el trazo de cable conectando SIEMPRE los puntos físicos de los puertos colocados en los nodos (arriba, abajo, izquierda, derecha).
+ * A medida que los nodos se mueven o cambian de posición en el lienzo, la conexión se adapta automáticamente seleccionando el par de
+ * puertos más natural, limpio y directo entre los 4 puertos físicos reales de cada nodo.
+ */
+const getSmartWirePath = (fromNode, toNode, edge = null, nodeSizes = {}) => {
+  if (!fromNode || !toNode) return { path: '', p1: { x: 0, y: 0 }, p2: { x: 0, y: 0 } };
+
+  // Siempre evaluamos dinámicamente los 4 puertos físicos de cada nodo según sus posiciones actuales
+  const fromPorts = getAllNodePorts(fromNode, nodeSizes);
+  const toPorts = getAllNodePorts(toNode, nodeSizes);
+
+  let bestPair = null;
+  let minScore = Infinity;
+
+  fromPorts.forEach((fp) => {
+    toPorts.forEach((tp) => {
+      const dx = tp.x - fp.x;
+      const dy = tp.y - fp.y;
+      const dist = Math.hypot(dx, dy);
+
+      const len = Math.max(1, dist);
+      const nx = dx / len;
+      const ny = dy / len;
+
+      // Dirección de salida del puerto fp y entrada a tp
+      const dotFrom = fp.dir.x * nx + fp.dir.y * ny;
+      const dotTo = tp.dir.x * (-nx) + tp.dir.y * (-ny);
+
+      // Penalizamos fuertemente si el puerto apunta en sentido contrario al cable
+      const penaltyFrom = dotFrom < 0 ? (1 - dotFrom) * 260 : (1 - dotFrom) * 30;
+      const penaltyTo = dotTo < 0 ? (1 - dotTo) * 260 : (1 - dotTo) * 30;
+
+      const score = dist + penaltyFrom + penaltyTo;
+
+      if (score < minScore) {
+        minScore = score;
+        bestPair = { p1: fp, p2: tp };
+      }
+    });
+  });
+
+  const p1 = bestPair ? bestPair.p1 : fromPorts[1]; // puerto físico origen
+  const p2 = bestPair ? bestPair.p2 : toPorts[0];   // puerto físico destino
+
+  const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  const curvature = Math.max(20, Math.min(dist * 0.42, 130));
+
+  const cp1x = p1.x + p1.dir.x * curvature;
+  const cp1y = p1.y + p1.dir.y * curvature;
+  const cp2x = p2.x + p2.dir.x * curvature;
+  const cp2y = p2.y + p2.dir.y * curvature;
+
+  const path = `M ${p1.x} ${p1.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+  return { path, p1, p2, fromPort: p1.side, toPort: p2.side };
 };
 
 /**
@@ -387,28 +459,100 @@ const EditorVisualPage = ({ standalone = false }) => {
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
   const allBlockAreas = useMemo(() => [...dynamicAreas, ...NON_PRODUCTION_AREAS], [dynamicAreas]);
+
+  // Catálogo completo de Áreas disponibles (Manufactura + Técnicas: Supervisión, Arquitectura, Diseño)
+  const allAvailableAreas = useMemo(() => {
+    const map = new Map();
+    (dynamicAreas || []).forEach((a) => {
+      map.set(a.id, { id: a.id, name: a.name, icon: a.icon || '🏭' });
+    });
+    NON_PRODUCTION_AREAS.forEach((a) => {
+      if (!map.has(a.id)) {
+        map.set(a.id, { id: a.id, name: a.name, icon: a.icon || '📋' });
+      }
+    });
+    return Array.from(map.values());
+  }, [dynamicAreas]);
+
   const { user, users } = useAuth();
+
+  // Padrón unificado de colaboradores: Operarios de planta + Usuarios del sistema (supervisores, arquitectura, diseño, calidad, etc.)
+  const allCollaborators = useMemo(() => {
+    const list = [];
+    const seenIds = new Set();
+
+    // A. Operarios
+    (operarios || []).forEach((op) => {
+      if (!seenIds.has(op.id)) {
+        seenIds.add(op.id);
+        list.push({
+          id: op.id,
+          name: op.name,
+          area: op.currentArea || op.homeArea || op.area || op.areaId || '',
+          areas: op.areas || (op.currentArea ? [op.currentArea] : []),
+          puesto: op.puesto || 'Operario de Planta',
+          roleType: op.roleType || 'operario',
+          isUser: false,
+        });
+      }
+    });
+
+    // B. Usuarios del sistema
+    (users || []).forEach((u) => {
+      if (!seenIds.has(u.id)) {
+        seenIds.add(u.id);
+        const uArea = u.areaId || u.area || (u.areaIds && u.areaIds[0]) || '';
+        list.push({
+          id: u.id,
+          name: u.name || u.displayName || u.email,
+          area: uArea,
+          areas: u.areaIds || (uArea ? [uArea] : []),
+          puesto: u.roleLabel || u.roleType || 'Personal Técnico/Admin',
+          roleType: u.roleType || 'user',
+          isUser: true,
+        });
+      }
+    });
+
+    return list;
+  }, [operarios, users]);
+
+  // Filtrado flexible de colaboradores para un área específica
+  const getCollaboratorsForArea = useCallback((areaId) => {
+    if (!areaId) return allCollaborators;
+    const target = String(areaId).toLowerCase().trim();
+
+    return allCollaborators.filter((c) => {
+      const cArea = String(c.area || '').toLowerCase().trim();
+      const cRole = String(c.roleType || c.puesto || '').toLowerCase().trim();
+      const cAreas = (c.areas || []).map((a) => String(a).toLowerCase().trim());
+
+      // Coincidencia directa
+      if (cArea === target || cRole === target || cAreas.includes(target)) return true;
+
+      // Coincidencias por sinonimia técnica
+      if (target === 'supervision' && (cRole.includes('supervis') || cRole.includes('encargad') || cArea.includes('supervis'))) return true;
+      if (target === 'diseno' && (cRole.includes('dise') || cArea.includes('dise'))) return true;
+      if (target === 'arquitectura' && (cRole.includes('arqui') || cArea.includes('arqui'))) return true;
+      if (target === 'calidad' && (cRole.includes('calidad') || cArea.includes('calidad'))) return true;
+      if (target === 'corte-laser' && (cArea.includes('laser') || cRole.includes('laser'))) return true;
+      if (target === 'herreria' && (cArea.includes('herreria') || cArea.includes('soldadura') || cRole.includes('herrero') || cRole.includes('soldador'))) return true;
+      if (target === 'carpinteria' && (cArea.includes('carpinter') || cRole.includes('carpinter'))) return true;
+
+      return false;
+    });
+  }, [allCollaborators]);
+
   const toast = useToast();
 
   // ============================================
-  // PROYECTOS VISUALES Y LIENZOS LIBRES
-  // Permite diseñar en lienzos independientes o asociados a un proyecto
+  // LIENZO GENERAL MULTI-PROYECTO
+  // Un solo lienzo unificado donde residen todos los proyectos
   // ============================================
-  const [lienzosList, setLienzosList] = useState([]);
-  const [newLienzoModal, setNewLienzoModal] = useState({ isOpen: false, name: '' });
-  const [deleteLienzoConfirm, setDeleteLienzoConfirm] = useState(false);
   const [isLeftRailOpen, setIsLeftRailOpen] = useState(false);
+  const lienzoActivoId = 'general';
 
-  const [lienzoActivoId, setLienzoActivoId] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      return urlParams.get('lienzoId') || urlParams.get('proyectoId') || 'general';
-    }
-    return 'general';
-  });
-
-  // Modal para gestionar / eliminar cualquier lienzo
-  const [manageLienzosModal, setManageLienzosModal] = useState(false);
+  // Modal para confirmar vaciar todos los nodos del lienzo
   const [clearNodesConfirm, setClearNodesConfirm] = useState(false);
 
   // Modal para consultar tareas del área en el lienzo sin redirigir
@@ -423,37 +567,16 @@ const EditorVisualPage = ({ standalone = false }) => {
     title: '',
     resourceType: 'imagen',
     url: '',
-    fileData: null,
     notes: '',
   });
 
-  // Determina si el lienzo activo es un lienzo libre que se puede eliminar
-  const isCurrentLienzoDeletable = useMemo(() => {
-    return lienzoActivoId !== 'general' && !proyectos.some((p) => p.id === lienzoActivoId);
-  }, [lienzoActivoId, proyectos]);
-
-  // Elimina un lienzo específico por su ID
-  const handleDeleteLienzoById = async (targetId, targetName) => {
-    if (!db || !canEditDiagram) return;
-    try {
-      await deleteDoc(doc(db, 'lienzos', targetId));
-      toast.success(`🗑️ Lienzo visual "${targetName || 'Lienzo'}" eliminado.`);
-      if (lienzoActivoId === targetId) {
-        setLienzoActivoId('general');
-      }
-    } catch (err) {
-      console.error('Error al eliminar lienzo:', err);
-      toast.danger('No se pudo eliminar el lienzo.');
-    }
-  };
-
-  // Elimina el lienzo actualmente activo
-  const handleDeleteCurrentLienzo = async () => {
-    if (!isCurrentLienzoDeletable || !db || !canEditDiagram) return;
-    const currentName = lienzosList.find((l) => l.id === lienzoActivoId)?.name || 'Lienzo';
-    await handleDeleteLienzoById(lienzoActivoId, currentName);
-    setDeleteLienzoConfirm(false);
-  };
+  // Modal para cambiar y personalizar color de un nodo o cable
+  const [colorPickerModal, setColorPickerModal] = useState({
+    isOpen: false,
+    targetType: 'node',
+    targetId: null,
+    currentColor: '#ea580c',
+  });
 
   // Limpia / vacía todos los nodos del lienzo actual
   const handleClearCurrentCanvasNodes = () => {
@@ -465,40 +588,12 @@ const EditorVisualPage = ({ standalone = false }) => {
     toast.success('🧹 Lienzo vaciado. Todos los nodos fueron removidos.');
   };
 
-  // Escucha en tiempo real de todos los lienzos registrados en Firestore
-  useEffect(() => {
-    if (!db) return;
-    try {
-      const unsubscribe = onSnapshot(
-        collection(db, 'lienzos'),
-        (snapshot) => {
-          const list = snapshot.docs.map((d) => ({
-            id: d.id,
-            ...d.data(),
-          }));
-          setLienzosList(list);
-        },
-        (err) => {
-          console.warn('Aviso al listar lienzos:', err);
-        }
-      );
-      return unsubscribe;
-    } catch (e) {
-      console.warn('Error iniciando escucha de lienzos:', e);
-    }
-  }, []);
-
   // Refleja el lienzo activo en la URL para no perder el estado
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
-    if (lienzoActivoId && lienzoActivoId !== 'general') {
-      url.searchParams.set('lienzoId', lienzoActivoId);
-      url.searchParams.delete('proyectoId');
-    } else {
-      url.searchParams.delete('lienzoId');
-      url.searchParams.delete('proyectoId');
-    }
+    url.searchParams.delete('lienzoId');
+    url.searchParams.delete('proyectoId');
     window.history.replaceState({}, '', url);
   }, [lienzoActivoId]);
 
@@ -520,6 +615,9 @@ const EditorVisualPage = ({ standalone = false }) => {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState(() => new Set());
+  const [selectionBox, setSelectionBox] = useState(null);
+  const selectionBoxRef = useRef(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
   const [worldOffset, setWorldOffset] = useState({ x: 40, y: 30 });
   const [howtoOpen, setHowtoOpen] = useState(false);
@@ -542,6 +640,7 @@ const EditorVisualPage = ({ standalone = false }) => {
   const dragStateRef = useRef(null);
   const connectStateRef = useRef(null);
   const panStateRef = useRef(null);
+  const nodeSizesRef = useRef({});
   const [isPanning, setIsPanning] = useState(false);
   const [previewWire, setPreviewWire] = useState(null);
 
@@ -563,6 +662,11 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const [isExporting, setIsExporting] = useState(false);
   const [nodeSearch, setNodeSearch] = useState('');
+
+  // 🗂️ Localizador y Filtro de Proyectos en el Lienzo
+  const [focusedProjectId, setFocusedProjectId] = useState('');
+  const [isIsolateProjectMode, setIsIsolateProjectMode] = useState(false);
+  const [isCameraAnimating, setIsCameraAnimating] = useState(false);
 
   // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE CON RESPALDO LOCAL
@@ -745,9 +849,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
     setSaveStatus('saving');
     try {
-      const existingLienzo = lienzosList.find((l) => l.id === lienzoActivoId);
-      const matchingProj = proyectos.find((p) => p.id === lienzoActivoId);
-      const canvasName = existingLienzo?.name || matchingProj?.name || (lienzoActivoId === 'general' ? 'Lienzo General' : 'Lienzo Visual');
+      const canvasName = 'Lienzo General';
 
       await setDoc(doc(db, 'lienzos', lienzoActivoId), {
         name: canvasName,
@@ -762,7 +864,7 @@ const EditorVisualPage = ({ standalone = false }) => {
       console.error('Error al guardar lienzo en Firestore:', e);
       setSaveStatus('error');
     }
-  }, [lienzoActivoId, lienzosList, proyectos, worldOffset, canEditDiagram, user]);
+  }, [lienzoActivoId, proyectos, worldOffset, canEditDiagram, user]);
 
   /**
    * Actualiza un campo de borrador de cualquier nodo y persiste de inmediato
@@ -890,6 +992,29 @@ const EditorVisualPage = ({ standalone = false }) => {
           } catch (e) {}
         }
       }
+
+      // 6. Actividad Predecesora ↔ Actividad Sucesora (Secuencia de Producción en Cascada)
+      const fromActNode = fromNode?.type === 'actividad' ? fromNode : null;
+      const toActNode = toNode?.type === 'actividad' ? toNode : null;
+      if (fromActNode && toActNode && fromActNode.id !== toActNode.id) {
+        const isFromPredecessor = fromActNode.x < toActNode.x - 10 || (edge.from === fromActNode.id && edge.to === toActNode.id);
+        const predNode = isFromPredecessor ? fromActNode : toActNode;
+        const succNode = isFromPredecessor ? toActNode : fromActNode;
+
+        const predAct = actividades.find((a) => a.id === (predNode.refId || predNode.id));
+        const succAct = actividades.find((a) => a.id === (succNode.refId || succNode.id));
+        if (predAct && succAct && succAct.predecessorId !== predAct.id) {
+          try {
+            await updateDoc(doc(db, 'actividades', succAct.id), {
+              predecessorId: predAct.id,
+              predecessorTitle: predAct.title,
+              updatedAt: new Date().toISOString(),
+            });
+            updateActividad(succAct.id, { predecessorId: predAct.id, predecessorTitle: predAct.title });
+            syncedCount++;
+          } catch (e) {}
+        }
+      }
     }
 
     if (showNotification) {
@@ -916,35 +1041,79 @@ const EditorVisualPage = ({ standalone = false }) => {
   }, [nodes, edges, worldOffset, saveToFirestore, handleReconcileCanvasAssignments, toast]);
 
   /**
-   * Crea un nuevo proyecto visual / lienzo independiente
+   * Obtiene la(s) actividad(es) predecesora(s) directas de un nodo de actividad en el lienzo.
+   * Una actividad predecesora es cualquier actividad conectada que precede en el flujo (origen del cable,
+   * o situada antes en el diagrama).
    */
-  const handleCreateNewLienzo = async () => {
-    if (!newLienzoModal.name.trim()) {
-      toast.danger('Ingresa un nombre para el nuevo proyecto visual.');
-      return;
-    }
-    const newId = `lienzo_${Date.now()}`;
-    const newName = newLienzoModal.name.trim();
-    try {
-      await setDoc(doc(db, 'lienzos', newId), {
-        name: newName,
-        isStandalone: true,
-        nodes: [],
-        edges: [],
-        worldOffset: { x: 40, y: 30 },
-        authorId: user?.id || user?.uid || 'user',
-        authorName: user?.name || user?.email || 'Usuario',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+  const getActivityPredecessors = useCallback(
+    (actNodeOrId) => {
+      const actNode =
+        typeof actNodeOrId === 'string'
+          ? findNode(actNodeOrId) || nodes.find((n) => (n.refId || n.id) === actNodeOrId)
+          : actNodeOrId;
+      if (!actNode || actNode.type !== 'actividad') return [];
+
+      const connectedEdges = edges.filter((e) => e.to === actNode.id || e.from === actNode.id);
+      const predecessors = [];
+
+      for (const edge of connectedEdges) {
+        const otherNodeId = edge.to === actNode.id ? edge.from : edge.to;
+        const otherNode = findNode(otherNodeId);
+        if (!otherNode || otherNode.type !== 'actividad') continue;
+
+        // Determinar si otherNode es predecesor:
+        // 1. Si el cable se conectó de otherNode -> actNode
+        // 2. O si otherNode está a la izquierda en el lienzo
+        const isPredecessor =
+          (edge.from === otherNode.id && edge.to === actNode.id) ||
+          (otherNode.x < actNode.x - 10);
+
+        if (isPredecessor) {
+          const entity =
+            getLinkedEntity(otherNode) ||
+            actividades.find((a) => a.id === (otherNode.refId || otherNode.id));
+          if (entity && !predecessors.some((p) => (p.entity?.id || p.node.id) === (entity.id || otherNode.id))) {
+            predecessors.push({ node: otherNode, entity });
+          }
+        }
+      }
+      return predecessors;
+    },
+    [edges, nodes, findNode, getLinkedEntity, actividades]
+  );
+
+  /**
+   * Determina si una actividad está bloqueada por secuencia (porque alguna actividad previa no está culminada)
+   */
+  const getActivityBlockStatus = useCallback(
+    (actNodeOrId) => {
+      const predecessors = getActivityPredecessors(actNodeOrId);
+      if (!predecessors || predecessors.length === 0) {
+        return { isBlocked: false, blockers: [], predecessors: [] };
+      }
+
+      // Filtrar aquellas actividades predecesoras que NO estén completadas
+      const uncompletedBlockers = predecessors.filter((p) => {
+        const status = p.entity?.status;
+        return status !== 'completado' && status !== 'hecho' && status !== 'completada';
       });
-      setLienzoActivoId(newId);
-      setNewLienzoModal({ isOpen: false, name: '' });
-      toast.success(`🎨 Lienzo visual "${newName}" creado.`);
-    } catch (err) {
-      console.error('Error creando lienzo:', err);
-      toast.danger('No se pudo crear el lienzo.');
-    }
-  };
+
+      if (uncompletedBlockers.length > 0) {
+        const blockerNames = uncompletedBlockers
+          .map((b) => b.entity?.title || nodeTitle(b.node) || 'Actividad previa')
+          .join(', ');
+        return {
+          isBlocked: true,
+          blockers: uncompletedBlockers,
+          predecessors,
+          reason: `Espera que culmine la actividad previa: "${blockerNames}"`,
+        };
+      }
+
+      return { isBlocked: false, blockers: [], predecessors };
+    },
+    [getActivityPredecessors, nodeTitle]
+  );
 
   /** Áreas de un Juego real que están bloqueadas por secuencia (ej. Herrería esperando Corte Láser) */
   const getBlockedAreas = useCallback(
@@ -1014,10 +1183,9 @@ const EditorVisualPage = ({ standalone = false }) => {
   );
   // POSICIONES DE PUERTOS Y LÍNEAS
   // ============================================
-  const portPos = useCallback((node, side) => ({
-    x: node.x + (side === 'out' ? NODE_WIDTH : 0),
-    y: node.y + NODE_HEIGHT / 2,
-  }), []);
+  const portPos = useCallback((node, side) => {
+    return getNodePortCoords(node, side, nodeSizesRef.current);
+  }, []);
 
   const worldBounds = useMemo(() => {
     let maxX = WORKSPACE_WIDTH;
@@ -1030,8 +1198,58 @@ const EditorVisualPage = ({ standalone = false }) => {
   }, [nodes]);
 
   // ============================================
-  // ARRASTRAR NODOS
+  // SELECCIÓN MÚLTIPLE Y ARRASTRE DE NODOS EN GRUPO / CLUSTER
   // ============================================
+
+  /**
+   * Obtiene todos los nodos conectados en red o cadena al nodo indicado (Cluster / Subgrafo completo)
+   */
+  const getConnectedClusterNodeIds = useCallback(
+    (startNodeId) => {
+      if (!startNodeId) return new Set();
+      const cluster = new Set();
+      const queue = [startNodeId];
+      while (queue.length > 0) {
+        const currId = queue.shift();
+        if (cluster.has(currId)) continue;
+        cluster.add(currId);
+        const connectedEdges = edges.filter((e) => e.from === currId || e.to === currId);
+        for (const edge of connectedEdges) {
+          const neighborId = edge.from === currId ? edge.to : edge.from;
+          if (!cluster.has(neighborId)) {
+            queue.push(neighborId);
+          }
+        }
+      }
+      return cluster;
+    },
+    [edges]
+  );
+
+  const handleSelectConnectedCluster = useCallback(
+    (nodeId) => {
+      const targetId = nodeId || selectedNodeId;
+      if (!targetId) return;
+      const cluster = getConnectedClusterNodeIds(targetId);
+      setSelectedNodeIds(cluster);
+      toast.info(`📦 Grupo seleccionado: ${cluster.size} nodo(s) listos para mover en conjunto.`);
+    },
+    [selectedNodeId, getConnectedClusterNodeIds, toast]
+  );
+
+  const handleSelectAllNodes = useCallback(() => {
+    const allIds = new Set(nodes.map((n) => n.id));
+    setSelectedNodeIds(allIds);
+    if (nodes.length > 0) setSelectedNodeId(nodes[0].id);
+    toast.info(`📦 Todos los nodos seleccionados (${nodes.length}).`);
+  }, [nodes, toast]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedNodeIds(new Set());
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+  }, []);
+
   const handleNodeMouseDown = (e, nodeId) => {
     // Si se presiona el botón central o la tecla espacio, no arrastra el nodo, sino el lienzo
     if (e.button === 1 || isSpacePressedRef.current) return;
@@ -1043,32 +1261,66 @@ const EditorVisualPage = ({ standalone = false }) => {
     ) return;
     const node = findNode(nodeId);
     if (!node) return;
-    setSelectedNodeId(nodeId);
+
+    let activeSelected = new Set(selectedNodeIds);
+
+    // 1. Si sostiene Alt: Seleccionar toda la rama / cadena conectada de inmediato
+    if (e.altKey) {
+      activeSelected = getConnectedClusterNodeIds(nodeId);
+      setSelectedNodeIds(activeSelected);
+    }
+    // 2. Si sostiene Shift o Ctrl: Conmutar selección múltiple
+    else if (e.shiftKey || e.ctrlKey) {
+      if (activeSelected.has(nodeId)) {
+        activeSelected.delete(nodeId);
+      } else {
+        activeSelected.add(nodeId);
+      }
+      setSelectedNodeIds(new Set(activeSelected));
+    }
+    // 3. Clic normal:
+    else {
+      // Si el nodo clicado ya forma parte de una selección múltiple existente, conservamos el grupo para arrastrarlos juntos
+      if (!activeSelected.has(nodeId)) {
+        activeSelected = new Set([nodeId]);
+        setSelectedNodeIds(activeSelected);
+      }
+    }
+
     setSelectedEdgeId(null);
+
+    // Capturar posiciones iniciales de TODOS los nodos del grupo seleccionado para moverlos juntos
+    const nodesMap = {};
+    nodes.forEach((n) => {
+      if (activeSelected.has(n.id)) {
+        nodesMap[n.id] = { startX: n.x, startY: n.y };
+      }
+    });
+
     dragStateRef.current = {
-      id: nodeId,
+      leadId: nodeId,
+      nodesMap,
       startMouseX: e.clientX,
       startMouseY: e.clientY,
-      startNodeX: node.x,
-      startNodeY: node.y,
+      hasMoved: false,
+      isAlt: e.altKey,
+      isShiftOrCtrl: Boolean(e.shiftKey || e.ctrlKey),
     };
     e.preventDefault();
   };
 
-  /** Quita un nodo del lienzo (y sus cables) — ya decidido, sin más preguntas */
+  /** Quita un nodo del lienzo (y sus cables) — solo retira la representación visual del lienzo, conservando los datos en la actividad */
   const performDeleteNode = (nodeId) => {
-    const node = findNode(nodeId);
-    if (node?.type === 'recurso') {
-      const storagePath = node.draftFields?.fileData?.storagePath;
-      if (storagePath && storage) {
-        deleteObject(ref(storage, storagePath)).catch((e) => console.warn('Archivo de Storage ya no existe o falló borrado:', e));
-      }
-    }
     const nextNodes = nodes.filter((n) => n.id !== nodeId);
     const nextEdges = edges.filter((ed) => ed.from !== nodeId && ed.to !== nodeId);
     setNodes(nextNodes);
     setEdges(nextEdges);
     setSelectedNodeId((prev) => (prev === nodeId ? null : prev));
+    setSelectedNodeIds((prev) => {
+      const next = new Set(prev);
+      next.delete(nodeId);
+      return next;
+    });
     setSelectedEdgeId(null);
     saveToFirestore(nextNodes, nextEdges);
   };
@@ -1076,8 +1328,6 @@ const EditorVisualPage = ({ standalone = false }) => {
   const handleCloseNode = (nodeId) => {
     if (!canEditDiagram) return;
     const node = findNode(nodeId);
-    // Un Bloque con actividades reales adentro no se borra directo: hay que confirmar
-    // primero si también se eliminan esas actividades del sistema (ver handleConfirmDeleteBlockWithActivities).
     if (node?.type === 'bloque' && (node.activityIds || []).length > 0) {
       setDeleteBlockConfirm({ isOpen: true, nodeId });
       return;
@@ -1088,9 +1338,7 @@ const EditorVisualPage = ({ standalone = false }) => {
   const closeDeleteBlockConfirm = () => setDeleteBlockConfirm({ isOpen: false, nodeId: null });
 
   /**
-   * Confirma el borrado de un Bloque junto con TODAS sus actividades reales. Es todo o
-   * nada: si alguna actividad ya tiene avance (no está "pendiente") y no se puede borrar,
-   * se aborta por completo — el bloque tampoco se elimina.
+   * Confirma el borrado de un Bloque junto con TODAS sus actividades reales.
    */
   const handleConfirmDeleteBlockWithActivities = async () => {
     const node = findNode(deleteBlockConfirm.nodeId);
@@ -1128,7 +1376,9 @@ const EditorVisualPage = ({ standalone = false }) => {
     e.preventDefault();
     e.stopPropagation();
     connectStateRef.current = { fromId: nodeId, side };
-    setPreviewWire({ x1: 0, y1: 0, x2: 0, y2: 0 });
+    const fromNode = findNode(nodeId);
+    const startPoint = fromNode ? getNodePortCoords(fromNode, side, nodeSizesRef.current) : { x: 0, y: 0, dir: { x: 1, y: 0 } };
+    setPreviewWire({ x1: startPoint.x, y1: startPoint.y, x2: startPoint.x, y2: startPoint.y, dir1: startPoint.dir });
   };
 
   const localPoint = (e) => {
@@ -1140,8 +1390,7 @@ const EditorVisualPage = ({ standalone = false }) => {
   };
 
   // ============================================
-  // PANNING DEL LIENZO (ESTILO INVENTOR / SOLIDWORKS)
-  // Permite arrastre con botón central (rueda), botón derecho, clic izquierdo en fondo o Espacio
+  // PANNING DEL LIENZO Y SELECCIÓN MARQUEE
   // ============================================
   const handleCanvasMouseDown = (e) => {
     const isMiddle = e.button === 1;
@@ -1149,13 +1398,37 @@ const EditorVisualPage = ({ standalone = false }) => {
     const isBackgroundLeft = e.button === 0 && (
       e.target === canvasWrapRef.current ||
       e.target.dataset.canvasBg ||
-      e.target === worldRef.current ||
-      isSpacePressedRef.current
+      e.target === worldRef.current
     );
 
-    if (isMiddle || isRight || isBackgroundLeft) {
+    // 1. Marquee Selection Box con Shift + Clic Izquierdo en el fondo
+    if (e.button === 0 && (e.shiftKey || e.ctrlKey) && isBackgroundLeft) {
       e.preventDefault();
-      setSelectedEdgeId(null);
+      const pt = localPoint(e);
+      selectionBoxRef.current = {
+        startX: pt.x,
+        startY: pt.y,
+        currentX: pt.x,
+        currentY: pt.y,
+      };
+      setSelectionBox({
+        startX: pt.x,
+        startY: pt.y,
+        currentX: pt.x,
+        currentY: pt.y,
+      });
+      return;
+    }
+
+    // 2. Panning del lienzo
+    if (isMiddle || isRight || isBackgroundLeft || isSpacePressedRef.current) {
+      e.preventDefault();
+      // Si hizo clic izquierdo en fondo vacío sin Shift ni Ctrl, limpiar selección
+      if (e.button === 0 && !e.shiftKey && !e.ctrlKey) {
+        setSelectedNodeIds(new Set());
+        setSelectedNodeId(null);
+        setSelectedEdgeId(null);
+      }
       panStateRef.current = {
         startMouseX: e.clientX,
         startMouseY: e.clientY,
@@ -1173,32 +1446,80 @@ const EditorVisualPage = ({ standalone = false }) => {
       setCursorCoords({ x: curX, y: curY });
     }
 
-    if (dragStateRef.current) {
-      const { id, startMouseX, startMouseY, startNodeX, startNodeY } = dragStateRef.current;
+    // 1. Actualizar caja de selección Marquee
+    if (selectionBoxRef.current) {
+      const pt = localPoint(e);
+      const updated = {
+        ...selectionBoxRef.current,
+        currentX: pt.x,
+        currentY: pt.y,
+      };
+      selectionBoxRef.current = updated;
+      setSelectionBox(updated);
+
+      // Detectar qué nodos caen dentro del rectángulo
+      const minX = Math.min(updated.startX, updated.currentX);
+      const maxX = Math.max(updated.startX, updated.currentX);
+      const minY = Math.min(updated.startY, updated.currentY);
+      const maxY = Math.max(updated.startY, updated.currentY);
+
+      const boxedIds = new Set();
+      nodes.forEach((n) => {
+        const nodeW = nodeSizesRef.current[n.id]?.width || NODE_WIDTH;
+        const nodeH = nodeSizesRef.current[n.id]?.height || NODE_HEIGHT;
+        const intersects =
+          n.x + nodeW >= minX &&
+          n.x <= maxX &&
+          n.y + nodeH >= minY &&
+          n.y <= maxY;
+        if (intersects) {
+          boxedIds.add(n.id);
+        }
+      });
+      setSelectedNodeIds(boxedIds);
+      setSelectedNodeId(null);
+    }
+    // 2. Arrastre de grupo de nodos
+    else if (dragStateRef.current) {
+      const { nodesMap, startMouseX, startMouseY } = dragStateRef.current;
+      const distX = Math.abs(e.clientX - startMouseX);
+      const distY = Math.abs(e.clientY - startMouseY);
+      if (distX > 3 || distY > 3) {
+        dragStateRef.current.hasMoved = true;
+      }
       const dx = (e.clientX - startMouseX) / zoomRef.current;
       const dy = (e.clientY - startMouseY) / zoomRef.current;
-      const rawX = startNodeX + dx;
-      const rawY = startNodeY + dy;
-      const finalX = snapToGrid ? Math.round(rawX / GRID_SIZE) * GRID_SIZE : rawX;
-      const finalY = snapToGrid ? Math.round(rawY / GRID_SIZE) * GRID_SIZE : rawY;
+
       setNodes((prev) =>
-        prev.map((n) => (n.id === id ? {
-          ...n,
-          x: Math.max(0, Math.min(WORKSPACE_WIDTH - NODE_WIDTH, finalX)),
-          y: Math.max(0, Math.min(WORKSPACE_HEIGHT - NODE_HEIGHT, finalY)),
-        } : n))
+        prev.map((n) => {
+          const initial = nodesMap[n.id];
+          if (initial) {
+            const rawX = initial.startX + dx;
+            const rawY = initial.startY + dy;
+            const finalX = snapToGrid ? Math.round(rawX / GRID_SIZE) * GRID_SIZE : rawX;
+            const finalY = snapToGrid ? Math.round(rawY / GRID_SIZE) * GRID_SIZE : rawY;
+            return {
+              ...n,
+              x: Math.max(0, Math.min(WORKSPACE_WIDTH - NODE_WIDTH, finalX)),
+              y: Math.max(0, Math.min(WORKSPACE_HEIGHT - NODE_HEIGHT, finalY)),
+            };
+          }
+          return n;
+        })
       );
     } else if (connectStateRef.current) {
       const { fromId, side } = connectStateRef.current;
       const fromNode = findNode(fromId);
       if (!fromNode) return;
-      const start = portPos(fromNode, side === 'out' ? 'out' : 'in');
+      const start = getNodePortCoords(fromNode, side, nodeSizesRef.current);
       const end = localPoint(e);
-      setPreviewWire(
-        side === 'out'
-          ? { x1: start.x, y1: start.y, x2: end.x, y2: end.y }
-          : { x1: end.x, y1: end.y, x2: start.x, y2: start.y }
-      );
+      setPreviewWire({
+        x1: start.x,
+        y1: start.y,
+        x2: end.x,
+        y2: end.y,
+        dir1: start.dir,
+      });
     } else if (panStateRef.current) {
       const { startMouseX, startMouseY, startOffset } = panStateRef.current;
       setWorldOffset({
@@ -1209,17 +1530,37 @@ const EditorVisualPage = ({ standalone = false }) => {
   };
 
   const handleWindowMouseUp = (e) => {
-    let dragNodeId = null;
+    if (selectionBoxRef.current) {
+      selectionBoxRef.current = null;
+      setSelectionBox(null);
+    }
+
+    let hasDraggedNodes = false;
+    let clickOnlyNodeId = null;
+
     if (dragStateRef.current) {
-      dragNodeId = dragStateRef.current.id;
+      const { leadId, hasMoved, isAlt, isShiftOrCtrl } = dragStateRef.current;
+      if (hasMoved) {
+        hasDraggedNodes = true;
+      } else {
+        // Fue un clic estacionario sin arrastrar
+        if (!isShiftOrCtrl && !isAlt) {
+          clickOnlyNodeId = leadId;
+        }
+      }
       dragStateRef.current = null;
     }
 
-    if (dragNodeId) {
+    if (hasDraggedNodes) {
       setNodes((latestNodes) => {
         saveToFirestore(latestNodes, edges);
         return latestNodes;
       });
+      // El menú del inspector permanece cerrado durante y después de mover nodos
+      setSelectedNodeId(null);
+    } else if (clickOnlyNodeId) {
+      // Solo abrir el inspector si el usuario hizo un clic simple sin arrastrar
+      setSelectedNodeId(clickOnlyNodeId);
     }
 
     if (connectStateRef.current) {
@@ -1228,13 +1569,19 @@ const EditorVisualPage = ({ standalone = false }) => {
         const targetId = portEl.dataset.nodeId;
         const targetSide = portEl.dataset.side;
         const { fromId, side } = connectStateRef.current;
-        if (targetId !== fromId && targetSide !== side) {
-          const from = side === 'out' ? fromId : targetId;
-          const to = side === 'out' ? targetId : fromId;
+        if (targetId !== fromId) {
+          const from = fromId;
+          const to = targetId;
+          const fromPort = side;
+          const toPort = targetSide;
 
-          const alreadyExists = edges.some((ed) => (ed.from === from && ed.to === to) || (ed.from === to && ed.to === from));
+          const alreadyExists = edges.some(
+            (ed) =>
+              (ed.from === from && ed.to === to && ed.fromPort === fromPort && ed.toPort === toPort) ||
+              (ed.from === to && ed.to === from && ed.fromPort === toPort && ed.toPort === fromPort)
+          );
           if (!alreadyExists) {
-            const newEdge = { id: nextEdgeId(), from, to };
+            const newEdge = { id: nextEdgeId(), from, to, fromPort, toPort };
             const nextEdges = [...edges, newEdge];
             setEdges(nextEdges);
             saveToFirestore(nodes, nextEdges);
@@ -1249,6 +1596,7 @@ const EditorVisualPage = ({ standalone = false }) => {
               const actNode = fromNode.type === 'actividad' ? fromNode : toNode.type === 'actividad' ? toNode : null;
               const areaNode = fromNode.type === 'area' ? fromNode : toNode.type === 'area' ? toNode : null;
               const blockNode = fromNode.type === 'bloque' ? fromNode : toNode.type === 'bloque' ? toNode : null;
+              const recursoNode = fromNode.type === 'recurso' ? fromNode : toNode.type === 'recurso' ? toNode : null;
 
               // 1. Proyecto ↔ Juego: Vincular el juego al proyecto inmediatamente
               if (projNode && gameNode) {
@@ -1673,6 +2021,229 @@ const EditorVisualPage = ({ standalone = false }) => {
   };
 
   // ============================================
+  // GESTIÓN Y ENFOQUE MULTI-PROYECTO EN LIENZO
+  // ============================================
+
+  /**
+   * Obtiene todos los nodos presentes en el lienzo que corresponden a un proyecto específico:
+   * - Nodo principal del proyecto
+   * - Nodos de modelos / juegos del proyecto o conectados al proyecto
+   * - Nodos de actividades del proyecto o conectadas a sus juegos/proyecto
+   * - Nodos de bloques del proyecto
+   * - Nodos de recursos/ayudas visuales conectados a cualquiera de los anteriores
+   */
+  const getProjectClusterNodes = useCallback(
+    (projectId) => {
+      if (!projectId) return [];
+      const projectNode = nodes.find(
+        (n) => n.type === 'proyecto' && (n.refId === projectId || n.id === projectId)
+      );
+
+      const clusterNodeIds = new Set();
+      if (projectNode) {
+        clusterNodeIds.add(projectNode.id);
+      }
+
+      // 1. Juegos pertenecientes al proyecto (por campo directo o cable)
+      nodes.forEach((n) => {
+        if (n.type === 'juego') {
+          const jEntity = getLinkedEntity(n);
+          if (
+            jEntity?.projectId === projectId ||
+            n.draftFields?.projectId === projectId ||
+            (projectNode && edges.some((e) => (e.from === n.id && e.to === projectNode.id) || (e.to === n.id && e.from === projectNode.id)))
+          ) {
+            clusterNodeIds.add(n.id);
+          }
+        }
+      });
+
+      // 2. Actividades pertenecientes al proyecto o conectadas a sus juegos/proyecto
+      nodes.forEach((n) => {
+        if (n.type === 'actividad') {
+          const aEntity = getLinkedEntity(n);
+          if (
+            aEntity?.projectId === projectId ||
+            (projectNode && edges.some((e) => (e.from === n.id && e.to === projectNode.id) || (e.to === n.id && e.from === projectNode.id))) ||
+            edges.some((e) => {
+              const otherId = e.from === n.id ? e.to : e.from;
+              return clusterNodeIds.has(otherId);
+            })
+          ) {
+            clusterNodeIds.add(n.id);
+          }
+        }
+      });
+
+      // 3. Bloques pertenecientes al proyecto
+      nodes.forEach((n) => {
+        if (n.type === 'bloque') {
+          if (
+            n.projectId === projectId ||
+            (projectNode && edges.some((e) => (e.from === n.id && e.to === projectNode.id) || (e.to === n.id && e.from === projectNode.id)))
+          ) {
+            clusterNodeIds.add(n.id);
+          }
+        }
+      });
+
+      // 4. Recursos / Ayudas visuales conectadas a cualquiera de los nodos del cluster
+      nodes.forEach((n) => {
+        if (n.type === 'recurso') {
+          if (
+            edges.some((e) => {
+              const otherId = e.from === n.id ? e.to : e.from;
+              return clusterNodeIds.has(otherId);
+            })
+          ) {
+            clusterNodeIds.add(n.id);
+          }
+        }
+      });
+
+      return nodes.filter((n) => clusterNodeIds.has(n.id));
+    },
+    [nodes, edges, getLinkedEntity]
+  );
+
+  // Conteo y estadística de nodos por proyecto para el filtro/selector en el lienzo actual
+  const projectNodesStats = useMemo(() => {
+    const stats = {};
+    (proyectos || []).forEach((p) => {
+      const cluster = getProjectClusterNodes(p.id);
+      stats[p.id] = {
+        count: cluster.length,
+        hasProjectNode: cluster.some((n) => n.type === 'proyecto'),
+        nodes: cluster,
+      };
+    });
+    return stats;
+  }, [proyectos, getProjectClusterNodes]);
+
+  // Set de IDs de los nodos del proyecto actualmente enfocado para aislamiento visual
+  const activeProjectClusterNodeIds = useMemo(() => {
+    if (!focusedProjectId) return new Set();
+    const cluster = getProjectClusterNodes(focusedProjectId);
+    return new Set(cluster.map((n) => n.id));
+  }, [focusedProjectId, getProjectClusterNodes]);
+
+  /**
+   * Redirige y centra la cámara (Smart Pan & Fit Zoom) en la zona donde se encuentra el conjunto de nodos del proyecto
+   */
+  const handleFocusProjectCluster = useCallback(
+    (projectId) => {
+      if (!projectId) {
+        setFocusedProjectId('');
+        return;
+      }
+      setFocusedProjectId(projectId);
+      const targetProj = proyectos.find((p) => p.id === projectId);
+      const cluster = getProjectClusterNodes(projectId);
+
+      if (cluster.length === 0) {
+        toast.info(`ℹ️ El proyecto "${targetProj?.name || 'Seleccionado'}" aún no tiene nodos en este lienzo.`);
+        return;
+      }
+
+      const rect = canvasWrapRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      cluster.forEach((n) => {
+        const measured = nodeSizesRef.current[n.id];
+        const w = measured?.w || NODE_WIDTH;
+        const h = measured?.h || (n.type === 'bloque' && expandedBlocks.has(n.id) ? 320 : NODE_HEIGHT);
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + w);
+        maxY = Math.max(maxY, n.y + h);
+      });
+
+      const clusterWidth = Math.max(140, maxX - minX);
+      const clusterHeight = Math.max(140, maxY - minY);
+      const padding = 130;
+
+      const availableWidth = Math.max(100, rect.width - padding * 2);
+      const availableHeight = Math.max(100, rect.height - padding * 2);
+
+      const fitZoom = clampZoom(Math.min(availableWidth / clusterWidth, availableHeight / clusterHeight, 1.0));
+      const centerX = minX + clusterWidth / 2;
+      const centerY = minY + clusterHeight / 2;
+
+      const targetOffset = {
+        x: Math.round(rect.width / 2 - centerX * fitZoom),
+        y: Math.round(rect.height / 2 - centerY * fitZoom),
+      };
+
+      // Activar animación suave de cámara
+      setIsCameraAnimating(true);
+      setZoom(fitZoom);
+      setWorldOffset(targetOffset);
+
+      // Seleccionar nodo principal del proyecto si existe
+      const mainProjNode = cluster.find((n) => n.type === 'proyecto');
+      if (mainProjNode) {
+        setSelectedNodeId(mainProjNode.id);
+      }
+
+      toast.success(`📍 Enfocado en "${targetProj?.name || 'Proyecto'}" · (${cluster.length} ${cluster.length === 1 ? 'nodo' : 'nodos'} en esta zona).`);
+
+      setTimeout(() => {
+        setIsCameraAnimating(false);
+      }, 460);
+    },
+    [proyectos, getProjectClusterNodes, expandedBlocks]
+  );
+
+  /**
+   * Coloca el nodo de un proyecto directamente en el centro visible del lienzo
+   */
+  const handleSpawnProjectInCenter = useCallback(
+    (projectId) => {
+      if (!canEditDiagram || !projectId) return;
+      const targetProj = proyectos.find((p) => p.id === projectId);
+      if (!targetProj) return;
+
+      const rect = canvasWrapRef.current?.getBoundingClientRect();
+      let spawnX = 200;
+      let spawnY = 200;
+      if (rect) {
+        const viewCenterX = rect.width / 2;
+        const viewCenterY = rect.height / 2;
+        const curZoom = zoomRef.current || 1;
+        const curOffset = worldOffsetRef.current || { x: 0, y: 0 };
+        spawnX = Math.round((viewCenterX - curOffset.x) / curZoom - NODE_WIDTH / 2);
+        spawnY = Math.round((viewCenterY - curOffset.y) / curZoom - NODE_HEIGHT / 2);
+      }
+
+      spawnX = Math.max(20, Math.min(WORKSPACE_WIDTH - NODE_WIDTH - 20, snapToGrid ? Math.round(spawnX / GRID_SIZE) * GRID_SIZE : spawnX));
+      spawnY = Math.max(20, Math.min(WORKSPACE_HEIGHT - NODE_HEIGHT - 20, snapToGrid ? Math.round(spawnY / GRID_SIZE) * GRID_SIZE : spawnY));
+
+      const newNode = {
+        id: nextNodeId(),
+        type: 'proyecto',
+        refId: projectId,
+        draft: false,
+        draftFields: {},
+        x: spawnX,
+        y: spawnY,
+      };
+
+      const nextNodes = [...nodes, newNode];
+      setNodes(nextNodes);
+      saveToFirestore(nextNodes, edges);
+      setSelectedNodeId(newNode.id);
+      setFocusedProjectId(projectId);
+      toast.success(`🗂️ Nodo del Proyecto "${targetProj.name}" colocado en el centro del lienzo.`);
+    },
+    [canEditDiagram, proyectos, nodes, edges, snapToGrid, saveToFirestore]
+  );
+
+  // ============================================
   // EXPORTAR EL DIAGRAMA COMO IMAGEN
   // ============================================
   const handleExportDiagram = async () => {
@@ -1702,10 +2273,8 @@ const EditorVisualPage = ({ standalone = false }) => {
         height: worldBounds.height,
       });
 
-      const canvasName =
-        lienzosList.find((l) => l.id === lienzoActivoId)?.name ||
-        proyectos.find((p) => p.id === lienzoActivoId)?.name ||
-        (lienzoActivoId === 'general' ? 'general' : 'diagrama');
+      const targetProj = proyectos.find((p) => p.id === focusedProjectId);
+      const canvasName = targetProj?.name ? `lienzo-${targetProj.name}` : 'lienzo-general';
       const fileSafeName = canvasName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
       const link = document.createElement('a');
       link.download = `dicrejart-editor-visual-${fileSafeName || 'diagrama'}-${new Date().toISOString().split('T')[0]}.png`;
@@ -1767,6 +2336,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     setNodes(nextNodes);
     setSelectedNodeId(created.id);
     saveToFirestore(nextNodes, edges);
+    return created;
   };
 
   const EMPTY_NODE_MODAL = {
@@ -1779,6 +2349,8 @@ const EditorVisualPage = ({ standalone = false }) => {
     newProjName: '',
     newProjClient: '',
     newProjDesc: '',
+    newProjItems: '',
+    newProjAreas: ['arquitectura', 'diseno', 'herreria', 'corte-laser'],
     newProjStartDate: getTodayLocalDateStr(),
     newProjEndDate: getTodayLocalDateStr(),
     newProjStatus: 'diseno',
@@ -1793,8 +2365,12 @@ const EditorVisualPage = ({ standalone = false }) => {
     newActTitle: '',
     newActDesc: '',
     newActAreaId: 'herreria',
+    newActOperarioId: '',
     newActPriority: 'media',
     newActDueDate: '',
+    newActUrl: '',
+    newActPendingFile: null,
+    newActFileData: null,
 
     // Recurso / Ayuda Visual
     newRecursoTitle: 'Plano / Ayuda Visual',
@@ -1809,15 +2385,21 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const openNodeModal = (type) => {
     if (!canEditDiagram) return;
-    const defaultTab = (type === 'colaborador' || type === 'area') ? 'existing' : (type === 'recurso' ? 'new' : 'existing');
+    const defaultTab = (type === 'colaborador' || type === 'area') ? 'existing' : 'new';
     setNodeModal({
       ...EMPTY_NODE_MODAL,
       isOpen: true,
       type,
       tab: defaultTab,
+      newProjAreas: ['arquitectura', 'diseno', 'herreria', 'corte-laser'],
+      newProjItems: '',
       newGameAreas: ['herreria', 'corte-laser'],
       newGameTargets: { herreria: 10, 'corte-laser': 10 },
       newActAreaId: dynamicAreas[0]?.id || 'herreria',
+      newActOperarioId: '',
+      newActUrl: '',
+      newActPendingFile: null,
+      newActFileData: null,
     });
   };
 
@@ -1840,6 +2422,8 @@ const EditorVisualPage = ({ standalone = false }) => {
       name: nodeModal.newProjName.trim(),
       client: nodeModal.newProjClient.trim(),
       description: nodeModal.newProjDesc.trim() || 'Sin descripción',
+      itemsToManufacture: nodeModal.newProjItems?.trim() || '',
+      areas: nodeModal.newProjAreas || [],
       startDate: nodeModal.newProjStartDate || today,
       endDate: nodeModal.newProjEndDate || today,
       status: nodeModal.newProjStatus || 'diseno',
@@ -1885,17 +2469,244 @@ const EditorVisualPage = ({ standalone = false }) => {
       toast.danger('El título de la actividad es obligatorio.');
       return;
     }
+    const title = nodeModal.newActTitle.trim();
+    const areaId = nodeModal.newActAreaId || (dynamicAreas[0]?.id || 'herreria');
+    const operarioId = nodeModal.newActOperarioId || null;
+    const url = nodeModal.newActUrl.trim();
+    const pendingFile = nodeModal.newActPendingFile;
+    const links = url ? [url] : [];
+
+    closeNodeModal();
+
+    let uploadedFile = null;
+    if (pendingFile) {
+      toast.info(`⏳ Subiendo archivo adjunto "${pendingFile.name}" a la nube...`);
+      try {
+        uploadedFile = await uploadResourceFile(pendingFile, lienzoActivoId);
+      } catch (err) {
+        console.error('Error al subir archivo de actividad:', err);
+      }
+    }
+
+    const attachments = uploadedFile ? [uploadedFile] : [];
+
     const newId = await addActividad({
-      title: nodeModal.newActTitle.trim(),
+      title,
       description: nodeModal.newActDesc.trim() || 'Sin descripción.',
-      areaId: nodeModal.newActAreaId || (dynamicAreas[0]?.id || 'herreria'),
+      areaId,
+      operarioId,
       priority: nodeModal.newActPriority || 'media',
       dueDate: nodeModal.newActDueDate || null,
+      links,
+      attachments,
     });
+
     if (newId) {
-      spawnNode('actividad', { draft: false, refId: newId, draftFields: {} });
-      closeNodeModal();
-      toast.success(`📌 Actividad "${nodeModal.newActTitle.trim()}" creada y agregada.`);
+      const actNode = spawnNode('actividad', { draft: false, refId: newId, draftFields: {} });
+      toast.success(`📌 Actividad "${title}" creada y agregada.`);
+
+      // Si se adjuntó una imagen, crear también el nodo de imagen flotante conectado a la actividad
+      if (pendingFile && (pendingFile.type?.startsWith('image/') || uploadedFile?.url || uploadedFile?.dataUrl)) {
+        const imgNodeId = nextNodeId();
+        const imgInitialData = uploadedFile || {
+          name: pendingFile.name,
+          size: pendingFile.size,
+          type: pendingFile.type,
+          dataUrl: URL.createObjectURL(pendingFile),
+        };
+
+        const imgX = (actNode?.x || 200) + NODE_WIDTH + 60;
+        const imgY = actNode?.y || 200;
+
+        const imgNode = {
+          id: imgNodeId,
+          type: 'recurso',
+          x: imgX,
+          y: imgY,
+          draft: false,
+          draftFields: {
+            title: `Visual: ${title}`,
+            url: url || uploadedFile?.url || '',
+            fileData: imgInitialData,
+            notes: '',
+          },
+        };
+
+        const wireEdge = {
+          id: `e-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          from: actNode.id,
+          to: imgNodeId,
+          style: 'dashed',
+          customColor: '#06b6d4',
+        };
+
+        setNodes((prev) => {
+          const next = [...prev, imgNode];
+          setEdges((prevE) => {
+            const nextE = [...prevE, wireEdge];
+            saveToFirestore(next, nextE);
+            return nextE;
+          });
+          return next;
+        });
+      } else if (url) {
+        // Si se especificó un enlace (Drive, Figma, Autodesk, web URL), generar nodo de enlace flotante
+        const linkNodeId = nextNodeId();
+        const linkX = (actNode?.x || 200) + NODE_WIDTH + 60;
+        const linkY = actNode?.y || 200;
+
+        let linkTitle = `Enlace: ${title}`;
+        if (url.includes('drive.google.com')) linkTitle = `Drive: ${title}`;
+        else if (url.includes('figma.com')) linkTitle = `Figma: ${title}`;
+        else if (url.includes('autodesk.com')) linkTitle = `Autodesk 3D: ${title}`;
+
+        const linkNode = {
+          id: linkNodeId,
+          type: 'recurso',
+          x: linkX,
+          y: linkY,
+          draft: false,
+          draftFields: {
+            title: linkTitle,
+            url: url,
+            fileData: null,
+            notes: '',
+          },
+        };
+
+        const wireEdge = {
+          id: `e-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          from: actNode.id,
+          to: linkNodeId,
+          style: 'dashed',
+          customColor: '#38bdf8',
+        };
+
+        setNodes((prev) => {
+          const next = [...prev, linkNode];
+          setEdges((prevE) => {
+            const nextE = [...prevE, wireEdge];
+            saveToFirestore(next, nextE);
+            return nextE;
+          });
+          return next;
+        });
+      }
+    }
+  };
+
+  const handleDeployAllActivityResources = (actNode, actEntity) => {
+    if (!actNode || !actEntity) return;
+    const actX = actNode.x || 200;
+    const actY = actNode.y || 200;
+
+    let nextNodesList = [...nodes];
+    let nextEdgesList = [...edges];
+    let createdCount = 0;
+
+    // 1. Enlaces web, Drive, Figma, Autodesk
+    const links = actEntity.links || [];
+    links.forEach((linkUrl) => {
+      const alreadyExists = nextNodesList.some((n) => {
+        if (n.type !== 'recurso') return false;
+        const nUrl = n.draftFields?.url;
+        const matchesUrl = Boolean(nUrl && nUrl === linkUrl);
+        const isConnected = nextEdgesList.some((e) => (e.from === actNode.id && e.to === n.id) || (e.to === actNode.id && e.from === n.id));
+        return matchesUrl && isConnected;
+      });
+
+      if (!alreadyExists) {
+        const linkId = nextNodeId();
+        let linkTitle = `Enlace: ${actEntity.title}`;
+        if (linkUrl.includes('drive.google.com')) linkTitle = `Drive: ${actEntity.title}`;
+        else if (linkUrl.includes('figma.com')) linkTitle = `Figma: ${actEntity.title}`;
+        else if (linkUrl.includes('autodesk.com') || linkUrl.includes('viewer.autodesk')) linkTitle = `Autodesk: ${actEntity.title}`;
+
+        const linkNode = {
+          id: linkId,
+          type: 'recurso',
+          x: actX + NODE_WIDTH + 60,
+          y: actY + 70 + (createdCount * 90),
+          draft: false,
+          draftFields: {
+            title: linkTitle,
+            url: linkUrl,
+            fileData: null,
+            notes: '',
+          },
+        };
+
+        const wireEdge = {
+          id: `e-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          from: actNode.id,
+          to: linkId,
+          fromPort: 'out',
+          toPort: 'in',
+          style: 'dashed',
+          customColor: '#38bdf8',
+        };
+
+        nextNodesList.push(linkNode);
+        nextEdgesList.push(wireEdge);
+        createdCount++;
+      }
+    });
+
+    // 2. Archivos e imágenes adjuntas
+    const attachments = actEntity.attachments || (actEntity.fileData ? [actEntity.fileData] : []);
+    attachments.forEach((att) => {
+      const isImg = att.type?.startsWith('image/') || att.url?.match(/\.(jpeg|jpg|png|webp|gif)($|\?)/i) || att.dataUrl?.startsWith('data:image');
+      if (!isImg) return;
+
+      const alreadyExists = nextNodesList.some((n) => {
+        if (n.type !== 'recurso') return false;
+        const nUrl = n.draftFields?.url || n.draftFields?.fileData?.url || n.draftFields?.fileData?.dataUrl;
+        const attUrl = att.url || att.dataUrl;
+        const matchesUrl = Boolean(nUrl && attUrl && nUrl === attUrl);
+        const matchesName = Boolean(n.draftFields?.fileData?.name && att.name && n.draftFields.fileData.name === att.name);
+        const isConnected = nextEdgesList.some((e) => (e.from === actNode.id && e.to === n.id) || (e.to === actNode.id && e.from === n.id));
+        return (matchesUrl || matchesName) && isConnected;
+      });
+
+      if (!alreadyExists) {
+        const imgId = nextNodeId();
+        const imgNode = {
+          id: imgId,
+          type: 'recurso',
+          x: actX + NODE_WIDTH + 60,
+          y: actY + (createdCount * 110),
+          draft: false,
+          draftFields: {
+            title: `Visual: ${actEntity.title}`,
+            url: att.url || att.dataUrl || '',
+            fileData: att,
+            notes: '',
+          },
+        };
+
+        const wireEdge = {
+          id: `e-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          from: actNode.id,
+          to: imgId,
+          fromPort: 'out',
+          toPort: 'in',
+          style: 'dashed',
+          customColor: '#06b6d4',
+        };
+
+        nextNodesList.push(imgNode);
+        nextEdgesList.push(wireEdge);
+        createdCount++;
+      }
+    });
+
+    if (createdCount > 0) {
+      setNodes(nextNodesList);
+      setEdges(nextEdgesList);
+      saveToFirestore(nextNodesList, nextEdgesList);
+      toast.success(`📍 ${createdCount} recurso(s) colocados en el lienzo.`);
+    } else {
+      toast.info('Todos los recursos de esta actividad ya están visibles en el lienzo.');
     }
   };
 
@@ -2006,6 +2817,14 @@ const EditorVisualPage = ({ standalone = false }) => {
         toast.warning('🔒 Solo el colaborador asignado o el supervisor de esta área pueden iniciar esta actividad.');
         return;
       }
+
+      // Validación de secuencia estricta: ninguna actividad puede iniciar si su previa no ha culminado
+      const blockStatus = getActivityBlockStatus(activityId);
+      if (blockStatus.isBlocked) {
+        toast.warning(`🔒 No se puede iniciar: ${blockStatus.reason}`);
+        return;
+      }
+
       try {
         await updateDoc(doc(db, 'actividades', activityId), {
           status: 'proceso',
@@ -2018,7 +2837,7 @@ const EditorVisualPage = ({ standalone = false }) => {
         toast.danger('Error al iniciar la actividad en el servidor.');
       }
     },
-    [actividades, canUserControlActivity, toast]
+    [actividades, canUserControlActivity, getActivityBlockStatus, toast]
   );
 
   /**
@@ -2210,9 +3029,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     const assignedProjectId =
       blockNode.projectId ||
       connectedProjNode?.refId ||
-      (lienzoActivoId !== 'general' && !lienzosList.some((l) => l.id === lienzoActivoId && l.isStandalone)
-        ? lienzoActivoId
-        : null);
+      null;
     const assignedProject = proyectos.find((p) => p.id === assignedProjectId);
     const assignedProjectName = assignedProject?.name || (connectedProjNode ? nodeTitle(connectedProjNode) : null);
 
@@ -2374,7 +3191,13 @@ const EditorVisualPage = ({ standalone = false }) => {
   // GUARDAR BORRADORES EN EL SISTEMA (acciones reales)
   // ============================================
   const handleSaveProyecto = async (node) => {
-    const newId = await addProject({ name: node.draftFields.name, client: node.draftFields.client, status: node.draftFields.status });
+    const newId = await addProject({
+      name: node.draftFields.name,
+      client: node.draftFields.client,
+      status: node.draftFields.status || 'diseno',
+      itemsToManufacture: node.draftFields.itemsToManufacture || '',
+      areas: node.draftFields.areas || ['arquitectura', 'diseno', 'herreria', 'corte-laser'],
+    });
     if (!newId) {
       toast.danger('❌ No se pudo guardar el Proyecto. Intenta de nuevo.');
       return;
@@ -2504,154 +3327,186 @@ const EditorVisualPage = ({ standalone = false }) => {
         shape="arco-doble"
         accentColor="var(--color-secondary)"
       >
-        {!standalone && (
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', verticalAlign: 'middle', marginRight: '8px' }}>
-            <select
-              value={lienzoActivoId}
-              onChange={(e) => setLienzoActivoId(e.target.value)}
-              style={{
-                padding: '8px 12px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-gray-300)',
-                backgroundColor: 'var(--input-bg, var(--color-white))',
-                color: 'var(--color-dark)',
-                minWidth: '220px',
-                cursor: 'pointer',
-              }}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+          {canEditDiagram && nodes.length > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleAutoArrange}
+              title="Reorganizar nodos ordenadamente en cuadrícula"
             >
-              <optgroup label="🎨 Lienzos Libres y Bocetos" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
-                <option value="general">🎨 Lienzo General (Boceto Libre)</option>
-                {lienzosList
-                  .filter((l) => l.id !== 'general' && !proyectos.some((p) => p.id === l.id))
-                  .map((l) => (
-                    <option key={l.id} value={l.id}>{l.name || 'Lienzo Visual'}</option>
-                  ))}
-              </optgroup>
-              {proyectos.filter((p) => p.status !== 'completado').length > 0 && (
-                <optgroup label="⚡ Proyectos Activos" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
-                  {proyectos
-                    .filter((p) => p.status !== 'completado')
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                </optgroup>
-              )}
-              {proyectos.filter((p) => p.status === 'completado').length > 0 && (
-                <optgroup label="📁 Historial (Finalizados)" style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
-                  {proyectos
-                    .filter((p) => p.status === 'completado')
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} (Completado)</option>
-                    ))}
-                </optgroup>
-              )}
+              🧹 Reorganizar
+            </Button>
+          )}
+
+          {nodes.length > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportDiagram}
+              isLoading={isExporting}
+              title="Descargar diagrama en imagen PNG"
+            >
+              📥 Exportar PNG
+            </Button>
+          )}
+
+          {!standalone && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleOpenStandalone}
+              title="Abrir editor en ventana completa aparte"
+            >
+              🗔 Ventana Aparte
+            </Button>
+          )}
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setHowtoOpen(true)}
+            title="Guía rápida de uso"
+          >
+            ❓ ¿Cómo funciona?
+          </Button>
+
+          {standalone && (
+            <Button variant="secondary" size="sm" onClick={() => window.close()}>
+              ✕ Cerrar Ventana
+            </Button>
+          )}
+        </div>
+      </PageHeader>
+
+      {/* ---------- BARRA DE CONTROL PRINCIPAL DEL LIENZO MASTER ---------- */}
+      {!standalone && (
+        <div className={styles.canvasControlBar}>
+          {/* ---------- 🎯 FILTRO Y LOCALIZADOR DE PROYECTOS EN EL LIENZO ---------- */}
+          <div className={styles.canvasControlGroup}>
+            <span className={styles.canvasControlLabel} style={{ color: 'var(--color-secondary, #2563eb)', fontWeight: 800 }}>
+              🎯 Localizar Proyecto:
+            </span>
+            <select
+              value={focusedProjectId}
+              onChange={(e) => handleFocusProjectCluster(e.target.value)}
+              className={styles.projectSelect}
+              title="Filtrar y redirigir la vista hacia la zona de nodos del proyecto seleccionado"
+            >
+              <option value="">-- Todos los Proyectos en Lienzo --</option>
+              {(() => {
+                const presentProjs = proyectos.filter((p) => (projectNodesStats[p.id]?.count || 0) > 0);
+                const absentProjs = proyectos.filter((p) => (projectNodesStats[p.id]?.count || 0) === 0);
+
+                return (
+                  <>
+                    {presentProjs.length > 0 && (
+                      <optgroup label={`🟢 En este Lienzo (${presentProjs.length})`} style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
+                        {presentProjs.map((p) => {
+                          const count = projectNodesStats[p.id]?.count || 0;
+                          return (
+                            <option key={`pres-${p.id}`} value={p.id}>
+                              📍 {p.name} · ({count} {count === 1 ? 'nodo' : 'nodos'})
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                    )}
+                    {absentProjs.length > 0 && (
+                      <optgroup label={`⚪ Otros del Sistema (${absentProjs.length})`} style={{ backgroundColor: 'var(--dropdown-bg)', color: 'var(--color-dark)' }}>
+                        {absentProjs.map((p) => (
+                          <option key={`abs-${p.id}`} value={p.id}>
+                            ➕ {p.name} (Sin nodos en el lienzo)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </>
+                );
+              })()}
             </select>
 
-            {canEditDiagram && (
+            {focusedProjectId && (
               <>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => setNewLienzoModal({ isOpen: true, name: '' })}
-                  title="Crear un nuevo lienzo visual independiente"
-                >
-                  ➕ Nuevo Lienzo
-                </Button>
-
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleManualSaveCanvas}
-                  title="Guardar manualmente todos los cambios en Firestore y en tu almacenamiento local"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                  }}
-                >
-                  {saveStatus === 'saving' ? '⏳ Guardando...' : '💾 Guardar Lienzo'}
-                </Button>
-
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleReconcileCanvasAssignments(true)}
-                  title="Revisar todas las conexiones del diagrama y asignar automáticamente a los colaboradores, proyectos y áreas en la base de datos"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                  }}
-                >
-                  🔄 Sincronizar Asignaciones
-                </Button>
-
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setManageLienzosModal(true)}
-                  title="Ver lista de todos los lienzos y eliminar los que ya no necesites"
-                >
-                  📂 Gestionar Lienzos
-                </Button>
-
-                {isCurrentLienzoDeletable && (
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => setDeleteLienzoConfirm(true)}
-                    title="Eliminar este lienzo visual independiente"
-                  >
-                    🗑️ Eliminar Lienzo
-                  </Button>
+                {(projectNodesStats[focusedProjectId]?.count || 0) > 0 ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleFocusProjectCluster(focusedProjectId)}
+                      title="Recentrar y encuadrar los nodos de este proyecto en pantalla"
+                    >
+                      🎯 Enfocar Zona
+                    </Button>
+                    <button
+                      type="button"
+                      className={`${styles.snapToggleBtn} ${isIsolateProjectMode ? styles.active : ''}`}
+                      onClick={() => setIsIsolateProjectMode((prev) => !prev)}
+                      title={isIsolateProjectMode ? 'Mostrando solo este proyecto (Aislamiento activo)' : 'Aislar visualmente y atenuar otros proyectos'}
+                      style={{ height: '32px' }}
+                    >
+                      {isIsolateProjectMode ? '👁️ Foco Activo' : '👁️ Aislar'}
+                    </button>
+                  </>
+                ) : (
+                  canEditDiagram && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => handleSpawnProjectInCenter(focusedProjectId)}
+                      title="Colocar el nodo de este proyecto en el centro del lienzo"
+                    >
+                      ➕ Colocar en Lienzo
+                    </Button>
+                  )
                 )}
-
-                <span
-                  style={{
-                    fontSize: '11.5px',
-                    color: saveStatus === 'saving' ? 'var(--color-primary, #ea580c)' : '#10b981',
-                    fontWeight: 700,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    marginLeft: '4px',
-                  }}
-                  title="Tus cambios se guardan automáticamente en Firestore y en tu navegador"
-                >
-                  {saveStatus === 'saving' ? '⏳ Guardando...' : '☁️ Guardado en vivo'}
-                </span>
               </>
             )}
           </div>
-        )}
-        {standalone && (
-          <Button variant="secondary" size="md" onClick={() => window.close()}>
-            ✕ Cerrar Ventana
-          </Button>
-        )}
-        {!standalone && (
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={handleOpenStandalone}
-          >
-            🗔 Abrir en Ventana Aparte
-          </Button>
-        )}
-        {canEditDiagram && nodes.length > 0 && (
-          <Button variant="secondary" size="md" onClick={handleAutoArrange}>
-            🧹 Reorganizar
-          </Button>
-        )}
-        {nodes.length > 0 && (
-          <Button variant="secondary" size="md" onClick={handleExportDiagram} isLoading={isExporting}>
-            📥 Exportar PNG
-          </Button>
-        )}
-        <Button variant="secondary" size="md" onClick={() => setHowtoOpen(true)}>
-          ¿Cómo funciona?
-        </Button>
-      </PageHeader>
+
+          {canEditDiagram && (
+            <div className={styles.canvasControlGroup}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleManualSaveCanvas}
+                title="Guardar manualmente todos los cambios"
+              >
+                {saveStatus === 'saving' ? '⏳ Guardando...' : '💾 Guardar Lienzo'}
+              </Button>
+
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleReconcileCanvasAssignments(true)}
+                title="Sincronizar y aplicar conexiones en la base de datos"
+              >
+                🔄 Sincronizar Asignaciones
+              </Button>
+
+              {nodes.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setClearNodesConfirm(true)}
+                  title="Quitar todos los nodos del lienzo para empezar en limpio"
+                  style={{ color: 'var(--color-alert)' }}
+                >
+                  🧹 Vaciar
+                </Button>
+              )}
+
+              <span
+                className={styles.canvasLiveBadge}
+                title="Tus cambios se guardan automáticamente en Firestore"
+              >
+                <span className={styles.liveDot} />
+                {saveStatus === 'saving' ? 'Guardando...' : 'Guardado'}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className={styles.workspace}>
           {/* ---------- Botón Flotante Circular: Abre/Cierra Panel de Herramientas ---------- */}
@@ -2686,51 +3541,26 @@ const EditorVisualPage = ({ standalone = false }) => {
                   </button>
                 </div>
 
-                {/* Sección de Gestión Rápida del Lienzo Actual */}
-                <div style={{ marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                  <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', marginBottom: '4px' }}>
-                    🎨 Lienzo Activo
-                  </div>
-                  <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--color-primary)', marginBottom: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {lienzosList.find((l) => l.id === lienzoActivoId)?.name || proyectos.find((p) => p.id === lienzoActivoId)?.name || '🎨 Lienzo General'}
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {/* Herramientas y Mantenimiento del Lienzo */}
+                {nodes.length > 0 && canEditDiagram && (
+                  <div style={{ marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', marginBottom: '6px' }}>
+                      🧹 Mantenimiento del Lienzo
+                    </div>
                     <button
                       type="button"
                       className={styles.wireToolbarBtn}
                       onClick={() => {
-                        setManageLienzosModal(true);
+                        setClearNodesConfirm(true);
                         setIsLeftRailOpen(false);
                       }}
-                      title="Ver todos tus lienzos y eliminar los que desees"
-                      style={{ fontSize: '11px', padding: '4px 8px' }}
+                      title="Quitar todos los nodos del lienzo para empezar en limpio"
+                      style={{ fontSize: '11px', padding: '5px 10px', color: 'var(--color-alert)' }}
                     >
-                      📂 Gestionar / Eliminar
+                      🧹 Vaciar Nodos del Lienzo
                     </button>
-                    {nodes.length > 0 && (
-                      <button
-                        type="button"
-                        className={styles.wireToolbarBtn}
-                        onClick={() => setClearNodesConfirm(true)}
-                        title="Quitar todos los nodos de este lienzo"
-                        style={{ fontSize: '11px', padding: '4px 8px', color: 'var(--color-alert)' }}
-                      >
-                        🧹 Vaciar
-                      </button>
-                    )}
-                    {isCurrentLienzoDeletable && (
-                      <button
-                        type="button"
-                        className={styles.wireToolbarBtn}
-                        onClick={() => setDeleteLienzoConfirm(true)}
-                        title="Eliminar permanentemente este lienzo"
-                        style={{ fontSize: '11px', padding: '4px 8px', color: '#dc2626', fontWeight: 700 }}
-                      >
-                        🗑️ Eliminar
-                      </button>
-                    )}
                   </div>
-                </div>
+                )}
 
                 {canEditDiagram ? (
                   <div className={styles.palette}>
@@ -2809,7 +3639,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                       <button
                         type="button"
                         className={styles.paletteNodeBtn}
-                        style={{ '--btn-theme': '#d97706' }}
+                        style={{ '--btn-theme': '#d97706', gridColumn: 'span 2' }}
                         onClick={() => {
                           openNodeModal('actividad');
                           setIsLeftRailOpen(false);
@@ -2819,34 +3649,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                         <span style={{ fontSize: '18px' }}>📌</span>
                         <div>
                           <strong>Actividad</strong>
-                          <small>Tarea individual</small>
-                        </div>
-                      </button>
-
-                      <button
-                        type="button"
-                        className={styles.paletteNodeBtn}
-                        style={{ '--btn-theme': '#06b6d4' }}
-                        onClick={() => {
-                          spawnNode('recurso', {
-                            draft: false,
-                            draftFields: {
-                              title: 'Ayuda Visual / Archivo',
-                              resourceType: 'imagen',
-                              url: '',
-                              fileData: null,
-                              notes: '',
-                            },
-                          });
-                          setIsLeftRailOpen(false);
-                          toast.success('📎 Nodo de Ayuda Visual agregado al lienzo.');
-                        }}
-                        title="Agregar nodo de Ayuda Visual, Documentos, Planos o Enlaces"
-                      >
-                        <span style={{ fontSize: '18px' }}>📎</span>
-                        <div>
-                          <strong>Ayuda Visual</strong>
-                          <small>Imágenes, PDFs y Links</small>
+                          <small>Tarea individual, imágenes y enlaces</small>
                         </div>
                       </button>
                     </div>
@@ -2856,6 +3659,49 @@ const EditorVisualPage = ({ standalone = false }) => {
                     ℹ️ Solo los Administradores pueden editar o arrastrar nodos en el diagrama.
                   </div>
                 )}
+
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-gray-500)', marginBottom: '6px' }}>
+                    🎯 Localizar Proyecto en Lienzo
+                  </div>
+                  <select
+                    value={focusedProjectId}
+                    onChange={(e) => {
+                      handleFocusProjectCluster(e.target.value);
+                      setIsLeftRailOpen(false);
+                    }}
+                    className={styles.searchInput}
+                    style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '10px' }}
+                  >
+                    <option value="">-- Selecciona Proyecto --</option>
+                    {(() => {
+                      const presentProjs = proyectos.filter((p) => (projectNodesStats[p.id]?.count || 0) > 0);
+                      const absentProjs = proyectos.filter((p) => (projectNodesStats[p.id]?.count || 0) === 0);
+                      return (
+                        <>
+                          {presentProjs.length > 0 && (
+                            <optgroup label="🟢 En este Lienzo">
+                              {presentProjs.map((p) => (
+                                <option key={`rail-p-${p.id}`} value={p.id}>
+                                  📍 {p.name} ({projectNodesStats[p.id]?.count} nodos)
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {absentProjs.length > 0 && (
+                            <optgroup label="⚪ Otros Proyectos">
+                              {absentProjs.map((p) => (
+                                <option key={`rail-a-${p.id}`} value={p.id}>
+                                  ➕ {p.name} (Sin nodos)
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </select>
+                </div>
 
                 <div>
                   <h2 className={styles.railTitle} style={{ marginBottom: '6px' }}>Buscar Nodo</h2>
@@ -2974,7 +3820,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
             <div
               ref={worldRef}
-              className={styles.world}
+              className={`${styles.world} ${isCameraAnimating ? styles.worldSmooth : ''}`}
               style={{
                 transform: `translate(${worldOffset.x}px, ${worldOffset.y}px) scale(${zoom})`,
                 transformOrigin: '0 0',
@@ -2998,7 +3844,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                   const toNode = findNode(edge.to);
                   if (!fromNode || !toNode) return null;
 
-                  const { path: pathData, p1, p2 } = getSmartWirePath(fromNode, toNode);
+                  const { path: pathData, p1, p2 } = getSmartWirePath(fromNode, toNode, edge, nodeSizesRef.current);
 
                   const juegoEntity = fromNode.type === 'juego' ? getLinkedEntity(fromNode) : null;
                   const areaEntity = toNode.type === 'area' ? getLinkedEntity(toNode) : null;
@@ -3006,22 +3852,42 @@ const EditorVisualPage = ({ standalone = false }) => {
                     juegoEntity && areaEntity && isAreaBlockedBySequence(juegoEntity, areaEntity.id)
                   );
 
+                  // Detección de enlace de secuencia entre actividades en cascada
+                  const isActToAct = fromNode.type === 'actividad' && toNode.type === 'actividad';
+                  const fromActEntity = fromNode.type === 'actividad' ? getLinkedEntity(fromNode) : null;
+                  const isPredecessorDone = fromActEntity?.status === 'completado' || fromActEntity?.status === 'hecho';
+                  const isPredecessorInProgress = fromActEntity?.status === 'proceso';
+
                   const nodeColor = fromNode.customColor || NODE_TYPES[fromNode.type]?.colorVar || '#ea580c';
-                  const wireColor = edge.customColor || (isBlockedLink ? '#ef4444' : nodeColor);
+                  let wireColor = edge.customColor || (isBlockedLink ? '#ef4444' : nodeColor);
+                  if (isActToAct && !edge.customColor) {
+                    if (isPredecessorDone) {
+                      wireColor = '#10b981'; // Verde neón: fase previa culminada, flujo abierto a la siguiente
+                    } else if (isPredecessorInProgress) {
+                      wireColor = '#2563eb'; // Azul proceso activo
+                    } else {
+                      wireColor = '#94a3b8'; // Gris neutro en espera
+                    }
+                  }
                   
                   // LAS LÍNEAS SON PUNTEADAS (DASHED) POR DEFECTO
                   const isDashed = edge.style !== 'solid';
                   const isSelected = selectedEdgeId === edge.id;
 
+                  // Aislamiento visual por proyecto
+                  const isWireInFocusedProject = !focusedProjectId || !isIsolateProjectMode ||
+                    (activeProjectClusterNodeIds.has(edge.from) && activeProjectClusterNodeIds.has(edge.to));
+                  const wireIsolationClass = isIsolateProjectMode && !isWireInFocusedProject ? styles.wireDimmed : '';
+
                   return (
-                    <g key={edge.id} className={`${styles.wireGroup} ${isSelected ? styles.wireGroupSelected : ''}`}>
-                      {/* Trazo de halo suave / Resplandor cuando está seleccionado */}
+                    <g key={edge.id} className={`${styles.wireGroup} ${isSelected ? styles.wireGroupSelected : ''} ${wireIsolationClass}`}>
+                      {/* Trazo de halo suave / Resplandor cuando está seleccionado o flujo activo */}
                       <path
                         d={pathData}
                         fill="none"
-                        stroke={isSelected ? '#ffffff' : wireColor}
-                        strokeWidth={isSelected ? '10' : '7'}
-                        strokeOpacity={isSelected ? '0.45' : '0.2'}
+                        stroke={isSelected ? '#ffffff' : (isActToAct && isPredecessorDone ? '#10b981' : wireColor)}
+                        strokeWidth={isSelected ? '10' : (isActToAct && isPredecessorDone ? '8' : '7')}
+                        strokeOpacity={isSelected ? '0.45' : (isActToAct && isPredecessorDone ? '0.35' : '0.2')}
                         style={{ pointerEvents: 'none' }}
                       />
                       {/* Trazo de cable punteado interactivo */}
@@ -3029,7 +3895,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                         d={pathData}
                         fill="none"
                         stroke={wireColor}
-                        strokeWidth={edge.style === 'thick' ? '3.8' : (isSelected ? '3.5' : '2.8')}
+                        strokeWidth={edge.style === 'thick' ? '3.8' : (isSelected ? '3.5' : (isActToAct && isPredecessorDone ? '3.2' : '2.8'))}
                         strokeDasharray={isDashed ? (isBlockedLink ? '5 4' : '7 5') : 'none'}
                         className={`${styles.wirePath} ${isDashed ? styles.wireDashed : ''} ${isSelected ? styles.wireSelected : ''}`}
                         onClick={(e) => {
@@ -3041,33 +3907,403 @@ const EditorVisualPage = ({ standalone = false }) => {
                         <title>
                           {isBlockedLink
                             ? `🔒 Bloqueado: ${dynamicAreas.find((a) => a.id === AREA_SEQUENCE_DEPENDENCIES[areaEntity.id])?.name} todavía no completa su meta. Clic para cambiar color o desconectar.`
+                            : isActToAct
+                            ? `🔗 Secuencia de proceso: ${isPredecessorDone ? '✅ Fase previa culminada (flujo abierto)' : '⏳ Fase previa en espera / proceso'}`
                             : 'Clic en este cable para cambiar su color o desconectarlo'}
                         </title>
                       </path>
-                      {/* Puntos terminales en los puertos */}
-                      <circle cx={p1.x} cy={p1.y} r={isSelected ? '5' : '3.8'} fill={wireColor} stroke="#ffffff" strokeWidth="1.8" />
-                      <circle cx={p2.x} cy={p2.y} r={isSelected ? '5' : '3.8'} fill={wireColor} stroke="#ffffff" strokeWidth="1.8" />
+                      {/* Puntos terminales en los puertos físicos */}
+                      <circle cx={p1.x} cy={p1.y} r={isSelected ? '5.5' : '4'} fill={wireColor} stroke="#ffffff" strokeWidth="2" style={{ pointerEvents: 'none' }} />
+                      <circle cx={p2.x} cy={p2.y} r={isSelected ? '5.5' : '4'} fill={wireColor} stroke="#ffffff" strokeWidth="2" style={{ pointerEvents: 'none' }} />
                     </g>
                   );
                 })}
                 {previewWire && (
                   <path
                     className={styles.wirePreview}
-                    d={previewBezier({ x: previewWire.x1, y: previewWire.y1 }, { x: previewWire.x2, y: previewWire.y2 })}
+                    d={previewBezier(
+                      { x: previewWire.x1, y: previewWire.y1 },
+                      { x: previewWire.x2, y: previewWire.y2 },
+                      previewWire.dir1
+                    )}
                   />
                 )}
               </svg>
+
+              {/* Caja de Selección Múltiple tipo Marquee / Rectángulo CAD */}
+              {selectionBox && (
+                <div
+                  className={styles.selectionMarquee}
+                  style={{
+                    left: Math.min(selectionBox.startX, selectionBox.currentX),
+                    top: Math.min(selectionBox.startY, selectionBox.currentY),
+                    width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                    height: Math.abs(selectionBox.currentY - selectionBox.startY),
+                  }}
+                />
+              )}
 
               {nodes.map((node) => {
                 const meta = NODE_TYPES[node.type] || DEFAULT_NODE_META;
                 const nodeThemeColor = node.customColor || meta.colorVar || '#ea580c';
                 const entity = getLinkedEntity(node);
+                const info = node.type === 'recurso' ? getResourcePreviewInfo(node) : null;
+                const isNodeSelected = selectedNodeIds.has(node.id) || selectedNodeId === node.id;
+                
+                // Aislamiento visual y resaltado por proyecto
+                const isNodeInFocusedProject = !focusedProjectId || !isIsolateProjectMode || activeProjectClusterNodeIds.has(node.id);
+                const isMainProjectNode = focusedProjectId && node.type === 'proyecto' && (node.refId === focusedProjectId || node.id === focusedProjectId);
+                const nodeIsolationClass = isIsolateProjectMode && !isNodeInFocusedProject ? styles.nodeDimmed : (isMainProjectNode ? styles.nodeFocusedProject : '');
+
+                // Estado en Proceso para activación de la Luz LED RGB Trasera (Exclusivo para Nodos Principales)
+                const isNodeInProcess = (() => {
+                  if (node.type === 'actividad') {
+                    return entity?.status === 'proceso';
+                  }
+                  if (node.type === 'proyecto' || node.type === 'juego') {
+                    return entity?.status === 'progreso' || entity?.status === 'proceso';
+                  }
+                  if (node.type === 'bloque') {
+                    const blockActivityIds = node.activityIds || [];
+                    return actividades.some((a) => blockActivityIds.includes(a.id) && a.status === 'proceso');
+                  }
+                  return false;
+                })();
+
+                // 1. DISTINCIÓN CLARA: ENLACE vs ARCHIVO DE IMAGEN
+                const isLinkResource = node.type === 'recurso' && Boolean(
+                  info?.isLink ||
+                  node.draftFields?.resourceType === 'link' ||
+                  (node.draftFields?.url && !node.draftFields?.fileData && !node.draftFields?.url?.match(/\.(jpeg|jpg|png|webp|gif|svg|avif)($|\?)/i))
+                );
+
+                const isImageResource = node.type === 'recurso' && !isLinkResource && Boolean(
+                  info?.previewImgSrc ||
+                  node.draftFields?.resourceType === 'imagen' ||
+                  node.draftFields?.fileData?.dataUrl ||
+                  node.draftFields?.fileData?.url
+                );
+
+                if (isImageResource) {
+                  const imgSrc = info?.previewImgSrc || node.draftFields?.fileData?.dataUrl || node.draftFields?.fileData?.url || node.draftFields?.url;
+                  const currentImgBg = node.customBg || node.draftFields?.bgColor || 'transparent';
+                  const nextBgCycle = currentImgBg === 'transparent' ? 'dark' : currentImgBg === 'dark' ? 'light' : currentImgBg === 'light' ? 'blur' : 'transparent';
+
+                  return (
+                    <div
+                      key={node.id}
+                      ref={(el) => {
+                        if (el) nodeSizesRef.current[node.id] = { width: el.offsetWidth, height: el.offsetHeight };
+                      }}
+                      data-type="recurso"
+                      className={`${styles.framelessImageNode} ${isNodeSelected ? styles.selected : ''} ${nodeIsolationClass}`}
+                      style={{ left: node.x, top: node.y, width: 230 }}
+                      onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+                    >
+                      <div
+                        className={styles.framelessImageWrap}
+                        style={{
+                          background: currentImgBg === 'dark' ? '#0f172a' : currentImgBg === 'light' ? '#ffffff' : currentImgBg === 'blur' ? 'rgba(15, 23, 42, 0.8)' : 'transparent',
+                          border: currentImgBg !== 'transparent' ? '1.5px solid rgba(255, 255, 255, 0.2)' : 'none',
+                        }}
+                      >
+                        <img
+                          src={imgSrc}
+                          alt={nodeTitle(node)}
+                          className={styles.framelessImg}
+                          style={{
+                            filter: currentImgBg === 'transparent' ? 'drop-shadow(0 10px 24px rgba(0, 0, 0, 0.6))' : 'none',
+                          }}
+                          onError={(e) => {
+                            e.target.style.opacity = '0.5';
+                          }}
+                        />
+                        <div className={styles.framelessOverlay}>
+                          <div className={styles.framelessHeader}>
+                            <span className={styles.framelessTitle}>🖼️ {nodeTitle(node)}</span>
+                            {canEditDiagram && (
+                              <button
+                                type="button"
+                                className={styles.framelessCloseBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCloseNode(node.id);
+                                }}
+                                title="Quitar imagen del lienzo"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                          <div className={styles.framelessActions}>
+                            <button
+                              type="button"
+                              className={`${styles.framelessBtn} ${styles.framelessBtnPrimary}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewResourceModal({
+                                  isOpen: true,
+                                  title: nodeTitle(node),
+                                  resourceType: 'imagen',
+                                  url: imgSrc,
+                                  fileData: node.draftFields?.fileData || null,
+                                  notes: node.draftFields?.notes || '',
+                                });
+                              }}
+                              title="Ampliar en pantalla completa"
+                            >
+                              🔍 Ampliar
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.framelessBtn}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const nextNodes = nodes.map((n) => (n.id === node.id ? { ...n, customBg: nextBgCycle } : n));
+                                setNodes(nextNodes);
+                                saveToFirestore(nextNodes, edges);
+                                toast.info(`Fondo: ${nextBgCycle === 'transparent' ? 'Transparente (Solo figura)' : nextBgCycle === 'dark' ? 'Oscuro' : nextBgCycle === 'light' ? 'Blanco' : 'Translúcido'}`);
+                              }}
+                              title="Cambiar fondo: Transparente (solo figura) / Oscuro / Blanco"
+                            >
+                              🎨 Fondo
+                            </button>
+                            {info?.fileUrl && !info.fileUrl.startsWith('data:') && (
+                              <button
+                                type="button"
+                                className={styles.framelessBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
+                                }}
+                                title="Descargar imagen"
+                              >
+                                📥
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 4 PUERTOS DE CONEXIÓN */}
+                      {canEditDiagram && (
+                        <>
+                          <span
+                            data-role="port"
+                            data-node-id={node.id}
+                            data-side="in"
+                            className={`${styles.port} ${styles.portIn}`}
+                            title="Conectar (lado izquierdo)"
+                            onMouseDown={(e) => handlePortMouseDown(e, node.id, 'in')}
+                          />
+                          <span
+                            data-role="port"
+                            data-node-id={node.id}
+                            data-side="out"
+                            className={`${styles.port} ${styles.portOut}`}
+                            title="Conectar (lado derecho)"
+                            onMouseDown={(e) => handlePortMouseDown(e, node.id, 'out')}
+                          />
+                          <span
+                            data-role="port"
+                            data-node-id={node.id}
+                            data-side="top"
+                            className={`${styles.port} ${styles.portTop}`}
+                            title="Conectar (arriba)"
+                            onMouseDown={(e) => handlePortMouseDown(e, node.id, 'top')}
+                          />
+                          <span
+                            data-role="port"
+                            data-node-id={node.id}
+                            data-side="bottom"
+                            className={`${styles.port} ${styles.portBottom}`}
+                            title="Conectar (abajo)"
+                            onMouseDown={(e) => handlePortMouseDown(e, node.id, 'bottom')}
+                          />
+                        </>
+                      )}
+                    </div>
+                  );
+                }
+
+                // 2. RECURSO DE ENLACE WEB / DRIVE / FIGMA (FLOTANTE MINIMALISTA SIN MARCO - EMBLEMA)
+                if (isLinkResource) {
+                  const provider = info?.linkProvider || { name: 'Enlace Web', icon: '🌐' };
+                  const targetUrl = info?.effectiveUrl || node.draftFields?.url || '#';
+                  const isDrive = Boolean(targetUrl.includes('drive.google.com') || targetUrl.includes('docs.google.com'));
+                  const isFigma = Boolean(targetUrl.includes('figma.com'));
+                  const isAutodesk = Boolean(targetUrl.includes('autodesk'));
+
+                  const renderLinkBrandSymbol = (urlStr) => {
+                    const u = (urlStr || '').toLowerCase();
+                    if (u.includes('drive.google.com') || u.includes('docs.google.com')) {
+                      return (
+                        <svg viewBox="0 0 87.3 78" width="38" height="34" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.4))' }}>
+                          <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                          <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44A9.06 9.06 0 0 0 0 53h27.5z" fill="#00ac47"/>
+                          <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.8l5.85 10.15z" fill="#ea4335"/>
+                          <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                          <path d="m59.8 53h27.5c0-1.55-.4-3.1-1.2-4.5l-13.75-23.8c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8z" fill="#ffba00"/>
+                          <path d="m73.55 76.8H27.5L13.75 53h59.8z" fill="#2684fc"/>
+                        </svg>
+                      );
+                    }
+                    if (u.includes('figma.com')) {
+                      return (
+                        <svg viewBox="0 0 38 57" width="24" height="36" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.4))' }}>
+                          <path d="M19 28.5a9.5 9.5 0 1 1 19 0 9.5 9.5 0 0 1-19 0z" fill="#1abcfe"/>
+                          <path d="M0 47.5A9.5 9.5 0 0 1 9.5 38H19v9.5a9.5 9.5 0 1 1-19 0z" fill="#0acf83"/>
+                          <path d="M19 0v19h9.5a9.5 9.5 0 1 0 0-19H19z" fill="#ff7262"/>
+                          <path d="M0 9.5A9.5 9.5 0 0 0 9.5 19H19V0H9.5A9.5 9.5 0 0 0 0 9.5z" fill="#f24e1e"/>
+                          <path d="M0 28.5A9.5 9.5 0 0 0 9.5 38H19V19H9.5A9.5 9.5 0 0 0 0 28.5z" fill="#a259ff"/>
+                        </svg>
+                      );
+                    }
+                    if (u.includes('autodesk') || u.includes('viewer.autodesk')) {
+                      return (
+                        <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="#ea580c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 8px rgba(234,88,12,0.6))' }}>
+                          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                          <line x1="12" y1="22.08" x2="12" y2="12"/>
+                        </svg>
+                      );
+                    }
+                    if (u.includes('youtube.com') || u.includes('youtu.be') || u.includes('vimeo.com')) {
+                      return (
+                        <svg viewBox="0 0 24 24" width="36" height="36" fill="#ef4444" style={{ filter: 'drop-shadow(0 0 8px rgba(239,68,68,0.6))' }}>
+                          <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                        </svg>
+                      );
+                    }
+                    if (u.includes('onedrive') || u.includes('1drv.ms') || u.includes('sharepoint')) {
+                      return (
+                        <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="#0284c7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 8px rgba(2,132,199,0.6))' }}>
+                          <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+                        </svg>
+                      );
+                    }
+                    // Enlace Web estándar con aura cian
+                    return (
+                      <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 8px rgba(56,189,248,0.6))' }}>
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                      </svg>
+                    );
+                  };
+
+                  return (
+                    <div
+                      key={node.id}
+                      ref={(el) => {
+                        if (el) nodeSizesRef.current[node.id] = { width: el.offsetWidth, height: el.offsetHeight };
+                      }}
+                      data-type="recurso"
+                      className={`${styles.framelessLinkNode} ${isNodeSelected ? styles.selected : ''} ${nodeIsolationClass}`}
+                      style={{ left: node.x, top: node.y }}
+                      onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+                    >
+                      {/* EMBLEMA CENTRAL FLOTANTE */}
+                      <div
+                        className={styles.framelessLinkEmblem}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (targetUrl && targetUrl !== '#') {
+                            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                          }
+                        }}
+                        title={`Clic para abrir enlace: ${targetUrl}`}
+                      >
+                        {renderLinkBrandSymbol(targetUrl)}
+
+                        {canEditDiagram && (
+                          <button
+                            type="button"
+                            className={styles.framelessLinkEmblemClose}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCloseNode(node.id);
+                            }}
+                            title="Quitar enlace del lienzo"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+
+                      {/* BADGE COMPACTO FLOTANTE DEBAJO DEL EMBLEMA */}
+                      <div className={styles.framelessLinkBadge}>
+                        <span className={styles.framelessLinkBadgeSub}>
+                          {isDrive ? 'Google Drive' : isFigma ? 'Figma' : isAutodesk ? 'Autodesk 3D' : provider.name}
+                        </span>
+                        <span className={styles.framelessLinkBadgeTitle}>
+                          {nodeTitle(node)}
+                        </span>
+                      </div>
+
+                      {/* BOTÓN RÁPIDO AL PASAR EL MOUSE */}
+                      <a
+                        href={targetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.framelessLinkOpenBtn}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span>Abrir</span> <span>↗</span>
+                      </a>
+
+                      {/* 4 PUERTOS DE CONEXIÓN ALREDEDOR DEL EMBLEMA */}
+                      {canEditDiagram && (
+                        <>
+                          <span
+                            data-role="port"
+                            data-node-id={node.id}
+                            data-side="in"
+                            className={`${styles.port} ${styles.portIn}`}
+                            style={{ top: '34px', left: '29px' }}
+                            title="Conectar (lado izquierdo)"
+                            onMouseDown={(e) => handlePortMouseDown(e, node.id, 'in')}
+                          />
+                          <span
+                            data-role="port"
+                            data-node-id={node.id}
+                            data-side="out"
+                            className={`${styles.port} ${styles.portOut}`}
+                            style={{ top: '34px', right: '29px' }}
+                            title="Conectar (lado derecho)"
+                            onMouseDown={(e) => handlePortMouseDown(e, node.id, 'out')}
+                          />
+                          <span
+                            data-role="port"
+                            data-node-id={node.id}
+                            data-side="top"
+                            className={`${styles.port} ${styles.portTop}`}
+                            style={{ top: '-7px', left: 'calc(50% - 7px)' }}
+                            title="Conectar (arriba)"
+                            onMouseDown={(e) => handlePortMouseDown(e, node.id, 'top')}
+                          />
+                          <span
+                            data-role="port"
+                            data-node-id={node.id}
+                            data-side="bottom"
+                            className={`${styles.port} ${styles.portBottom}`}
+                            style={{ top: '61px', left: 'calc(50% - 7px)' }}
+                            title="Conectar (abajo)"
+                            onMouseDown={(e) => handlePortMouseDown(e, node.id, 'bottom')}
+                          />
+                        </>
+                      )}
+                    </div>
+                  );
+                }
 
                 return (
                   <div
                     key={node.id}
+                    ref={(el) => {
+                      if (el) nodeSizesRef.current[node.id] = { width: el.offsetWidth, height: el.offsetHeight };
+                    }}
                     data-type={node.type}
-                    className={`${styles.node} ${selectedNodeId === node.id ? styles.selected : ''}`}
+                    className={`${styles.node} ${isNodeSelected ? styles.selected : ''} ${isNodeInProcess ? styles.nodeInProcess : ''} ${nodeIsolationClass}`}
                     style={{ left: node.x, top: node.y, width: NODE_WIDTH, '--node-color': nodeThemeColor }}
                     onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                   >
@@ -3113,6 +4349,34 @@ const EditorVisualPage = ({ standalone = false }) => {
                                 <div style={{ fontSize: '12px', fontWeight: 700 }}>
                                   🏢 Cliente: {entity.client || 'General'}
                                 </div>
+                                {entity.itemsToManufacture && (
+                                  <div style={{ fontSize: '11px', color: 'var(--color-dark)', background: 'rgba(37, 99, 235, 0.06)', padding: '3px 6px', borderRadius: '4px', marginTop: '4px', borderLeft: '3px solid #2563eb' }}>
+                                    <strong>🛠️ A Fabricar:</strong> {entity.itemsToManufacture}
+                                  </div>
+                                )}
+                                {entity.areas && entity.areas.length > 0 && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '4px' }}>
+                                    {entity.areas.map((aId) => {
+                                      const aObj = allBlockAreas.find((x) => x.id === aId);
+                                      const isTech = aId === 'arquitectura' || aId === 'diseno' || aId === 'supervision';
+                                      return (
+                                        <span
+                                          key={aId}
+                                          style={{
+                                            fontSize: '9.5px',
+                                            fontWeight: 700,
+                                            padding: '1px 5px',
+                                            borderRadius: '4px',
+                                            background: isTech ? 'rgba(14, 165, 233, 0.15)' : 'rgba(0,0,0,0.06)',
+                                            color: isTech ? '#0284c7' : 'var(--color-gray-700)',
+                                          }}
+                                        >
+                                          {aObj?.icon || (isTech ? '📐' : '🏭')} {aObj?.name || aId}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                                 <div style={{ width: '100%', height: '6px', background: 'rgba(0,0,0,0.08)', borderRadius: '3px', marginTop: '6px', overflow: 'hidden' }}>
                                   <div style={{ width: `${entity.progress ?? 0}%`, height: '100%', background: nodeThemeColor }} />
                                 </div>
@@ -3228,7 +4492,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                             {entity ? (
                               <>
                                 <div style={{ fontSize: '11.5px', fontWeight: 700 }}>
-                                  🏭 Área: {dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
+                                  🏭 Área: {allAvailableAreas.find((a) => a.id === entity.areaId)?.name || dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
                                 </div>
                                 {(() => {
                                   const colabEdge = edges.find(
@@ -3239,8 +4503,8 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   const connectedColabNode = colabEdge
                                     ? findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to)
                                     : null;
-                                  const directOperario = operarios.find((o) => o.id === (entity?.operarioId || node?.operarioId || node?.draftFields?.operarioId));
-                                  const respName = directOperario?.name || (connectedColabNode ? nodeTitle(connectedColabNode) : null);
+                                  const directColab = allCollaborators.find((c) => c.id === (entity?.operarioId || node?.operarioId || node?.draftFields?.operarioId));
+                                  const respName = directColab?.name || (connectedColabNode ? nodeTitle(connectedColabNode) : null);
 
                                   return (
                                     <div style={{ fontSize: '11px', color: respName ? 'var(--color-primary, #ea580c)' : 'var(--color-gray-500)', marginTop: '2px', fontWeight: respName ? 700 : 500 }}>
@@ -3248,155 +4512,259 @@ const EditorVisualPage = ({ standalone = false }) => {
                                     </div>
                                   );
                                 })()}
-                                {/* Estatus y Botones de Iniciar / Terminar en la tarjeta del nodo */}
+                                {/* Estatus y Botones de Iniciar / Terminar en la tarjeta del nodo con soporte de Secuencia */}
                                 <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed rgba(0,0,0,0.1)' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                                    <span style={{ fontSize: '10.5px', color: 'var(--color-gray-500)' }}>Estado:</span>
-                                    <span
-                                      style={{
-                                        fontSize: '9.5px',
-                                        fontWeight: 800,
-                                        padding: '1.5px 6px',
-                                        borderRadius: '4px',
-                                        textTransform: 'uppercase',
-                                        background:
-                                          entity.status === 'completado'
-                                            ? 'rgba(16, 185, 129, 0.15)'
-                                            : entity.status === 'proceso'
-                                            ? 'rgba(37, 99, 235, 0.15)'
-                                            : 'rgba(156, 163, 175, 0.15)',
-                                        color:
-                                          entity.status === 'completado'
-                                            ? '#10b981'
-                                            : entity.status === 'proceso'
-                                            ? '#2563eb'
-                                            : '#6b7280',
-                                      }}
-                                    >
-                                      {entity.status === 'completado' ? '✅ Hecha' : entity.status === 'proceso' ? '⚡ En Proceso' : '⏳ Pendiente'}
-                                    </span>
-                                  </div>
-
                                   {(() => {
-                                    const hasControl = canUserControlActivity(entity);
-                                    if (!hasControl) {
-                                      return (
-                                        <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', marginTop: '4px', textAlign: 'center', fontStyle: 'italic' }}>
-                                          🔒 Control de responsable / supervisor
-                                        </div>
-                                      );
-                                    }
+                                    const blockStatus = getActivityBlockStatus(node);
+                                    const isSequenceBlocked = entity.status === 'pendiente' && blockStatus.isBlocked;
 
                                     return (
-                                      <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                                        {entity.status === 'pendiente' && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleStartActivity(entity.id, entity.title);
-                                            }}
+                                      <>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                          <span style={{ fontSize: '10.5px', color: 'var(--color-gray-500)' }}>Estado:</span>
+                                          <span
                                             style={{
-                                              flex: 1,
-                                              padding: '4px 8px',
-                                              fontSize: '11px',
-                                              fontWeight: 700,
-                                              background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
-                                              color: '#ffffff',
-                                              border: 'none',
-                                              borderRadius: '5px',
-                                              cursor: 'pointer',
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              justifyContent: 'center',
-                                              gap: '4px',
-                                              boxShadow: '0 1px 3px rgba(37, 99, 235, 0.3)',
+                                              fontSize: '9.5px',
+                                              fontWeight: 800,
+                                              padding: '1.5px 6px',
+                                              borderRadius: '4px',
+                                              textTransform: 'uppercase',
+                                              background:
+                                                entity.status === 'completado'
+                                                  ? 'rgba(16, 185, 129, 0.15)'
+                                                  : entity.status === 'proceso'
+                                                  ? 'rgba(37, 99, 235, 0.15)'
+                                                  : isSequenceBlocked
+                                                  ? 'rgba(239, 68, 68, 0.15)'
+                                                  : 'rgba(156, 163, 175, 0.15)',
+                                              color:
+                                                entity.status === 'completado'
+                                                  ? '#10b981'
+                                                  : entity.status === 'proceso'
+                                                  ? '#2563eb'
+                                                  : isSequenceBlocked
+                                                  ? '#ef4444'
+                                                  : '#6b7280',
                                             }}
-                                            title="Iniciar esta actividad y registrar fecha/hora de inicio"
                                           >
-                                            ▶️ Iniciar Actividad
-                                          </button>
+                                            {entity.status === 'completado'
+                                              ? '✅ Hecha'
+                                              : entity.status === 'proceso'
+                                              ? '⚡ En Proceso'
+                                              : isSequenceBlocked
+                                              ? '🔒 Bloqueada'
+                                              : '⏳ Pendiente'}
+                                          </span>
+                                        </div>
+
+                                        {/* Indicador de Sub-tareas / Checklist en el Nodo del Lienzo */}
+                                          {Array.isArray(entity.checklist) && entity.checklist.length > 0 && (() => {
+                                            const total = entity.checklist.length;
+                                            const completed = entity.checklist.filter((c) => c.completed).length;
+                                            const pct = Math.round((completed / total) * 100);
+                                            const isAllDone = completed === total;
+                                            return (
+                                              <div
+                                                style={{
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'space-between',
+                                                  background: isAllDone ? 'rgba(16, 185, 129, 0.1)' : 'rgba(6, 182, 212, 0.08)',
+                                                  border: `1px solid ${isAllDone ? 'rgba(16, 185, 129, 0.3)' : 'rgba(6, 182, 212, 0.25)'}`,
+                                                  borderRadius: '5px',
+                                                  padding: '2.5px 6px',
+                                                  marginBottom: '4px',
+                                                  fontSize: '10px',
+                                                }}
+                                                title={`Checklist: ${completed} de ${total} sub-tareas completadas`}
+                                              >
+                                                <span style={{ fontWeight: 600, color: 'var(--color-dark)' }}>
+                                                  ☑️ Sub-tareas:
+                                                </span>
+                                                <span style={{ fontWeight: 800, color: isAllDone ? '#10b981' : '#0284c7' }}>
+                                                  {completed}/{total} ({pct}%)
+                                                </span>
+                                              </div>
+                                            );
+                                          })()}
+
+                                        {isSequenceBlocked && (
+                                          <div
+                                            style={{
+                                              fontSize: '9.5px',
+                                              color: '#ef4444',
+                                              background: 'rgba(239, 68, 68, 0.08)',
+                                              border: '1px solid rgba(239, 68, 68, 0.25)',
+                                              borderRadius: '4px',
+                                              padding: '3px 6px',
+                                              marginBottom: '4px',
+                                              lineHeight: 1.25,
+                                            }}
+                                            title={blockStatus.reason}
+                                          >
+                                            🔒 Espera que termine: <strong>{blockStatus.blockers.map((b) => b.entity?.title || nodeTitle(b.node)).join(', ')}</strong>
+                                          </div>
                                         )}
 
-                                        {entity.status === 'proceso' && (
-                                          <>
-                                            <button
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleOpenCompleteModal(entity.id, entity.title);
-                                              }}
-                                              style={{
-                                                flex: 2,
-                                                padding: '4px 8px',
-                                                fontSize: '11px',
-                                                fontWeight: 700,
-                                                background: 'linear-gradient(135deg, #10b981, #059669)',
-                                                color: '#ffffff',
-                                                border: 'none',
-                                                borderRadius: '5px',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                gap: '4px',
-                                                boxShadow: '0 1px 3px rgba(16, 185, 129, 0.3)',
-                                              }}
-                                              title="Marcar como terminada y registrar fecha/hora de entrega"
-                                            >
-                                              ✅ Terminar
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleResetActivityStatus(entity.id, 'pendiente');
-                                              }}
-                                              style={{
-                                                flex: 1,
-                                                padding: '4px 6px',
-                                                fontSize: '10px',
-                                                fontWeight: 600,
-                                                background: 'rgba(0,0,0,0.06)',
-                                                color: 'var(--color-gray-700)',
-                                                border: '1px solid rgba(0,0,0,0.1)',
-                                                borderRadius: '5px',
-                                                cursor: 'pointer',
-                                              }}
-                                              title="Pausar y regresar a pendiente"
-                                            >
-                                              ⏸️ Pausar
-                                            </button>
-                                          </>
-                                        )}
+                                        {(() => {
+                                          const hasControl = canUserControlActivity(entity);
+                                          if (!hasControl) {
+                                            return (
+                                              <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', marginTop: '4px', textAlign: 'center', fontStyle: 'italic' }}>
+                                                🔒 Control de responsable / supervisor
+                                              </div>
+                                            );
+                                          }
 
-                                        {entity.status === 'completado' && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleResetActivityStatus(entity.id, 'proceso');
-                                            }}
-                                            style={{
-                                              flex: 1,
-                                              padding: '3px 8px',
-                                              fontSize: '10px',
-                                              fontWeight: 600,
-                                              background: 'rgba(0,0,0,0.05)',
-                                              color: 'var(--color-gray-600)',
-                                              border: '1px solid rgba(0,0,0,0.1)',
-                                              borderRadius: '5px',
-                                              cursor: 'pointer',
-                                            }}
-                                            title="Reabrir esta actividad para continuarla"
-                                          >
-                                            🔄 Reabrir Actividad
-                                          </button>
-                                        )}
-                                      </div>
+                                          return (
+                                            <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                              {entity.status === 'pendiente' && (
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (isSequenceBlocked) {
+                                                      toast.warning(`🔒 Actividad bloqueada: Primero debe culminar "${blockStatus.blockers.map((b) => b.entity?.title || nodeTitle(b.node)).join(', ')}"`);
+                                                      return;
+                                                    }
+                                                    handleStartActivity(entity.id, entity.title);
+                                                  }}
+                                                  style={{
+                                                    flex: 1,
+                                                    padding: '4px 8px',
+                                                    fontSize: '11px',
+                                                    fontWeight: 700,
+                                                    background: isSequenceBlocked
+                                                      ? 'rgba(100, 116, 139, 0.2)'
+                                                      : 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                                                    color: isSequenceBlocked ? 'var(--color-gray-400)' : '#ffffff',
+                                                    border: isSequenceBlocked ? '1px dashed var(--color-gray-400)' : 'none',
+                                                    borderRadius: '5px',
+                                                    cursor: isSequenceBlocked ? 'not-allowed' : 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    gap: '4px',
+                                                    boxShadow: isSequenceBlocked ? 'none' : '0 1px 3px rgba(37, 99, 235, 0.3)',
+                                                    opacity: isSequenceBlocked ? 0.75 : 1,
+                                                  }}
+                                                  title={isSequenceBlocked ? blockStatus.reason : 'Iniciar esta actividad'}
+                                                >
+                                                  {isSequenceBlocked ? '🔒 Espera fase previa' : '▶️ Iniciar Actividad'}
+                                                </button>
+                                              )}
+
+                                              {entity.status === 'proceso' && (
+                                                <>
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleOpenCompleteModal(entity.id, entity.title);
+                                                    }}
+                                                    style={{
+                                                      flex: 2,
+                                                      padding: '4px 8px',
+                                                      fontSize: '11px',
+                                                      fontWeight: 700,
+                                                      background: 'linear-gradient(135deg, #10b981, #059669)',
+                                                      color: '#ffffff',
+                                                      border: 'none',
+                                                      borderRadius: '5px',
+                                                      cursor: 'pointer',
+                                                      display: 'flex',
+                                                      alignItems: 'center',
+                                                      justifyContent: 'center',
+                                                      gap: '4px',
+                                                      boxShadow: '0 1px 3px rgba(16, 185, 129, 0.3)',
+                                                    }}
+                                                    title="Marcar como terminada y registrar fecha/hora de entrega"
+                                                  >
+                                                    ✅ Terminar
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleResetActivityStatus(entity.id, 'pendiente');
+                                                    }}
+                                                    style={{
+                                                      flex: 1,
+                                                      padding: '4px 6px',
+                                                      fontSize: '10px',
+                                                      fontWeight: 600,
+                                                      background: 'rgba(0,0,0,0.06)',
+                                                      color: 'var(--color-gray-700)',
+                                                      border: '1px solid rgba(0,0,0,0.1)',
+                                                      borderRadius: '5px',
+                                                      cursor: 'pointer',
+                                                    }}
+                                                    title="Pausar y regresar a pendiente"
+                                                  >
+                                                    ⏸️ Pausar
+                                                  </button>
+                                                </>
+                                              )}
+
+                                              {entity.status === 'completado' && (
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleResetActivityStatus(entity.id, 'proceso');
+                                                  }}
+                                                  style={{
+                                                    flex: 1,
+                                                    padding: '3px 8px',
+                                                    fontSize: '10px',
+                                                    fontWeight: 600,
+                                                    background: 'rgba(0,0,0,0.05)',
+                                                    color: 'var(--color-gray-600)',
+                                                    border: '1px solid rgba(0,0,0,0.1)',
+                                                    borderRadius: '5px',
+                                                    cursor: 'pointer',
+                                                  }}
+                                                  title="Reabrir esta actividad para continuarla"
+                                                >
+                                                  🔄 Reabrir Actividad
+                                                </button>
+                                              )}
+                                            </div>
+                                          );
+                                        })()}
+                                      </>
                                     );
                                   })()}
                                 </div>
+
+                                {/* Recursos adjuntos (enlaces / imágenes) y botón para colocarlos en el lienzo */}
+                                {Boolean((entity.links && entity.links.length > 0) || (entity.attachments && entity.attachments.length > 0) || entity.fileData) && (
+                                  <div style={{ marginTop: '6px', paddingTop: '4px', borderTop: '1px dotted rgba(0,0,0,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span style={{ fontSize: '10px', color: 'var(--color-gray-500)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                      📎 {(entity.attachments?.length || (entity.fileData ? 1 : 0)) + (entity.links?.length || 0)} recurso(s)
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeployAllActivityResources(node, entity);
+                                      }}
+                                      style={{
+                                        fontSize: '9.5px',
+                                        fontWeight: 700,
+                                        padding: '2px 6px',
+                                        borderRadius: '4px',
+                                        background: 'rgba(37, 99, 235, 0.1)',
+                                        color: '#2563eb',
+                                        border: '1px solid rgba(37, 99, 235, 0.2)',
+                                        cursor: 'pointer',
+                                      }}
+                                      title="Colocar / mostrar todos los enlaces e imágenes en el lienzo"
+                                    >
+                                      📍 Mostrar en Lienzo
+                                    </button>
+                                  </div>
+                                )}
                               </>
                             ) : (
                               node.draft ? '🆕 Borrador de Actividad' : 'Actividad del sistema'
@@ -3894,7 +5262,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                 const fromNode = findNode(edge.from);
                 const toNode = findNode(edge.to);
                 if (!fromNode || !toNode) return null;
-                const { p1, p2 } = getSmartWirePath(fromNode, toNode);
+                const { p1, p2 } = getSmartWirePath(fromNode, toNode, edge, nodeSizesRef.current);
                 const midX = (p1.x + p2.x) / 2;
                 const midY = (p1.y + p2.y) / 2;
                 const defaultColor = fromNode.customColor || NODE_TYPES[fromNode.type]?.colorVar || '#ea580c';
@@ -3984,13 +5352,51 @@ const EditorVisualPage = ({ standalone = false }) => {
               )}
             </div>
 
+            {/* ---------- Barra Flotante de Selección Múltiple y Arrastre en Grupo ---------- */}
+            {selectedNodeIds.size > 1 && (
+              <div className={styles.multiSelectionToolbar} onMouseDown={(e) => e.stopPropagation()}>
+                <div className={styles.multiSelectionInfo}>
+                  <span className={styles.multiSelectionBadge}>📦 {selectedNodeIds.size}</span>
+                  <span>Nodos en grupo — <strong>Arrastra cualquiera para mover todo el conjunto</strong></span>
+                </div>
+                <div className={styles.multiSelectionActions}>
+                  {selectedNodeId && (
+                    <button
+                      type="button"
+                      className={styles.multiSelectionBtn}
+                      onClick={() => handleSelectConnectedCluster(selectedNodeId)}
+                      title="Seleccionar toda la cadena conectada a este nodo"
+                    >
+                      🔗 Cadena
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={styles.multiSelectionBtn}
+                    onClick={handleSelectAllNodes}
+                    title="Seleccionar todos los nodos del lienzo"
+                  >
+                    📑 Todos ({nodes.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.multiSelectionBtnClear}
+                    onClick={handleClearSelection}
+                    title="Deseleccionar todos"
+                  >
+                    ✕ Limpiar
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* ---------- Barra de Información Técnica CAD (Inferior Izquierda) ---------- */}
             <div className={styles.cadInfoBar} onMouseDown={(e) => e.stopPropagation()}>
               <div className={styles.cadCoords}>
                 <span>📍</span> X: {cursorCoords.x} mm &nbsp;|&nbsp; Y: {cursorCoords.y} mm
               </div>
               <div className={styles.cadShortcuts}>
-                🖱️ Rueda: Zoom · Clic Rueda / Espacio: Mover · F: Centrar
+                🖱️ Rueda: Zoom · Clic Rueda / Espacio: Mover · Shift+Arrastrar: Seleccionar Grupo · Alt+Arrastrar: Mover Cadena
               </div>
             </div>
 
@@ -4072,6 +5478,8 @@ const EditorVisualPage = ({ standalone = false }) => {
                   addProject={addProject}
                   addGame={addGame}
                   updateProject={updateProject}
+                  updateActividad={updateActividad}
+                  setNodes={setNodes}
                   canEditDiagram={canEditDiagram}
                   updateBlockField={(field, value) => updateBlockField(selectedNode.id, field, value)}
                   updateBlockName={(value) => updateBlockName(selectedNode.id, value)}
@@ -4083,168 +5491,28 @@ const EditorVisualPage = ({ standalone = false }) => {
                   updateEdgeStyle={updateEdgeStyle}
                   dynamicAreas={dynamicAreas}
                   allBlockAreas={allBlockAreas}
+                  allAvailableAreas={allAvailableAreas}
+                  allCollaborators={allCollaborators}
+                  getCollaboratorsForArea={getCollaboratorsForArea}
                   getSupervisorForArea={getSupervisorForArea}
                   onViewAreaTasks={(areaId, areaName) => setAreaTasksModal({ isOpen: true, areaId, areaName })}
                   onStartActivity={handleStartActivity}
                   onOpenCompleteModal={handleOpenCompleteModal}
                   onResetActivityStatus={handleResetActivityStatus}
                   canUserControlActivity={canUserControlActivity}
+                  getActivityBlockStatus={getActivityBlockStatus}
+                  getActivityPredecessors={getActivityPredecessors}
                   lienzoActivoId={lienzoActivoId}
+                  onFocusNode={handleFocusNode}
+                  onSelectConnectedCluster={handleSelectConnectedCluster}
+                  previewResourceModal={previewResourceModal}
+                  setPreviewResourceModal={setPreviewResourceModal}
+                  handleDeployAllActivityResources={handleDeployAllActivityResources}
                 />
               </motion.aside>
             )}
           </AnimatePresence>
       </div>
-
-      {/* ---------- MODAL: CONFIRMAR ELIMINAR LIENZO ---------- */}
-      <Modal
-        isOpen={deleteLienzoConfirm}
-        onClose={() => setDeleteLienzoConfirm(false)}
-        title="🗑️ Eliminar Lienzo Visual"
-      >
-        <p style={{ margin: '0 0 16px 0', fontSize: '14px', lineHeight: 1.5, color: 'var(--color-dark)' }}>
-          ¿Estás seguro de que deseas eliminar este lienzo visual? Esta acción no se puede deshacer. Los proyectos o actividades reales que se hayan creado en la base de datos se mantendrán a salvo en el sistema.
-        </p>
-        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-          <Button variant="secondary" size="md" onClick={() => setDeleteLienzoConfirm(false)}>
-            Cancelar
-          </Button>
-          <Button variant="danger" size="md" onClick={handleDeleteCurrentLienzo}>
-            🗑️ Sí, Eliminar Lienzo
-          </Button>
-        </div>
-      </Modal>
-
-      {/* ---------- MODAL: ADMINISTRAR Y ELIMINAR CUALQUIER LIENZO ---------- */}
-      <Modal
-        isOpen={manageLienzosModal}
-        onClose={() => setManageLienzosModal(false)}
-        title="📂 Administrar y Eliminar Lienzos Visuales"
-      >
-        <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', margin: '0 0 12px 0' }}>
-          Desde aquí puedes revisar todos los lienzos creados, abrirlos en pantalla o eliminar los que ya no utilices:
-        </p>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '360px', overflowY: 'auto', paddingRight: '4px' }}>
-          {/* Lienzo General */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '10px 12px',
-              borderRadius: '8px',
-              border: '1px solid var(--color-gray-200)',
-              backgroundColor: lienzoActivoId === 'general' ? 'rgba(37, 99, 235, 0.08)' : 'var(--color-gray-50)',
-            }}
-          >
-            <div>
-              <strong style={{ fontSize: '13px', display: 'block', color: 'var(--color-dark)' }}>
-                🎨 Lienzo General (Boceto Principal)
-              </strong>
-              <small style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>Lienzo predeterminado del sistema</small>
-            </div>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              {lienzoActivoId !== 'general' ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setLienzoActivoId('general');
-                    setManageLienzosModal(false);
-                  }}
-                >
-                  👁️ Abrir
-                </Button>
-              ) : (
-                <span style={{ fontSize: '11px', color: 'var(--color-primary)', fontWeight: 700, padding: '4px 8px' }}>
-                  ● En pantalla
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Lienzos personalizados creados */}
-          {lienzosList
-            .filter((l) => l.id !== 'general' && !proyectos.some((p) => p.id === l.id))
-            .map((lienzo) => {
-              const isActive = lienzoActivoId === lienzo.id;
-              const nodeCount = (lienzo.nodes || []).length;
-              return (
-                <div
-                  key={lienzo.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    border: isActive ? '1.5px solid var(--color-primary)' : '1px solid var(--color-gray-200)',
-                    backgroundColor: isActive ? 'rgba(234, 88, 12, 0.08)' : 'var(--card-bg, #ffffff)',
-                  }}
-                >
-                  <div>
-                    <strong style={{ fontSize: '13.5px', display: 'block', color: 'var(--color-dark)' }}>
-                      🎨 {lienzo.name || 'Lienzo Visual'}
-                    </strong>
-                    <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
-                      <span>📌 {nodeCount} {nodeCount === 1 ? 'nodo' : 'nodos'}</span>
-                      {isActive && <span style={{ color: 'var(--color-primary)', fontWeight: 700 }}>● Activo en pantalla</span>}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    {!isActive && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => {
-                          setLienzoActivoId(lienzo.id);
-                          setManageLienzosModal(false);
-                        }}
-                      >
-                        👁️ Abrir
-                      </Button>
-                    )}
-                    {canEditDiagram && (
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => handleDeleteLienzoById(lienzo.id, lienzo.name)}
-                        title={`Eliminar el lienzo "${lienzo.name}"`}
-                      >
-                        🗑️ Eliminar
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-          {lienzosList.filter((l) => l.id !== 'general' && !proyectos.some((p) => p.id === l.id)).length === 0 && (
-            <div style={{ padding: '20px', textAlign: 'center', fontSize: '12.5px', color: 'var(--color-gray-400)', fontStyle: 'italic' }}>
-              No tienes lienzos personalizados adicionales creados. Puedes crear uno con el botón &ldquo;➕ Nuevo Lienzo&rdquo;.
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--color-gray-200)' }}>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => {
-              setManageLienzosModal(false);
-              setNewLienzoModal({ isOpen: true, name: '' });
-            }}
-          >
-            ➕ Crear Nuevo Lienzo
-          </Button>
-
-          <Button variant="secondary" size="sm" onClick={() => setManageLienzosModal(false)}>
-            Cerrar
-          </Button>
-        </div>
-      </Modal>
 
       {/* ---------- MODAL: CONFIRMAR LIMPIAR NODOS DEL LIENZO ---------- */}
       <Modal
@@ -4265,33 +5533,6 @@ const EditorVisualPage = ({ standalone = false }) => {
         </div>
       </Modal>
 
-      {/* ---------- MODAL: CREAR NUEVO LIENZO / PROYECTO VISUAL ---------- */}
-      <Modal
-        isOpen={newLienzoModal.isOpen}
-        onClose={() => setNewLienzoModal({ isOpen: false, name: '' })}
-        title="🎨 Nuevo Lienzo / Proyecto Visual"
-      >
-        <div className={styles.field}>
-          <label>Nombre del Lienzo / Boceto *</label>
-          <input
-            type="text"
-            autoFocus
-            placeholder="Ej. Boceto Nueva Planta, Diagrama General..."
-            value={newLienzoModal.name}
-            onChange={(e) => setNewLienzoModal((prev) => ({ ...prev, name: e.target.value }))}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleCreateNewLienzo();
-            }}
-          />
-        </div>
-        <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', margin: '8px 0 16px 0' }}>
-          💡 Un lienzo libre te permite crear nodos, cables y dar de alta proyectos o juegos directamente desde adentro del diagrama.
-        </p>
-        <Button variant="primary" size="md" onClick={handleCreateNewLienzo} style={{ width: '100%' }}>
-          🎨 Crear y Abrir Lienzo
-        </Button>
-      </Modal>
-
       {/* ---------- MODAL UNIFICADO: AGREGAR / CREAR NODO EN EL LIENZO ---------- */}
       <Modal
         isOpen={nodeModal.isOpen}
@@ -4310,8 +5551,8 @@ const EditorVisualPage = ({ standalone = false }) => {
             : '📦 Crear Celda Modular de Trabajo'
         }
       >
-        {/* TABS: SELECCIONAR EXISTENTE vs CREAR NUEVO (para Proyecto, Juego, Actividad) */}
-        {(nodeModal.type === 'proyecto' || nodeModal.type === 'juego' || nodeModal.type === 'actividad') && (
+        {/* TABS: SELECCIONAR EXISTENTE vs CREAR NUEVO (solo para Proyecto y Juego) */}
+        {(nodeModal.type === 'proyecto' || nodeModal.type === 'juego') && (
           <div className={styles.nodeModalTabs}>
             <button
               type="button"
@@ -4330,8 +5571,8 @@ const EditorVisualPage = ({ standalone = false }) => {
           </div>
         )}
 
-        {/* 1. SELECCIONAR EXISTENTE (Colaborador, Área, Proyecto, Juego, Actividad) */}
-        {(nodeModal.tab === 'existing' || nodeModal.type === 'colaborador' || nodeModal.type === 'area') && (
+        {/* 1. SELECCIONAR EXISTENTE (Colaborador, Área, o Proyecto/Juego en tab existing) */}
+        {nodeModal.type !== 'actividad' && (nodeModal.tab === 'existing' || nodeModal.type === 'colaborador' || nodeModal.type === 'area') && (
           <div>
             <input
               type="text"
@@ -4402,6 +5643,42 @@ const EditorVisualPage = ({ standalone = false }) => {
                 />
               </div>
             </div>
+
+            <div>
+              <label className={styles.inlineSubLabel}>🛠️ ¿Qué se fabricará en este proyecto? (Productos / Modelos / Piezas)</label>
+              <textarea
+                rows="2"
+                placeholder="Ej. 2 Módulos infantiles, 4 bancas metálicas, 1 columpio quíntuple..."
+                value={nodeModal.newProjItems}
+                onChange={(e) => setNodeModal((prev) => ({ ...prev, newProjItems: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <label className={styles.inlineSubLabel}>🏭 Áreas Involucradas en el Proyecto:</label>
+              <div className={styles.areasGridPills} style={{ marginTop: '4px' }}>
+                {(allBlockAreas || dynamicAreas).map((area) => {
+                  const isSelected = (nodeModal.newProjAreas || []).includes(area.id);
+                  return (
+                    <button
+                      key={area.id}
+                      type="button"
+                      className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                      onClick={() => {
+                        const current = nodeModal.newProjAreas || [];
+                        const next = isSelected
+                          ? current.filter((id) => id !== area.id)
+                          : [...current, area.id];
+                        setNodeModal((prev) => ({ ...prev, newProjAreas: next }));
+                      }}
+                    >
+                      {isSelected ? '✓ ' : '+ '} {area.icon || '🏭'} {area.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className={styles.createGrid2}>
               <div>
                 <label className={styles.inlineSubLabel}>Fecha de Inicio</label>
@@ -4495,7 +5772,7 @@ const EditorVisualPage = ({ standalone = false }) => {
         )}
 
         {/* 4. CREAR NUEVA ACTIVIDAD */}
-        {nodeModal.tab === 'new' && nodeModal.type === 'actividad' && (
+        {nodeModal.type === 'actividad' && (
           <div className={styles.inlineCreateBox}>
             <label className={styles.inlineLabel}>Título de la Tarea / Actividad *</label>
             <input
@@ -4508,16 +5785,75 @@ const EditorVisualPage = ({ standalone = false }) => {
 
             <div className={styles.createGrid2}>
               <div>
-                <label className={styles.inlineSubLabel}>🏭 Área de Manufactura</label>
+                <label className={styles.inlineSubLabel}>🏭 Área Responsable / Departamento *</label>
                 <select
                   value={nodeModal.newActAreaId}
-                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newActAreaId: e.target.value }))}
+                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newActAreaId: e.target.value, newActOperarioId: '' }))}
                 >
-                  {dynamicAreas.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
+                  {allAvailableAreas.map((a) => (
+                    <option key={a.id} value={a.id}>{a.icon || '🏭'} {a.name}</option>
                   ))}
                 </select>
               </div>
+              <div>
+                <label className={styles.inlineSubLabel}>🎖️ Responsable del Área (Supervisa)</label>
+                {(() => {
+                  const sup = getSupervisorForArea(nodeModal.newActAreaId);
+                  return (
+                    <div
+                      style={{
+                        padding: '7px 11px',
+                        borderRadius: '6px',
+                        background: 'rgba(37, 99, 235, 0.08)',
+                        border: '1.5px solid rgba(37, 99, 235, 0.3)',
+                        color: 'var(--color-dark)',
+                        fontSize: '12.5px',
+                        fontWeight: 700,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        minHeight: '38px',
+                        boxSizing: 'border-box',
+                      }}
+                      title="Supervisor oficial a cargo de esta área (Carga automática)"
+                    >
+                      <span style={{ fontSize: '15px' }}>🎖️</span>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span>{sup.name}</span>
+                        {sup.role && (
+                          <span style={{ fontSize: '10.5px', color: 'var(--color-gray-500)', fontWeight: 500, marginLeft: '5px' }}>
+                            ({sup.role})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            <div>
+              <label className={styles.inlineSubLabel}>
+                👷 Personal Asignado (Operario a cargo de realizar la tarea)
+              </label>
+              <select
+                value={nodeModal.newActOperarioId || ''}
+                onChange={(e) => setNodeModal((prev) => ({ ...prev, newActOperarioId: e.target.value }))}
+              >
+                <option value="">-- Sin asignar a alguien específico (Asignar después) --</option>
+                {(() => {
+                  const filtered = getCollaboratorsForArea(nodeModal.newActAreaId);
+                  const listToRender = filtered.length > 0 ? filtered : allCollaborators;
+                  return listToRender.map((op) => (
+                    <option key={op.id} value={op.id}>
+                      👷 {op.name} {op.puesto ? `(${op.puesto})` : ''}
+                    </option>
+                  ));
+                })()}
+              </select>
+            </div>
+
+            <div className={styles.createGrid2}>
               <div>
                 <label className={styles.inlineSubLabel}>Prioridad</label>
                 <select
@@ -4529,9 +5865,55 @@ const EditorVisualPage = ({ standalone = false }) => {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className={styles.inlineSubLabel}>Fecha Límite (opcional)</label>
+                <input
+                  type="date"
+                  value={nodeModal.newActDueDate || ''}
+                  onChange={(e) => setNodeModal((prev) => ({ ...prev, newActDueDate: e.target.value }))}
+                />
+              </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '12px' }}>
+            <div>
+              <label className={styles.inlineSubLabel}>🔗 Enlace Web o Nube (Drive, Figma, Autodesk)</label>
+              <input
+                type="text"
+                placeholder="https://drive.google.com/... o https://figma.com/..."
+                value={nodeModal.newActUrl || ''}
+                onChange={(e) => setNodeModal((prev) => ({ ...prev, newActUrl: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <label className={styles.inlineSubLabel}>🖼️ Imagen / Archivo de Ayuda Visual (opcional)</label>
+              <input
+                type="file"
+                accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl,.sldprt,.sldasm,.slddrw,.ipt,.iam,.idw"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setNodeModal((prev) => ({
+                      ...prev,
+                      newActPendingFile: file,
+                      newActFileData: {
+                        name: file.name,
+                        size: file.size,
+                        type: file.type,
+                        dataUrl: URL.createObjectURL(file),
+                      },
+                    }));
+                  }
+                }}
+              />
+              {nodeModal.newActPendingFile && (
+                <div style={{ marginTop: '4px', fontSize: '11.5px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span>✓ {nodeModal.newActPendingFile.name} ({Math.round(nodeModal.newActPendingFile.size / 1024)} KB)</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
               <Button variant="secondary" size="md" onClick={closeNodeModal}>Cancelar</Button>
               <Button variant="primary" size="md" onClick={handleCreateNewActivityNode}>📌 Crear y Agregar al Lienzo</Button>
             </div>
@@ -4614,13 +5996,24 @@ const EditorVisualPage = ({ standalone = false }) => {
       >
         {(() => {
           const info = getResourcePreviewInfo(previewResourceModal);
+          const effectiveImg = previewResourceModal.url || info.previewImgSrc || info.fileUrl;
+          const showImage = Boolean(
+            effectiveImg && (
+              previewResourceModal.resourceType === 'imagen' ||
+              info.previewImgSrc ||
+              effectiveImg.startsWith('data:image') ||
+              effectiveImg.match(/\.(jpeg|jpg|png|webp|gif|svg|avif)($|\?)/i) ||
+              effectiveImg.includes('firebasestorage.googleapis.com')
+            )
+          );
+
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'center' }}>
               {/* VISTA PREVIA DE IMAGEN */}
-              {info.previewImgSrc && (
+              {showImage && (
                 <div style={{ width: '100%', maxHeight: '65vh', overflow: 'auto', background: 'rgba(0,0,0,0.05)', borderRadius: '12px', padding: '8px', display: 'flex', justifyContent: 'center' }}>
                   <img
-                    src={info.previewImgSrc}
+                    src={effectiveImg}
                     alt={previewResourceModal.title || 'Vista previa'}
                     style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.15)' }}
                   />
@@ -4628,7 +6021,7 @@ const EditorVisualPage = ({ standalone = false }) => {
               )}
 
               {/* VISTA PREVIA DE DOCUMENTO / PDF */}
-              {info.isPdf && !info.previewImgSrc && (
+              {info.isPdf && !showImage && (
                 <div style={{ width: '100%', padding: '24px', background: 'var(--color-gray-50)', border: '1px solid var(--color-gray-200)', borderRadius: '12px', textAlign: 'center' }}>
                   <span style={{ fontSize: '48px', display: 'block', marginBottom: '8px' }}>📄</span>
                   <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', color: 'var(--color-dark)' }}>
@@ -4967,6 +6360,8 @@ const NodeInspector = ({
   addProject,
   addGame,
   updateProject,
+  updateActividad,
+  setNodes,
   canEditDiagram,
   updateBlockField,
   updateBlockName,
@@ -4978,17 +6373,28 @@ const NodeInspector = ({
   updateEdgeStyle,
   dynamicAreas,
   allBlockAreas,
+  allAvailableAreas = [],
+  allCollaborators = [],
+  getCollaboratorsForArea = () => [],
   getSupervisorForArea,
   onViewAreaTasks,
   onStartActivity,
   onOpenCompleteModal,
   onResetActivityStatus,
   canUserControlActivity,
+  getActivityBlockStatus,
+  getActivityPredecessors,
   lienzoActivoId = 'general',
   onClose,
+  onFocusNode,
+  onSelectConnectedCluster,
+  previewResourceModal,
+  setPreviewResourceModal,
+  handleDeployAllActivityResources,
 }) => {
   const meta = NODE_TYPES[node.type] || DEFAULT_NODE_META;
   const toast = useToast();
+  const { user } = useAuth();
 
   const [isCreatingProj, setIsCreatingProj] = useState(false);
   const [newProjName, setNewProjName] = useState('');
@@ -5010,6 +6416,8 @@ const NodeInspector = ({
   const [editProjStartDate, setEditProjStartDate] = useState('');
   const [editProjEndDate, setEditProjEndDate] = useState('');
   const [editProjDesc, setEditProjDesc] = useState('');
+  const [editProjItems, setEditProjItems] = useState('');
+  const [editProjAreas, setEditProjAreas] = useState([]);
   const [isSavingProj, setIsSavingProj] = useState(false);
 
   // 🎮 Estados para editar Juego Existente
@@ -5018,6 +6426,20 @@ const NodeInspector = ({
   const [editGameAreas, setEditGameAreas] = useState([]);
   const [editGameTargets, setEditGameTargets] = useState({});
   const [isSavingGame, setIsSavingGame] = useState(false);
+
+  // 📌 Estados para editar Actividad Existente
+  const [editActTitle, setEditActTitle] = useState('');
+  const [editActDesc, setEditActDesc] = useState('');
+  const [editActAreaId, setEditActAreaId] = useState('herreria');
+  const [editActOperarioId, setEditActOperarioId] = useState('');
+  const [editActPriority, setEditActPriority] = useState('media');
+  const [editActDueDate, setEditActDueDate] = useState('');
+  const [editActLinks, setEditActLinks] = useState([]);
+  const [newLinkInput, setNewLinkInput] = useState('');
+  const [checklist, setChecklist] = useState([]);
+  const [newChecklistText, setNewChecklistText] = useState('');
+  const [isSavingAct, setIsSavingAct] = useState(false);
+  const [isUploadingActFile, setIsUploadingActFile] = useState(false);
 
   // Estados para abrir acordeón de edición en Bloques
   const [isEditingLinkedProj, setIsEditingLinkedProj] = useState(false);
@@ -5031,6 +6453,8 @@ const NodeInspector = ({
       setEditProjStartDate(entity.startDate || '');
       setEditProjEndDate(entity.endDate || '');
       setEditProjDesc(entity.description || '');
+      setEditProjItems(entity.itemsToManufacture || '');
+      setEditProjAreas(entity.areas || ['arquitectura', 'diseno', 'herreria', 'corte-laser']);
     }
     if (entity && node.type === 'juego') {
       setEditGameName(entity.name || '');
@@ -5038,7 +6462,122 @@ const NodeInspector = ({
       setEditGameAreas(entity.areas || ['herreria', 'corte-laser']);
       setEditGameTargets(entity.targetPieces || {});
     }
+    if (entity && node.type === 'actividad') {
+      setEditActTitle(entity.title || '');
+      setEditActDesc(entity.description || '');
+      setEditActAreaId(entity.areaId || 'herreria');
+      setEditActOperarioId(entity.operarioId || '');
+      setEditActPriority(entity.priority || 'media');
+      setEditActDueDate(entity.dueDate || '');
+      setEditActLinks(entity.links || []);
+      setChecklist(Array.isArray(entity.checklist) ? entity.checklist : []);
+    }
   }, [entity, node.type]);
+
+  const handleToggleChecklist = async (index) => {
+    if (!canEditDiagram || !entity?.id) return;
+    const updated = checklist.map((item, i) => {
+      if (i === index) {
+        const nextCompleted = !item.completed;
+        return {
+          ...item,
+          completed: nextCompleted,
+          completedAt: nextCompleted ? new Date().toISOString() : null,
+          completedBy: nextCompleted ? (user?.name || user?.displayName || 'Usuario') : null,
+        };
+      }
+      return item;
+    });
+    setChecklist(updated);
+    try {
+      await updateDoc(doc(db, 'actividades', entity.id), {
+        checklist: updated,
+        updatedAt: new Date().toISOString(),
+      });
+      if (updateActividad) {
+        updateActividad(entity.id, { checklist: updated });
+      }
+    } catch (e) {
+      toast.danger('No se pudo actualizar el requisito.');
+    }
+  };
+
+  const handleAddChecklist = async () => {
+    if (!canEditDiagram || !entity?.id || !newChecklistText.trim()) return;
+    const newItem = {
+      id: `chk_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      text: newChecklistText.trim(),
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = [...checklist, newItem];
+    setChecklist(updated);
+    setNewChecklistText('');
+    try {
+      await updateDoc(doc(db, 'actividades', entity.id), {
+        checklist: updated,
+        updatedAt: new Date().toISOString(),
+      });
+      if (updateActividad) {
+        updateActividad(entity.id, { checklist: updated });
+      }
+      toast.success('☑️ Requisito añadido al checklist.');
+    } catch (e) {
+      toast.danger('No se pudo guardar el nuevo requisito.');
+    }
+  };
+
+  const handleDeleteChecklist = async (index) => {
+    if (!canEditDiagram || !entity?.id) return;
+    const updated = checklist.filter((_, i) => i !== index);
+    setChecklist(updated);
+    try {
+      await updateDoc(doc(db, 'actividades', entity.id), {
+        checklist: updated,
+        updatedAt: new Date().toISOString(),
+      });
+      if (updateActividad) {
+        updateActividad(entity.id, { checklist: updated });
+      }
+      toast.info('🗑️ Requisito eliminado.');
+    } catch (e) {
+      toast.danger('Error al eliminar requisito.');
+    }
+  };
+
+  const handleToggleEditProjArea = (areaId) => {
+    setEditProjAreas((prev) => {
+      const next = prev.includes(areaId) ? prev.filter((a) => a !== areaId) : [...prev, areaId];
+      return next;
+    });
+  };
+
+  // Proyecto vinculado a la actividad seleccionada
+  const linkedProject = useMemo(() => {
+    if (node.type !== 'actividad') return null;
+    if (entity?.projectId) return proyectos.find((p) => p.id === entity.projectId);
+    
+    // Cable directo a nodo Proyecto
+    const projEdge = (edges || []).find(
+      (e) => (e.from === node.id && findNode(e.to)?.type === 'proyecto') || (e.to === node.id && findNode(e.from)?.type === 'proyecto')
+    );
+    if (projEdge) {
+      const pNode = findNode(findNode(projEdge.from)?.type === 'proyecto' ? projEdge.from : projEdge.to);
+      if (pNode?.refId) return proyectos.find((p) => p.id === pNode.refId);
+    }
+
+    // Cable a nodo Juego con proyecto
+    const gameEdge = (edges || []).find(
+      (e) => (e.from === node.id && findNode(e.to)?.type === 'juego') || (e.to === node.id && findNode(e.from)?.type === 'juego')
+    );
+    if (gameEdge) {
+      const gNode = findNode(findNode(gameEdge.from)?.type === 'juego' ? gameEdge.from : gameEdge.to);
+      const gEntity = gNode ? juegos.find((j) => j.id === gNode.refId) : null;
+      if (gEntity?.projectId) return proyectos.find((p) => p.id === gEntity.projectId);
+    }
+
+    return null;
+  }, [node, entity, edges, findNode, proyectos, juegos]);
 
   const handleUpdateExistingProject = async () => {
     if (!editProjName.trim() || !editProjClient.trim()) {
@@ -5054,6 +6593,8 @@ const NodeInspector = ({
         startDate: editProjStartDate || null,
         endDate: editProjEndDate || null,
         description: editProjDesc.trim() || 'Sin descripción',
+        itemsToManufacture: editProjItems.trim() || '',
+        areas: editProjAreas || [],
       });
       if (res?.ok !== false) {
         toast.success(`✅ Proyecto "${editProjName.trim()}" actualizado.`);
@@ -5065,6 +6606,340 @@ const NodeInspector = ({
     } finally {
       setIsSavingProj(false);
     }
+  };
+
+  const handleUpdateExistingActivity = async () => {
+    if (!editActTitle.trim()) {
+      toast.danger('El título de la actividad es obligatorio.');
+      return;
+    }
+    setIsSavingAct(true);
+    try {
+      if (updateActividad) {
+        const res = await updateActividad(entity.id, {
+          title: editActTitle.trim(),
+          description: editActDesc.trim() || 'Sin descripción',
+          areaId: editActAreaId,
+          operarioId: editActOperarioId || null,
+          priority: editActPriority,
+          dueDate: editActDueDate || null,
+          links: editActLinks,
+          checklist: checklist,
+          updatedAt: new Date().toISOString(),
+        });
+        if (res?.ok !== false) {
+          toast.success(`✅ Actividad "${editActTitle.trim()}" actualizada.`);
+        } else {
+          toast.danger(`Error: ${res.error}`);
+        }
+      }
+    } catch (err) {
+      console.error('Error al actualizar actividad:', err);
+      toast.danger('No se pudo actualizar la actividad.');
+    } finally {
+      setIsSavingAct(false);
+    }
+  };
+
+  const handleUploadActivityAttachment = async (file) => {
+    if (!file) return;
+    setIsUploadingActFile(true);
+    toast.info(`⏳ Subiendo "${file.name}" a la nube...`);
+    try {
+      const uploaded = await uploadResourceFile(file, lienzoActivoId);
+      if (uploaded) {
+        const currentAttachments = entity.attachments || [];
+        const nextAttachments = [...currentAttachments, uploaded];
+        await updateDoc(doc(db, 'actividades', entity.id), {
+          attachments: nextAttachments,
+          updatedAt: new Date().toISOString(),
+        });
+        if (updateActividad) updateActividad(entity.id, { attachments: nextAttachments });
+        toast.success(`✅ Archivo "${file.name}" adjuntado a la actividad.`);
+
+        // Si es una imagen, crear y conectar automáticamente el nodo de imagen flotante sin marco en el lienzo
+        if (file.type?.startsWith('image/') || uploaded.url?.match(/\.(jpeg|jpg|png|webp|gif)($|\?)/i) || uploaded.dataUrl?.startsWith('data:image')) {
+          handleSpawnFloatingImage(uploaded);
+          toast.success('🖼️ Imagen flotante sin marco agregada al lienzo y conectada.');
+        }
+      }
+    } catch (err) {
+      console.error('Error al subir archivo:', err);
+      toast.danger('No se pudo subir el archivo.');
+    } finally {
+      setIsUploadingActFile(false);
+    }
+  };
+
+  const handleRemoveActivityAttachment = async (indexToRemove) => {
+    const currentAttachments = entity.attachments || [];
+    const attToRemove = currentAttachments[indexToRemove];
+    if (attToRemove?.storagePath && storage) {
+      deleteObject(ref(storage, attToRemove.storagePath)).catch(() => {});
+    }
+    const nextAttachments = currentAttachments.filter((_, i) => i !== indexToRemove);
+    await updateDoc(doc(db, 'actividades', entity.id), {
+      attachments: nextAttachments,
+      updatedAt: new Date().toISOString(),
+    });
+    if (updateActividad) updateActividad(entity.id, { attachments: nextAttachments });
+    toast.info('Archivo adjunto eliminado de la actividad.');
+
+    // 🔥 ELIMINAR AUTOMÁTICAMENTE EL NODO FLOTANTE DE LA IMAGEN EN EL LIENZO
+    if (attToRemove && setNodes) {
+      const targetUrl = attToRemove.url || attToRemove.dataUrl;
+      const targetName = attToRemove.name;
+
+      const nodesToDelete = (nodes || []).filter((n) => {
+        if (n.type !== 'recurso') return false;
+        const fData = n.draftFields?.fileData;
+        const nUrl = n.draftFields?.url || fData?.url || fData?.dataUrl;
+        const nName = fData?.name;
+        const matchesUrl = Boolean(targetUrl && nUrl && (nUrl === targetUrl || nUrl.includes(targetName)));
+        const matchesName = Boolean(targetName && nName && nName === targetName);
+        const isConnected = (edges || []).some((e) => (e.from === node.id && e.to === n.id) || (e.to === node.id && e.from === n.id));
+        return (matchesUrl || matchesName) && isConnected;
+      });
+
+      if (nodesToDelete.length > 0) {
+        const deleteIds = new Set(nodesToDelete.map((n) => n.id));
+        const nextNodes = nodes.filter((n) => !deleteIds.has(n.id));
+        const nextEdges = (edges || []).filter((e) => !deleteIds.has(e.from) && !deleteIds.has(e.to));
+        setNodes(nextNodes);
+        if (setEdges) setEdges(nextEdges);
+        if (saveToFirestore) saveToFirestore(nextNodes, nextEdges);
+        toast.info('🗑️ Nodo flotante de la imagen retirado del lienzo.');
+      }
+    }
+  };
+
+  const handleAddLinkToActivity = async () => {
+    if (!newLinkInput.trim()) return;
+    const formatted = formatExternalUrl(newLinkInput.trim());
+    const nextLinks = [...(editActLinks || []), formatted];
+    setEditActLinks(nextLinks);
+    setNewLinkInput('');
+    await updateDoc(doc(db, 'actividades', entity.id), {
+      links: nextLinks,
+      updatedAt: new Date().toISOString(),
+    });
+    if (updateActividad) updateActividad(entity.id, { links: nextLinks });
+    toast.success('🔗 Enlace agregado a la actividad.');
+
+    // 🔥 GENERAR Y CONECTAR AUTOMÁTICAMENTE EL NODO DE ENLACE FLOTANTE EN EL LIENZO
+    handleSpawnFloatingLink(formatted);
+  };
+
+  const handleRemoveLinkFromActivity = async (indexToRemove) => {
+    const linkToRemove = (editActLinks || [])[indexToRemove];
+    const nextLinks = editActLinks.filter((_, i) => i !== indexToRemove);
+    setEditActLinks(nextLinks);
+    await updateDoc(doc(db, 'actividades', entity.id), {
+      links: nextLinks,
+      updatedAt: new Date().toISOString(),
+    });
+    if (updateActividad) updateActividad(entity.id, { links: nextLinks });
+    toast.info('Enlace removido.');
+
+    // 🔥 ELIMINAR AUTOMÁTICAMENTE EL NODO FLOTANTE DEL ENLACE EN EL LIENZO
+    if (linkToRemove && setNodes) {
+      const nodesToDelete = (nodes || []).filter((n) => {
+        if (n.type !== 'recurso') return false;
+        const nUrl = n.draftFields?.url;
+        const matchesUrl = Boolean(nUrl && nUrl === linkToRemove);
+        const isConnected = (edges || []).some((e) => (e.from === node.id && e.to === n.id) || (e.to === node.id && e.from === n.id));
+        return matchesUrl && isConnected;
+      });
+
+      if (nodesToDelete.length > 0) {
+        const deleteIds = new Set(nodesToDelete.map((n) => n.id));
+        const nextNodes = nodes.filter((n) => !deleteIds.has(n.id));
+        const nextEdges = (edges || []).filter((e) => !deleteIds.has(e.from) && !deleteIds.has(e.to));
+        setNodes(nextNodes);
+        if (setEdges) setEdges(nextEdges);
+        if (saveToFirestore) saveToFirestore(nextNodes, nextEdges);
+        toast.info('🗑️ Nodo flotante del enlace retirado del lienzo.');
+      }
+    }
+  };
+
+  const handleSpawnFloatingLink = (linkUrl) => {
+    const actX = node.x || 200;
+    const actY = node.y || 200;
+
+    // 1. Verificar si el nodo del enlace ya existe en el lienzo
+    const existingNode = (nodes || []).find((n) => {
+      if (n.type !== 'recurso') return false;
+      const nUrl = n.draftFields?.url;
+      return Boolean(nUrl && nUrl === linkUrl);
+    });
+
+    if (existingNode) {
+      // Si ya está en el lienzo pero le falta el cable de conexión a esta actividad, reconectarlo
+      const isConnected = (edges || []).some(
+        (e) => (e.from === node.id && e.to === existingNode.id) || (e.to === node.id && e.from === existingNode.id)
+      );
+      if (!isConnected && setEdges) {
+        const wireEdge = {
+          id: `e-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          from: node.id,
+          to: existingNode.id,
+          fromPort: 'out',
+          toPort: 'in',
+          style: 'dashed',
+          customColor: '#38bdf8',
+        };
+        setEdges((prevE) => {
+          const nextE = [...prevE, wireEdge];
+          if (saveToFirestore) saveToFirestore(nodes, nextE);
+          return nextE;
+        });
+      }
+      if (onFocusNode) onFocusNode(existingNode);
+      toast.info('📍 Enlace enfocado en el lienzo.');
+      return;
+    }
+
+    // 2. Si no existe en el lienzo, crearlo y conectarlo con cable
+    const connectedRecursosCount = (edges || []).filter(
+      (e) => (e.from === node.id && findNode(e.to)?.type === 'recurso') || (e.to === node.id && findNode(e.from)?.type === 'recurso')
+    ).length;
+
+    const linkId = nextNodeId();
+    let linkTitle = `Enlace: ${entity.title}`;
+    if (linkUrl.includes('drive.google.com')) linkTitle = `Drive: ${entity.title}`;
+    else if (linkUrl.includes('figma.com')) linkTitle = `Figma: ${entity.title}`;
+    else if (linkUrl.includes('autodesk.com') || linkUrl.includes('viewer.autodesk')) linkTitle = `Autodesk 3D: ${entity.title}`;
+
+    const linkNode = {
+      id: linkId,
+      type: 'recurso',
+      x: actX + NODE_WIDTH + 60,
+      y: actY + 70 + (connectedRecursosCount * 80),
+      draft: false,
+      draftFields: {
+        title: linkTitle,
+        url: linkUrl,
+        resourceType: 'link',
+        fileData: null,
+        notes: '',
+      },
+    };
+
+    const wireEdge = {
+      id: `e-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      from: node.id,
+      to: linkId,
+      fromPort: 'out',
+      toPort: 'in',
+      style: 'dashed',
+      customColor: '#38bdf8',
+    };
+
+    if (setNodes) {
+      setNodes((prev) => {
+        const next = [...prev, linkNode];
+        if (setEdges) {
+          setEdges((prevE) => {
+            const nextE = [...prevE, wireEdge];
+            if (saveToFirestore) saveToFirestore(next, nextE);
+            return nextE;
+          });
+        }
+        return next;
+      });
+    }
+
+    toast.success('🔗 Enlace colocado en el lienzo y conectado a la Actividad.');
+  };
+
+  const handleSpawnFloatingImage = (att) => {
+    const actX = node.x || 200;
+    const actY = node.y || 200;
+
+    // 1. Verificar si el nodo de la imagen ya existe en el lienzo
+    const existingNode = (nodes || []).find((n) => {
+      if (n.type !== 'recurso') return false;
+      const fData = n.draftFields?.fileData;
+      const nUrl = n.draftFields?.url || fData?.url || fData?.dataUrl;
+      const attUrl = att.url || att.dataUrl;
+      const matchesUrl = Boolean(nUrl && attUrl && nUrl === attUrl);
+      const matchesName = Boolean(fData?.name && att.name && fData.name === att.name);
+      return matchesUrl || matchesName;
+    });
+
+    if (existingNode) {
+      // Si ya está en el lienzo pero le falta el cable de conexión a esta actividad, reconectarlo
+      const isConnected = (edges || []).some(
+        (e) => (e.from === node.id && e.to === existingNode.id) || (e.to === node.id && e.from === existingNode.id)
+      );
+      if (!isConnected && setEdges) {
+        const wireEdge = {
+          id: `e-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          from: node.id,
+          to: existingNode.id,
+          fromPort: 'out',
+          toPort: 'in',
+          style: 'dashed',
+          customColor: '#06b6d4',
+        };
+        setEdges((prevE) => {
+          const nextE = [...prevE, wireEdge];
+          if (saveToFirestore) saveToFirestore(nodes, nextE);
+          return nextE;
+        });
+      }
+      if (onFocusNode) onFocusNode(existingNode);
+      toast.info('📍 Imagen enfocada en el lienzo.');
+      return;
+    }
+
+    // 2. Si no existe en el lienzo, crearlo y conectarlo con cable
+    const connectedRecursosCount = (edges || []).filter(
+      (e) => (e.from === node.id && findNode(e.to)?.type === 'recurso') || (e.to === node.id && findNode(e.from)?.type === 'recurso')
+    ).length;
+
+    const imgId = nextNodeId();
+    const imgNode = {
+      id: imgId,
+      type: 'recurso',
+      x: actX + NODE_WIDTH + 60,
+      y: actY + (connectedRecursosCount * 110),
+      draft: false,
+      draftFields: {
+        title: `Visual: ${entity.title}`,
+        url: att.url || att.dataUrl || '',
+        resourceType: 'imagen',
+        fileData: att,
+        notes: '',
+      },
+    };
+
+    const wireEdge = {
+      id: `e-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      from: node.id,
+      to: imgId,
+      fromPort: 'out',
+      toPort: 'in',
+      style: 'dashed',
+      customColor: '#06b6d4',
+    };
+
+    if (setNodes) {
+      setNodes((prev) => {
+        const next = [...prev, imgNode];
+        if (setEdges) {
+          setEdges((prevE) => {
+            const nextE = [...prevE, wireEdge];
+            if (saveToFirestore) saveToFirestore(next, nextE);
+            return nextE;
+          });
+        }
+        return next;
+      });
+    }
+
+    toast.success('🖼️ Imagen colocada en el lienzo y conectada a la Actividad.');
   };
 
   const handleToggleEditGameArea = (areaId) => {
@@ -5216,25 +7091,72 @@ const NodeInspector = ({
         )}
       </div>
 
+      {onSelectConnectedCluster && (
+        <div style={{ marginTop: '8px', marginBottom: '14px' }}>
+          <button
+            type="button"
+            className={styles.multiSelectionBtn}
+            style={{ width: '100%', justifyContent: 'center', padding: '7px 12px', fontSize: '11.5px', borderRadius: '8px' }}
+            onClick={() => onSelectConnectedCluster(node.id)}
+            title="Selecciona este nodo y todos los nodos conectados en cadena para moverlos juntos en el lienzo"
+          >
+            🔗 Mover / Seleccionar Cadena Conectada
+          </button>
+        </div>
+      )}
+
       {node.draft && node.type === 'proyecto' && (
         <>
           <div className={styles.field}>
-            <label>Nombre</label>
-            <input type="text" value={node.draftFields.name} disabled={!canEditDiagram} onChange={(e) => updateDraftField('name', e.target.value)} />
+            <label>Nombre del Proyecto *</label>
+            <input type="text" value={node.draftFields.name || ''} disabled={!canEditDiagram} onChange={(e) => updateDraftField('name', e.target.value)} />
           </div>
           <div className={styles.field}>
-            <label>Cliente</label>
-            <input type="text" value={node.draftFields.client} disabled={!canEditDiagram} onChange={(e) => updateDraftField('client', e.target.value)} />
+            <label>Cliente *</label>
+            <input type="text" value={node.draftFields.client || ''} disabled={!canEditDiagram} onChange={(e) => updateDraftField('client', e.target.value)} />
           </div>
           <div className={styles.field}>
-            <label>Estado</label>
-            <select value={node.draftFields.status} disabled={!canEditDiagram} onChange={(e) => updateDraftField('status', e.target.value)}>
+            <label>Estado del Proyecto</label>
+            <select value={node.draftFields.status || 'diseno'} disabled={!canEditDiagram} onChange={(e) => updateDraftField('status', e.target.value)}>
               {PROJECT_STATUS_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
           </div>
-          {canEditDiagram && <Button variant="primary" size="md" onClick={onSaveProyecto}>💾 Guardar en el Sistema</Button>}
+          <div className={styles.field}>
+            <label>🛠️ ¿Qué se fabricará en este proyecto?</label>
+            <textarea
+              rows="2"
+              value={node.draftFields.itemsToManufacture || ''}
+              disabled={!canEditDiagram}
+              onChange={(e) => updateDraftField('itemsToManufacture', e.target.value)}
+              placeholder="Ej: 2 Módulos infantiles, 4 bancas metálicas..."
+            />
+          </div>
+          <div className={styles.field}>
+            <label>🏭 Áreas Involucradas en el Proyecto</label>
+            <div className={styles.areasGridPills} style={{ marginTop: '4px' }}>
+              {(allBlockAreas || dynamicAreas).map((a) => {
+                const currentAreas = node.draftFields.areas || ['arquitectura', 'diseno', 'herreria', 'corte-laser'];
+                const isSelected = currentAreas.includes(a.id);
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                    onClick={() => {
+                      if (!canEditDiagram) return;
+                      const next = isSelected ? currentAreas.filter((id) => id !== a.id) : [...currentAreas, a.id];
+                      updateDraftField('areas', next);
+                    }}
+                  >
+                    {isSelected ? '✓ ' : '+ '} {a.icon || '🏭'} {a.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {canEditDiagram && <Button variant="primary" size="md" onClick={onSaveProyecto} style={{ marginTop: '10px' }}>💾 Guardar en el Sistema</Button>}
         </>
       )}
 
@@ -5311,11 +7233,40 @@ const NodeInspector = ({
               disabled={!canEditDiagram}
               onChange={(e) => setEditProjStatus(e.target.value)}
             >
-              <option value="diseno">En Diseño</option>
-              <option value="progreso">En Progreso</option>
-              <option value="pausado">Pausado</option>
-              <option value="completado">Completado</option>
+              <option value="diseno">📐 En Diseño / Arquitectura</option>
+              <option value="progreso">⚙️ En Progreso</option>
+              <option value="pausado">⏸️ Pausado</option>
+              <option value="completado">✅ Completado</option>
             </select>
+          </div>
+          <div className={styles.field}>
+            <label>🛠️ ¿Qué se fabricará en este proyecto? (Productos / Modelos / Piezas)</label>
+            <textarea
+              rows="3"
+              value={editProjItems}
+              disabled={!canEditDiagram}
+              onChange={(e) => setEditProjItems(e.target.value)}
+              placeholder="Detalla los juegos, modelos o piezas a fabricar..."
+            />
+          </div>
+          <div className={styles.field}>
+            <label>🏭 Áreas Involucradas en el Proyecto</label>
+            <div className={styles.areasGridPills} style={{ marginTop: '4px' }}>
+              {(allBlockAreas || dynamicAreas).map((a) => {
+                const isSelected = editProjAreas.includes(a.id);
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                    onClick={() => canEditDiagram && handleToggleEditProjArea(a.id)}
+                    style={{ cursor: canEditDiagram ? 'pointer' : 'default' }}
+                  >
+                    {isSelected ? '✓ ' : '+ '} {a.icon || '🏭'} {a.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div className={styles.createGrid2}>
             <div className={styles.field}>
@@ -5340,7 +7291,7 @@ const NodeInspector = ({
           <div className={styles.field}>
             <label>Descripción</label>
             <textarea
-              rows="3"
+              rows="2"
               value={editProjDesc}
               disabled={!canEditDiagram}
               onChange={(e) => setEditProjDesc(e.target.value)}
@@ -5492,96 +7443,670 @@ const NodeInspector = ({
 
       {!node.draft && entity && node.type === 'actividad' && (
         <>
-          <div className={styles.field}><label>Título</label><input type="text" value={entity.title} disabled /></div>
-          <div className={styles.field}><label>Área</label><input type="text" value={dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId} disabled /></div>
-          <div className={styles.field}><label>Prioridad</label><input type="text" value={entity.priority} disabled /></div>
-          <div className={styles.field}>
-            <label>Responsable</label>
-            <input
-              type="text"
-              value={(() => {
-                const colabEdge = edges.find(
-                  (e) =>
-                    (e.from === node.id && findNode(e.to)?.type === 'colaborador') ||
-                    (e.to === node.id && findNode(e.from)?.type === 'colaborador')
-                );
-                const connectedColabNode = colabEdge
-                  ? findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to)
-                  : null;
-                const directOperario = operarios.find((o) => o.id === (entity?.operarioId || node?.operarioId || node?.draftFields?.operarioId));
-                return directOperario?.name || (connectedColabNode ? nodeTitle(connectedColabNode) : 'Sin asignar (conectar cable a colaborador)');
-              })()}
-              disabled
-            />
+          {/* SECCIÓN 1: 📋 ESPECIFICACIÓN DE LA ACTIVIDAD */}
+          <div className={styles.inspectorSection}>
+            <div className={styles.inspectorSectionHeader}>
+              <h3 className={styles.inspectorSectionTitle}>
+                <span>📋 Especificación de la Tarea</span>
+              </h3>
+            </div>
+
+            <div className={styles.field} style={{ marginBottom: '8px' }}>
+              <label>Título de la Tarea *</label>
+              <input
+                type="text"
+                value={editActTitle}
+                disabled={!canEditDiagram}
+                onChange={(e) => setEditActTitle(e.target.value)}
+                placeholder="Ej. Corte de perfiles..."
+              />
+            </div>
+
+            <div className={styles.field} style={{ marginBottom: '8px' }}>
+              <label>Descripción / Especificación Técnica</label>
+              <textarea
+                rows="2"
+                value={editActDesc}
+                disabled={!canEditDiagram}
+                onChange={(e) => setEditActDesc(e.target.value)}
+                placeholder="Detalla planos, medidas o especificaciones..."
+              />
+            </div>
+
+            <div className={styles.createGrid2} style={{ marginBottom: 0 }}>
+              <div className={styles.field} style={{ marginBottom: 0 }}>
+                <label>Prioridad</label>
+                <select
+                  value={editActPriority}
+                  disabled={!canEditDiagram}
+                  onChange={(e) => setEditActPriority(e.target.value)}
+                >
+                  {PRIORITY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className={styles.field} style={{ marginBottom: 0 }}>
+                <label>Fecha Límite</label>
+                <input
+                  type="date"
+                  value={editActDueDate}
+                  disabled={!canEditDiagram}
+                  onChange={(e) => setEditActDueDate(e.target.value)}
+                />
+              </div>
+            </div>
           </div>
 
-          <div className={styles.field}>
-            <label>Estado del Trabajo</label>
-            <div style={{ padding: '10px 12px', background: 'var(--color-gray-50)', borderRadius: '8px', border: '1px solid var(--color-gray-200)', marginTop: '4px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-dark)' }}>Estado Actual:</span>
-                <span
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    textTransform: 'uppercase',
-                    background:
-                      entity.status === 'completado'
-                        ? 'rgba(16, 185, 129, 0.15)'
-                        : entity.status === 'proceso'
-                        ? 'rgba(37, 99, 235, 0.15)'
-                        : 'rgba(156, 163, 175, 0.15)',
-                    color:
-                      entity.status === 'completado'
-                        ? '#10b981'
-                        : entity.status === 'proceso'
-                        ? '#2563eb'
-                        : '#6b7280',
-                  }}
-                >
-                  {entity.status === 'completado' ? '✅ Completada' : entity.status === 'proceso' ? '⚡ En Proceso' : '⏳ Pendiente'}
-                </span>
-              </div>
+          {/* SECCIÓN 2: 🏭 ASIGNACIÓN Y RESPONSABLES */}
+          <div className={styles.inspectorSection}>
+            <div className={styles.inspectorSectionHeader}>
+              <h3 className={styles.inspectorSectionTitle}>
+                <span>🏭 Asignación y Personal</span>
+              </h3>
+            </div>
 
-              {entity.startedAt && (
-                <div style={{ fontSize: '11px', color: 'var(--color-gray-600)', marginTop: '6px' }}>
-                  🕒 Inicio: <strong>{new Date(entity.startedAt).toLocaleString()}</strong>
+            {/* Banner de áreas sugeridas del proyecto */}
+            {linkedProject && linkedProject.areas && linkedProject.areas.length > 0 && (
+              <div style={{ marginBottom: '6px' }}>
+                <span style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-gray-500)', display: 'block', marginBottom: '4px' }}>
+                  Áreas del Proyecto "{linkedProject.name}":
+                </span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                  {linkedProject.areas.map((aId) => {
+                    const areaObj = (allAvailableAreas && allAvailableAreas.length > 0 ? allAvailableAreas : allBlockAreas || []).find((a) => a.id === aId);
+                    const isMatching = editActAreaId === aId;
+                    return (
+                      <button
+                        key={aId}
+                        type="button"
+                        onClick={() => {
+                          if (!canEditDiagram) return;
+                          setEditActAreaId(aId);
+                          setEditActOperarioId('');
+                        }}
+                        style={{
+                          fontSize: '11px',
+                          padding: '3px 8px',
+                          borderRadius: '8px',
+                          fontWeight: 700,
+                          border: isMatching ? '1.5px solid #2563eb' : '1px solid var(--color-gray-300)',
+                          background: isMatching ? 'rgba(37, 99, 235, 0.12)' : 'transparent',
+                          color: isMatching ? '#2563eb' : 'var(--color-gray-600)',
+                          cursor: canEditDiagram ? 'pointer' : 'default',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        {areaObj?.icon || '🏭'} {areaObj?.name || aId} {isMatching ? '✓' : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className={styles.field} style={{ marginBottom: '8px' }}>
+              <label>Área Responsable *</label>
+              <select
+                value={editActAreaId}
+                disabled={!canEditDiagram}
+                onChange={(e) => {
+                  const nextArea = e.target.value;
+                  setEditActAreaId(nextArea);
+                  setEditActOperarioId('');
+                }}
+              >
+                {linkedProject && linkedProject.areas && linkedProject.areas.length > 0 && (
+                  <optgroup label={`Áreas del Proyecto (${linkedProject.name})`}>
+                    {linkedProject.areas.map((aId) => {
+                      const a = (allAvailableAreas && allAvailableAreas.length > 0 ? allAvailableAreas : allBlockAreas || []).find((x) => x.id === aId);
+                      if (!a) return null;
+                      return (
+                        <option key={`proj-${a.id}`} value={a.id}>
+                          ⭐ {a.icon || '🏭'} {a.name} (Del Proyecto)
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                )}
+                <optgroup label="Todas las Áreas Disponibles">
+                  {(allAvailableAreas && allAvailableAreas.length > 0 ? allAvailableAreas : allBlockAreas || []).map((a) => (
+                    <option key={a.id} value={a.id}>{a.icon || '🏭'} {a.name}</option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+
+            <div className={styles.field} style={{ marginBottom: '8px' }}>
+              <label>🎖️ Responsable del Área</label>
+              {(() => {
+                const sup = getSupervisorForArea ? getSupervisorForArea(editActAreaId) : { name: 'Supervisor de Área' };
+                return (
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      background: 'rgba(37, 99, 235, 0.08)',
+                      border: '1.5px solid rgba(37, 99, 235, 0.25)',
+                      color: 'var(--color-dark)',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                    }}
+                    title="Supervisor oficial de esta área"
+                  >
+                    <span style={{ fontSize: '15px' }}>🎖️</span>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                      <span>{sup.name}</span>
+                      {sup.role && <span style={{ fontSize: '11px', color: 'var(--color-gray-500)', fontWeight: 500, marginLeft: '6px' }}>({sup.role})</span>}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className={styles.field} style={{ marginBottom: '8px' }}>
+              <label>👷 Personal Asignado (Operario a Cargo)</label>
+              <select
+                value={editActOperarioId || ''}
+                disabled={!canEditDiagram}
+                onChange={(e) => setEditActOperarioId(e.target.value)}
+              >
+                <option value="">-- Sin asignar a alguien específico (Asignar después) --</option>
+                {(() => {
+                  const filtered = getCollaboratorsForArea ? getCollaboratorsForArea(editActAreaId) : [];
+                  const listToRender = filtered.length > 0 ? filtered : (allCollaborators && allCollaborators.length > 0 ? allCollaborators : operarios);
+                  return listToRender.map((op) => (
+                    <option key={op.id} value={op.id}>
+                      👷 {op.name} {op.puesto ? `(${op.puesto})` : ''}
+                    </option>
+                  ));
+                })()}
+              </select>
+            </div>
+
+            {canEditDiagram && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleUpdateExistingActivity}
+                isLoading={isSavingAct}
+                style={{ width: '100%', marginTop: '4px' }}
+              >
+                💾 Guardar Cambios en la Tarea
+              </Button>
+            )}
+          </div>
+
+          {/* SECCIÓN 3: ✅ SUB-LISTA DE TAREAS / CHECKLIST */}
+          <div className={styles.inspectorSection}>
+            <div className={styles.inspectorSectionHeader}>
+              <h3 className={styles.inspectorSectionTitle}>
+                <span>☑️ Sub-tareas / Checklist</span>
+              </h3>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  color: checklist.length > 0 && checklist.filter((c) => c.completed).length === checklist.length ? '#10b981' : '#06b6d4',
+                  background: checklist.length > 0 && checklist.filter((c) => c.completed).length === checklist.length ? 'rgba(16, 185, 129, 0.15)' : 'rgba(6, 182, 212, 0.15)',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                }}
+              >
+                {checklist.filter((c) => c.completed).length} / {checklist.length} ({checklist.length > 0 ? Math.round((checklist.filter((c) => c.completed).length / checklist.length) * 100) : 0}%)
+              </span>
+            </div>
+
+            {checklist.length > 0 && (
+              <div className={styles.checklistProgressWrap}>
+                <div
+                  className={styles.checklistProgressBar}
+                  style={{
+                    width: `${(checklist.filter((c) => c.completed).length / checklist.length) * 100}%`,
+                  }}
+                />
+              </div>
+            )}
+
+            {checklist.length > 0 ? (
+              <div className={styles.checklistList}>
+                {checklist.map((item, idx) => (
+                  <div
+                    key={item.id || idx}
+                    className={`${styles.checklistItem} ${item.completed ? styles.checklistItemDone : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(item.completed)}
+                      disabled={!canEditDiagram}
+                      onChange={() => handleToggleChecklist(idx)}
+                      className={styles.checklistCheckbox}
+                      title={item.completed ? 'Marcar como pendiente' : 'Marcar como completada'}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span className={`${styles.checklistItemText} ${item.completed ? styles.checklistItemTextDone : ''}`}>
+                        {item.text}
+                      </span>
+                      {item.completed && item.completedAt && (
+                        <div style={{ fontSize: '10px', color: '#10b981', marginTop: '2px', fontWeight: 500 }}>
+                          ✓ Hecho {new Date(item.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {item.completedBy ? ` por ${item.completedBy}` : ''}
+                        </div>
+                      )}
+                    </div>
+                    {canEditDiagram && (
+                      <button
+                        type="button"
+                        className={styles.checklistDeleteBtn}
+                        onClick={() => handleDeleteChecklist(idx)}
+                        title="Eliminar esta sub-tarea"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: '11px', color: 'var(--color-gray-400)', fontStyle: 'italic', padding: '4px 0' }}>
+                Sin sub-tareas. Agrega los pasos o requisitos para realizar esta actividad.
+              </div>
+            )}
+
+            {canEditDiagram && (
+              <div className={styles.checklistInputRow}>
+                <input
+                  type="text"
+                  className={styles.checklistInput}
+                  placeholder="➕ Escribe un paso o sub-tarea..."
+                  value={newChecklistText}
+                  onChange={(e) => setNewChecklistText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddChecklist();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className={styles.checklistAddBtn}
+                  onClick={handleAddChecklist}
+                  title="Agregar sub-tarea"
+                >
+                  + Agregar
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* SECCIÓN 4: 🖼️ AYUDA VISUAL / PLANOS / ADJUNTOS */}
+          <div className={styles.inspectorSection}>
+            <div className={styles.inspectorSectionHeader}>
+              <h3 className={styles.inspectorSectionTitle}>
+                <span>🖼️ Ayuda Visual / Planos / Adjuntos</span>
+              </h3>
+
+              {Boolean((entity.attachments && entity.attachments.length > 0) || (editActLinks && editActLinks.length > 0) || entity.fileData) && (
+                <button
+                  type="button"
+                  onClick={() => handleDeployAllActivityResources(node, { ...entity, links: editActLinks })}
+                  style={{
+                    fontSize: '10.5px',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '6px',
+                    background: 'rgba(37, 99, 235, 0.12)',
+                    color: '#2563eb',
+                    border: '1px solid rgba(37, 99, 235, 0.3)',
+                    cursor: 'pointer',
+                  }}
+                  title="Colocar / mostrar todos los recursos en el lienzo"
+                >
+                  📍 Desplegar Todo
+                </button>
+              )}
+            </div>
+
+            {/* Subir archivo adjunto a la actividad */}
+            {canEditDiagram && (
+              <div>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf,.step,.stp,.iges,.igs,.dwg,.dxf,.skp,.obj,.stl,.sldprt,.sldasm,.slddrw,.ipt,.iam,.idw"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleUploadActivityAttachment(file);
+                  }}
+                  style={{ fontSize: '11px', width: '100%' }}
+                />
+                {isUploadingActFile && (
+                  <div style={{ fontSize: '11.5px', color: '#0284c7', marginTop: '4px', fontWeight: 600 }}>
+                    ⏳ Subiendo archivo a la nube...
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Lista de adjuntos de la actividad */}
+            {((entity.attachments && entity.attachments.length > 0) || entity.fileData) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+                {[...(entity.attachments || []), ...(entity.fileData ? [entity.fileData] : [])].map((att, idx) => {
+                  const isImg = att.type?.startsWith('image/') || att.url?.match(/\.(jpeg|jpg|png|webp|gif)($|\?)/i) || att.dataUrl?.startsWith('data:image');
+                  const isAlreadyOnCanvas = (nodes || []).some((n) => {
+                    if (n.type !== 'recurso') return false;
+                    const fData = n.draftFields?.fileData;
+                    const nUrl = n.draftFields?.url || fData?.url || fData?.dataUrl;
+                    const attUrl = att.url || att.dataUrl;
+                    const matchesUrl = Boolean(nUrl && attUrl && nUrl === attUrl);
+                    const matchesName = Boolean(fData?.name && att.name && fData.name === att.name);
+                    const isConnected = (edges || []).some((e) => (e.from === node.id && e.to === n.id) || (e.to === node.id && e.from === n.id));
+                    return (matchesUrl || matchesName) && isConnected;
+                  });
+
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: '6px 8px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        borderRadius: '6px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '6px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', flex: 1 }}>
+                        <span style={{ fontSize: '14px' }}>{isImg ? '🖼️' : '📄'}</span>
+                        <span style={{ fontSize: '11.5px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {att.name || 'Archivo adjunto'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        {isImg && (
+                          <button
+                            type="button"
+                            className={styles.wireToolbarBtn}
+                            onClick={() => handleSpawnFloatingImage(att)}
+                            title={isAlreadyOnCanvas ? "Ver en el lienzo (enfocar)" : "Colocar como imagen flotante en el lienzo"}
+                            style={{
+                              fontSize: '10.5px',
+                              padding: '2px 6px',
+                              background: isAlreadyOnCanvas ? 'rgba(6, 182, 212, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                              color: isAlreadyOnCanvas ? '#06b6d4' : '#10b981',
+                              border: '1px solid currentColor',
+                            }}
+                          >
+                            {isAlreadyOnCanvas ? '👁️ En lienzo' : '📍 Colocar'}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className={styles.wireToolbarBtn}
+                          onClick={() => {
+                            setPreviewResourceModal({
+                              isOpen: true,
+                              title: `${entity.title} - ${att.name || 'Adjunto'}`,
+                              resourceType: isImg ? 'imagen' : 'documento',
+                              url: att.url || att.dataUrl,
+                              fileData: att,
+                              notes: entity.description || '',
+                            });
+                          }}
+                          title="Ver archivo"
+                          style={{ fontSize: '10.5px', padding: '2px 6px' }}
+                        >
+                          🔍
+                        </button>
+                        {canEditDiagram && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveActivityAttachment(idx)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+                            title="Eliminar adjunto"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Enlaces de la actividad */}
+            <div style={{ marginTop: '6px' }}>
+              <label style={{ fontSize: '10.5px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '4px', fontWeight: 600 }}>
+                🔗 Enlaces Web / Nube (Drive, Figma, Autodesk, etc.):
+              </label>
+              {editActLinks && editActLinks.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
+                  {editActLinks.map((lnk, lIdx) => {
+                    const isAlreadyOnCanvas = (nodes || []).some((n) => {
+                      if (n.type !== 'recurso') return false;
+                      const nUrl = n.draftFields?.url;
+                      const matchesUrl = Boolean(nUrl && nUrl === lnk);
+                      const isConnected = (edges || []).some((e) => (e.from === node.id && e.to === n.id) || (e.to === node.id && e.from === n.id));
+                      return matchesUrl && isConnected;
+                    });
+
+                    return (
+                      <div key={lIdx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 6px', background: 'rgba(37, 99, 235, 0.06)', borderRadius: '4px', border: '1px solid rgba(37, 99, 235, 0.2)', fontSize: '11px', gap: '6px' }}>
+                        <a href={formatExternalUrl(lnk)} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, textDecoration: 'none' }}>
+                          🔗 {lnk.replace(/^https?:\/\//i, '').split('/')[0]}
+                        </a>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <button
+                            type="button"
+                            className={styles.wireToolbarBtn}
+                            onClick={() => handleSpawnFloatingLink(lnk)}
+                            title={isAlreadyOnCanvas ? "Ver en el lienzo (enfocar)" : "Colocar como emblema flotante en el lienzo"}
+                            style={{
+                              fontSize: '10.5px',
+                              padding: '2px 6px',
+                              background: isAlreadyOnCanvas ? 'rgba(56, 189, 248, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                              color: isAlreadyOnCanvas ? '#38bdf8' : '#10b981',
+                              border: '1px solid currentColor',
+                            }}
+                          >
+                            {isAlreadyOnCanvas ? '👁️ En lienzo' : '📍 Colocar'}
+                          </button>
+                          {canEditDiagram && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveLinkFromActivity(lIdx)}
+                              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px', fontWeight: 700 }}
+                              title="Eliminar enlace de la actividad"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
-              {entity.completedAt && (
-                <div style={{ fontSize: '11px', color: '#10b981', marginTop: '3px' }}>
-                  ✅ Fin: <strong>{new Date(entity.completedAt).toLocaleString()}</strong>
-                </div>
-              )}
-              {entity.completionNotes && (
-                <div style={{ fontSize: '11px', color: 'var(--color-gray-600)', marginTop: '5px', fontStyle: 'italic', borderTop: '1px dashed var(--color-gray-200)', paddingTop: '4px' }}>
-                  &ldquo;{entity.completionNotes}&rdquo;
+              {canEditDiagram && (
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <input
+                    type="text"
+                    placeholder="https://drive.google.com/..."
+                    value={newLinkInput}
+                    onChange={(e) => setNewLinkInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddLinkToActivity();
+                    }}
+                    style={{ fontSize: '11px', flex: 1, padding: '4px 6px' }}
+                  />
+                  <Button variant="secondary" size="sm" onClick={handleAddLinkToActivity} style={{ fontSize: '11px', padding: '2px 8px' }}>
+                    + Link
+                  </Button>
                 </div>
               )}
             </div>
+          </div>
+
+          {/* SECCIÓN 5: ⚡ ESTADO Y CONTROL DE PRODUCCIÓN */}
+          <div className={styles.inspectorSection}>
+            <div className={styles.inspectorSectionHeader}>
+              <h3 className={styles.inspectorSectionTitle}>
+                <span>⚡ Estado y Flujo de Trabajo</span>
+              </h3>
+              <span
+                style={{
+                  fontSize: '10.5px',
+                  fontWeight: 800,
+                  padding: '2px 8px',
+                  borderRadius: '6px',
+                  textTransform: 'uppercase',
+                  background:
+                    entity.status === 'completado'
+                      ? 'rgba(16, 185, 129, 0.15)'
+                      : entity.status === 'proceso'
+                      ? 'rgba(37, 99, 235, 0.15)'
+                      : 'rgba(156, 163, 175, 0.15)',
+                  color:
+                    entity.status === 'completado'
+                      ? '#10b981'
+                      : entity.status === 'proceso'
+                      ? '#2563eb'
+                      : '#6b7280',
+                }}
+              >
+                {entity.status === 'completado' ? '✅ Completada' : entity.status === 'proceso' ? '⚡ En Proceso' : '⏳ Pendiente'}
+              </span>
+            </div>
+
+            {entity.startedAt && (
+              <div style={{ fontSize: '11px', color: 'var(--color-gray-600)' }}>
+                🕒 Inicio: <strong>{new Date(entity.startedAt).toLocaleString()}</strong>
+              </div>
+            )}
+            {entity.completedAt && (
+              <div style={{ fontSize: '11px', color: '#10b981' }}>
+                ✅ Fin: <strong>{new Date(entity.completedAt).toLocaleString()}</strong>
+              </div>
+            )}
+            {entity.completionNotes && (
+              <div style={{ fontSize: '11px', color: 'var(--color-gray-600)', fontStyle: 'italic', borderTop: '1px dashed var(--color-gray-200)', paddingTop: '4px' }}>
+                &ldquo;{entity.completionNotes}&rdquo;
+              </div>
+            )}
+
+            {/* Secuencia y Dependencias de Flujo de la Actividad */}
+            {(() => {
+              const blockStatus = getActivityBlockStatus ? getActivityBlockStatus(node) : { isBlocked: false, blockers: [], predecessors: [] };
+              const predecessors = blockStatus.predecessors || [];
+
+              return (
+                <div style={{ marginTop: '4px' }}>
+                  <label style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--color-dark)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span>🔗 Secuencia de Flujo (Predecesores)</span>
+                    {blockStatus.isBlocked && (
+                      <span style={{ fontSize: '9.5px', color: '#ef4444', fontWeight: 800, background: 'rgba(239, 68, 68, 0.1)', padding: '1px 5px', borderRadius: '4px' }}>
+                        🔒 BLOQUEADA
+                      </span>
+                    )}
+                  </label>
+
+                  {predecessors.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                      {predecessors.map((pred, idx) => {
+                        const isDone = pred.entity?.status === 'completado' || pred.entity?.status === 'hecho';
+                        const isInProgress = pred.entity?.status === 'proceso';
+                        return (
+                          <div
+                            key={pred.entity?.id || pred.node?.id || idx}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              padding: '5px 8px',
+                              borderRadius: '6px',
+                              background: isDone ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.06)',
+                              border: `1px solid ${isDone ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.2)'}`,
+                              fontSize: '11px',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden', maxWidth: '70%' }}>
+                              <span>{isDone ? '✅' : isInProgress ? '⚡' : '⏳'}</span>
+                              <span style={{ fontWeight: 600, color: 'var(--color-dark)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                {pred.entity?.title || nodeTitle(pred.node) || 'Actividad previa'}
+                              </span>
+                            </div>
+                            <span
+                              style={{
+                                fontSize: '9.5px',
+                                fontWeight: 700,
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                background: isDone ? 'rgba(16, 185, 129, 0.15)' : isInProgress ? 'rgba(37, 99, 235, 0.15)' : 'rgba(156, 163, 175, 0.15)',
+                                color: isDone ? '#10b981' : isInProgress ? '#2563eb' : '#6b7280',
+                              }}
+                            >
+                              {isDone ? 'Terminada' : isInProgress ? 'En Proceso' : 'Pendiente'}
+                            </span>
+                          </div>
+                        );
+                      })}
+
+                      {blockStatus.isBlocked && (
+                        <div style={{ fontSize: '10.5px', color: '#ef4444', background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '6px', padding: '5px 8px', lineHeight: 1.3 }}>
+                          ⚠️ <strong>Secuencia en espera:</strong> Debes terminar la(s) fase(s) anterior(es) antes de iniciar esta tarea.
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '10.5px', color: 'var(--color-gray-500)', fontStyle: 'italic', padding: '2px 0' }}>
+                      🟢 Fase inicial (sin actividades previas requeridas).
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {(() => {
               const hasControl = canUserControlActivity ? canUserControlActivity(entity) : true;
               if (!hasControl) {
                 return (
-                  <div style={{ padding: '8px', background: 'rgba(0,0,0,0.04)', borderRadius: '6px', marginTop: '10px', fontSize: '11.5px', color: 'var(--color-gray-600)', textAlign: 'center' }}>
+                  <div style={{ padding: '8px', background: 'rgba(0,0,0,0.04)', borderRadius: '6px', marginTop: '6px', fontSize: '11.5px', color: 'var(--color-gray-600)', textAlign: 'center' }}>
                     🔒 Solo el colaborador asignado o el supervisor de esta área pueden iniciar o terminar esta actividad.
                   </div>
                 );
               }
 
+              const blockStatus = getActivityBlockStatus ? getActivityBlockStatus(node) : { isBlocked: false };
+              const isSequenceBlocked = blockStatus.isBlocked;
+
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
                   {entity.status === 'pendiente' && (
                     <Button
-                      variant="primary"
+                      variant={isSequenceBlocked ? "secondary" : "primary"}
                       size="md"
-                      onClick={() => onStartActivity && onStartActivity(entity.id, entity.title)}
-                      style={{ width: '100%' }}
+                      disabled={isSequenceBlocked}
+                      onClick={() => {
+                        if (isSequenceBlocked) {
+                          toast.warning(`🔒 Actividad bloqueada: ${blockStatus.reason}`);
+                          return;
+                        }
+                        onStartActivity && onStartActivity(entity.id, entity.title);
+                      }}
+                      style={{
+                        width: '100%',
+                        opacity: isSequenceBlocked ? 0.7 : 1,
+                        cursor: isSequenceBlocked ? 'not-allowed' : 'pointer',
+                      }}
+                      title={isSequenceBlocked ? blockStatus.reason : 'Iniciar esta actividad'}
                     >
-                      ▶️ Iniciar Actividad
+                      {isSequenceBlocked ? '🔒 Espera actividad previa' : '▶️ Iniciar Actividad'}
                     </Button>
                   )}
                   {entity.status === 'proceso' && (

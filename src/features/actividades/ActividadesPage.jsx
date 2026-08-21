@@ -24,6 +24,7 @@ import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection } from '../../utils/roleAccess';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import useAreas from '../../hooks/useAreas';
+import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import { PRIORITY_LABELS, ACTIVITY_STATUS_LABELS } from '../../data/actividadesData';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
@@ -117,6 +118,10 @@ const ActividadesPage = () => {
   const { proyectos, juegos } = useProduccion();
   const { user } = useAuth();
   const { areas: dynamicAreas } = useAreas();
+  const allAvailableAreas = useMemo(
+    () => [...dynamicAreas, ...NON_PRODUCTION_AREAS],
+    [dynamicAreas]
+  );
   const toast = useToast();
 
   // Un Encargado de Área solo consulta (solo lectura) las actividades de su área
@@ -129,9 +134,33 @@ const ActividadesPage = () => {
   // ============================================
   // HELPERS
   // ============================================
-  const getAreaName = (areaId) => dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+  const getAreaName = (areaId) => allAvailableAreas.find((a) => a.id === areaId)?.name || dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
   const getOperarioName = (operarioId) =>
     operarios.find((op) => op.id === operarioId)?.name || null;
+
+  // Áreas calculadas: si hay un proyecto seleccionado, mostrar sus áreas al inicio con distintivo
+  const currentProject = proyectos.find((p) => p.id === newActivity.projectId);
+  const projectAreaIds = currentProject?.areas || [];
+  const areaOptions = useMemo(() => {
+    if (projectAreaIds.length > 0) {
+      const projAreas = allAvailableAreas.filter((a) => projectAreaIds.includes(a.id));
+      const otherAreas = allAvailableAreas.filter((a) => !projectAreaIds.includes(a.id));
+      return [
+        ...projAreas.map((a) => ({
+          value: a.id,
+          label: `⭐ ${a.icon || '🏭'} ${a.name} (Del Proyecto)`,
+        })),
+        ...otherAreas.map((a) => ({
+          value: a.id,
+          label: `${a.icon || '🏭'} ${a.name}`,
+        })),
+      ];
+    }
+    return allAvailableAreas.map((a) => ({
+      value: a.id,
+      label: `${a.icon || '🏭'} ${a.name}`,
+    }));
+  }, [allAvailableAreas, projectAreaIds]);
 
   // ============================================
   // HANDLERS
@@ -154,11 +183,16 @@ const ActividadesPage = () => {
         updated.operarioId = '';
       }
       // Si cambia el proyecto, se limpia el juego si ya no pertenece al nuevo proyecto
-      // (o si se quitó el proyecto por completo).
+      // y si el proyecto tiene áreas definidas, preseleccionar la primera si la actual no pertenece
       if (name === 'projectId') {
         const selectedGame = juegos.find((j) => j.id === prev.gameId);
         if (!selectedGame || selectedGame.projectId !== value) {
           updated.gameId = '';
+        }
+        const proj = proyectos.find((p) => p.id === value);
+        if (proj && proj.areas && proj.areas.length > 0 && !proj.areas.includes(prev.areaId)) {
+          updated.areaId = proj.areas[0];
+          updated.operarioId = '';
         }
       }
       return updated;
@@ -202,7 +236,18 @@ const ActividadesPage = () => {
    * @param {string} activityId
    */
   const handleAdvanceStatus = (activityId) => {
-    const act = actividades.find((a) => a.id === activityId);
+    const act = (allActividades || []).find((a) => a.id === activityId) || actividades.find((a) => a.id === activityId);
+    if (!act) return;
+
+    // Validación de secuencia: si pasa de 'pendiente' a 'proceso', verificar predecesores
+    if (act.status === 'pendiente' && act.predecessorId) {
+      const pred = (allActividades || []).find((a) => a.id === act.predecessorId);
+      if (pred && pred.status !== 'completado' && pred.status !== 'hecho') {
+        toast.warning(`🔒 Actividad bloqueada: Primero debe culminar la tarea previa "${pred.title}".`);
+        return;
+      }
+    }
+
     if (act?.status === 'proceso') {
       setCompleteConfirmation({ isOpen: true, activityId, title: act.title, notes: '' });
       return;
@@ -409,29 +454,51 @@ const ActividadesPage = () => {
             </div>
           )}
           {act.status === 'completado' && act.completionNotes && (
-            <div style={{ fontSize: '12px', color: 'var(--color-gray-600)', backgroundColor: 'var(--color-gray-50)', border: '1px solid var(--color-gray-100)', borderRadius: '6px', padding: '8px 10px', marginTop: '2px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--color-gray-600)', backgroundColor: 'var(--color-gray-50)', border: '1px solid var(--color-gray-100)', borderRadius: '6px', padding: '8px 10px', marginTop: '4px' }}>
               <strong style={{ color: 'var(--color-dark)' }}>✅ Cierre:</strong> {act.completionNotes}
             </div>
           )}
+          {(() => {
+            const pred = act.predecessorId ? (allActividades || []).find((a) => a.id === act.predecessorId) : null;
+            const isBlocked = Boolean(act.status === 'pendiente' && pred && pred.status !== 'completado' && pred.status !== 'hecho');
+
+            if (isBlocked) {
+              return (
+                <div style={{ fontSize: '11.5px', color: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '6px', padding: '6px 8px', marginTop: '6px', lineHeight: 1.25 }}>
+                  🔒 <strong>Espera que termine:</strong> {pred.title}
+                </div>
+              );
+            }
+            return null;
+          })()}
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' }}>
-            {isReadOnly ? (
-              <Badge variant={STATUS_BADGE_VARIANT[act.status]}>
-                {ACTIVITY_STATUS_LABELS[act.status]}
-              </Badge>
-            ) : (
-              <button
-                type="button"
-                className={styles.statusToggle}
-                onClick={() => handleAdvanceStatus(act.id)}
-                title="Clic para avanzar el estatus"
-                style={{ margin: 0 }}
-              >
-                <Badge variant={STATUS_BADGE_VARIANT[act.status]}>
-                  {ACTIVITY_STATUS_LABELS[act.status]}
-                </Badge>
-              </button>
-            )}
+            {(() => {
+              const pred = act.predecessorId ? (allActividades || []).find((a) => a.id === act.predecessorId) : null;
+              const isBlocked = Boolean(act.status === 'pendiente' && pred && pred.status !== 'completado' && pred.status !== 'hecho');
+
+              if (isReadOnly) {
+                return (
+                  <Badge variant={isBlocked ? 'danger' : STATUS_BADGE_VARIANT[act.status]}>
+                    {isBlocked ? '🔒 Bloqueada' : ACTIVITY_STATUS_LABELS[act.status]}
+                  </Badge>
+                );
+              }
+
+              return (
+                <button
+                  type="button"
+                  className={styles.statusToggle}
+                  onClick={() => handleAdvanceStatus(act.id)}
+                  title={isBlocked ? `🔒 Bloqueada: Espera que termine "${pred.title}"` : 'Clic para avanzar el estatus'}
+                  style={{ margin: 0 }}
+                >
+                  <Badge variant={isBlocked ? 'danger' : STATUS_BADGE_VARIANT[act.status]}>
+                    {isBlocked ? '🔒 Bloqueada' : ACTIVITY_STATUS_LABELS[act.status]}
+                  </Badge>
+                </button>
+              );
+            })()}
 
             {!isReadOnly && (
               <div style={{ display: 'flex', gap: '4px' }}>
@@ -660,7 +727,7 @@ const ActividadesPage = () => {
                 onChange={handleFormChange}
                 required
                 placeholder="-- Selecciona el Área --"
-                options={dynamicAreas.map((a) => ({ value: a.id, label: a.name }))}
+                options={areaOptions}
               />
             </div>
             <div className={styles.formGroup}>
