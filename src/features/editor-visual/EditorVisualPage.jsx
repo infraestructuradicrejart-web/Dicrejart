@@ -181,7 +181,7 @@ const getSmartWirePath = (fromNode, toNode) => {
 };
 
 /**
- * Extrae la metadata y la URL de imagen o documento para previsualización directa en el nodo
+ * Extrae la metadata y la URL de imagen, documento, link o modelo CAD 3D (SolidWorks, Inventor, STEP, etc.)
  */
 const getResourcePreviewInfo = (nodeOrDraft) => {
   if (!nodeOrDraft) {
@@ -197,22 +197,74 @@ const getResourcePreviewInfo = (nodeOrDraft) => {
   const fileUrl = fileData?.url || fileData?.dataUrl;
   const fileName = fileData?.name || '';
   const fileSize = fileData?.size || 0;
+  const lowerFileName = (fileName || rawUrl).toLowerCase();
 
-  // 2. Extraer ID de Google Drive para previsualización directa de imagen
+  // 2. Detección especializada de CAD (SolidWorks, Inventor, STEP, AutoCAD, SketchUp)
+  let cadBrand = null;
+  let cadLabel = null;
+  let cadIcon = '🧊';
+  let cadColor = '#0d9488';
+
+  if (lowerFileName.match(/\.(sldprt|sldasm|slddrw)($|\?)/)) {
+    cadBrand = 'solidworks';
+    cadIcon = '🔴';
+    cadColor = '#e11d48';
+    cadLabel = lowerFileName.includes('.sldasm') ? 'Ensamblaje SolidWorks (.sldasm)' : lowerFileName.includes('.slddrw') ? 'Dibujo SolidWorks (.slddrw)' : 'Pieza SolidWorks (.sldprt)';
+  } else if (lowerFileName.match(/\.(ipt|iam|idw)($|\?)/)) {
+    cadBrand = 'inventor';
+    cadIcon = '🟡';
+    cadColor = '#d97706';
+    cadLabel = lowerFileName.includes('.iam') ? 'Ensamblaje Inventor (.iam)' : lowerFileName.includes('.idw') ? 'Plano Inventor (.idw)' : 'Pieza Inventor (.ipt)';
+  } else if (lowerFileName.match(/\.(step|stp)($|\?)/)) {
+    cadBrand = 'step';
+    cadIcon = '🧊';
+    cadColor = '#0284c7';
+    cadLabel = 'Modelo 3D ISO STEP (.step)';
+  } else if (lowerFileName.match(/\.(dwg|dxf)($|\?)/)) {
+    cadBrand = 'dwg';
+    cadIcon = '📐';
+    cadColor = '#2563eb';
+    cadLabel = 'Plano CAD Técnico (.dwg/.dxf)';
+  } else if (lowerFileName.match(/\.(skp)($|\?)/)) {
+    cadBrand = 'sketchup';
+    cadIcon = '🔴';
+    cadColor = '#ea580c';
+    cadLabel = 'Modelo 3D SketchUp (.skp)';
+  } else if (lowerFileName.match(/\.(stl|obj|iges|igs|fbx|3ds|blend)($|\?)/)) {
+    cadBrand = '3d';
+    cadIcon = '🧊';
+    cadColor = '#0d9488';
+    cadLabel = 'Modelo 3D CAD';
+  }
+
+  // 3. Detección especializada de Enlaces (Google Drive, Figma, OneDrive, Autodesk Viewer)
+  let linkProvider = null;
   let googleDriveImgSrc = null;
   let googleDriveFileId = null;
+
   if (rawUrl) {
     const driveMatch = rawUrl.match(/(?:\/d\/|id=)([a-zA-Z0-9_-]{25,})/i);
     if (driveMatch && driveMatch[1]) {
       googleDriveFileId = driveMatch[1];
-      // Endpoint oficial y de alta disponibilidad de Google para thumbnails de Drive
       googleDriveImgSrc = `https://lh3.googleusercontent.com/d/${googleDriveFileId}`;
+      linkProvider = { name: 'Google Drive', icon: '📁', color: '#16a34a', isDrive: true };
+    } else if (rawUrl.includes('figma.com')) {
+      linkProvider = { name: 'Figma', icon: '🎨', color: '#a855f7', isFigma: true };
+    } else if (rawUrl.includes('onedrive') || rawUrl.includes('1drv.ms') || rawUrl.includes('sharepoint.com')) {
+      linkProvider = { name: 'OneDrive / Cloud', icon: '☁️', color: '#0284c7' };
+    } else if (rawUrl.includes('autodesk') || rawUrl.includes('viewer.autodesk')) {
+      linkProvider = { name: 'Autodesk Viewer 3D', icon: '📐', color: '#ea580c' };
+    } else if (rawUrl.match(/(youtube\.com|youtu\.be|vimeo\.com|loom\.com)/i)) {
+      linkProvider = { name: 'Video / Tutorial', icon: '▶️', color: '#dc2626' };
+    } else {
+      let cleanDomain = rawUrl.replace(/^https?:\/\//i, '').split('/')[0];
+      linkProvider = { name: cleanDomain || 'Enlace Web', icon: '🌐', color: '#2563eb' };
     }
   }
 
-  // 3. Determinar imagen a previsualizar
+  // 4. Determinar si hay imagen a previsualizar
   let previewImgSrc = null;
-  if (fileUrl && (fileData?.type?.startsWith('image/') || fileUrl.startsWith('data:image') || !fileData?.type)) {
+  if (fileUrl && (fileData?.type?.startsWith('image/') || fileUrl.startsWith('data:image') || (!fileData?.type && !cadBrand && !lowerFileName.endsWith('.pdf')))) {
     previewImgSrc = fileUrl;
   } else if (googleDriveImgSrc && resType === 'imagen') {
     previewImgSrc = googleDriveImgSrc;
@@ -222,8 +274,8 @@ const getResourcePreviewInfo = (nodeOrDraft) => {
     previewImgSrc = rawUrl;
   }
 
-  const isPdf = resType === 'documento' || fileData?.type?.includes('pdf') || rawUrl.toLowerCase().endsWith('.pdf') || rawUrl.includes('.pdf?');
-  const isModel = resType === 'modelo' || rawUrl.match(/\.(step|stp|skp|dwg|dxf|obj|stl)($|\?)/i) || fileData?.name?.match(/\.(step|stp|skp|dwg|dxf|obj|stl)$/i);
+  const isPdf = resType === 'documento' || fileData?.type?.includes('pdf') || lowerFileName.endsWith('.pdf') || lowerFileName.includes('.pdf?');
+  const isModel = Boolean(cadBrand) || resType === 'modelo';
   const isLink = resType === 'link' || (!previewImgSrc && !isPdf && !isModel && Boolean(rawUrl));
 
   return {
@@ -235,7 +287,12 @@ const getResourcePreviewInfo = (nodeOrDraft) => {
     fileSize,
     isPdf,
     isModel,
+    cadBrand,
+    cadLabel,
+    cadIcon,
+    cadColor,
     isLink,
+    linkProvider,
     googleDriveFileId,
     effectiveUrl: fileUrl || rawUrl,
   };
@@ -3436,95 +3493,64 @@ const EditorVisualPage = ({ standalone = false }) => {
                         </div>
                       )}
 
-                      {node.type === 'recurso' && (
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '3px' }}>
-                            <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>
-                              📎 {node.draftFields?.resourceType === 'imagen' ? '🖼️ IMAGEN / RENDER' : node.draftFields?.resourceType === 'documento' ? '📄 DOCUMENTO / PLANO' : node.draftFields?.resourceType === 'link' ? '🔗 ENLACE WEB' : '🎬 MODELO 3D CAD'}
-                            </span>
-                          </div>
+                      {node.type === 'recurso' && (() => {
+                        const info = getResourcePreviewInfo(node);
+                        const isUploading = node.draftFields?.fileData?.isUploading || node.draftFields?.isUploading;
 
-                          {/* MINIATURA / VISTA PREVIA SEGÚN TIPO */}
-                          {(() => {
-                            const info = getResourcePreviewInfo(node);
-                            const isUploading = node.draftFields?.fileData?.isUploading || node.draftFields?.isUploading;
+                        return (
+                          <div>
+                            {/* MINIATURA / VISTA PREVIA DIRECTA SEGÚN CONTENIDO */}
+                            {isUploading && (
+                              <div className={styles.resourceThumbnailBox} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(6, 182, 212, 0.08)', gap: '6px' }}>
+                                <div style={{ fontSize: '18px', animation: 'spin 1s linear infinite' }}>⏳</div>
+                                <span style={{ fontSize: '10.5px', color: '#0891b2', fontWeight: 600 }}>Guardando en la nube...</span>
+                              </div>
+                            )}
 
-                            if (isUploading) {
-                              return (
-                                <div className={styles.resourceThumbnailBox} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(6, 182, 212, 0.08)', gap: '6px' }}>
-                                  <div style={{ fontSize: '18px', animation: 'spin 1s linear infinite' }}>⏳</div>
-                                  <span style={{ fontSize: '10.5px', color: '#0891b2', fontWeight: 600 }}>Guardando en la nube...</span>
-                                </div>
-                              );
-                            }
-
-                            if (info.previewImgSrc) {
-                              return (
-                                <div
-                                  className={styles.resourceThumbnailBox}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setPreviewResourceModal({
-                                      isOpen: true,
-                                      title: nodeTitle(node),
-                                      resourceType: info.resType,
-                                      url: info.rawUrl || info.previewImgSrc,
-                                      fileData: node.draftFields?.fileData,
-                                      notes: node.draftFields?.notes || '',
-                                    });
+                            {/* 1. VISTA PREVIA DE IMAGEN / RENDER (Directa o desde Google Drive) */}
+                            {!isUploading && info.previewImgSrc && (
+                              <div
+                                className={styles.resourceThumbnailBox}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewResourceModal({
+                                    isOpen: true,
+                                    title: nodeTitle(node),
+                                    resourceType: info.resType,
+                                    url: info.rawUrl || info.previewImgSrc,
+                                    fileData: node.draftFields?.fileData,
+                                    notes: node.draftFields?.notes || '',
+                                  });
+                                }}
+                                title="Clic para ampliar en pantalla completa"
+                              >
+                                <img
+                                  src={info.previewImgSrc}
+                                  alt={nodeTitle(node)}
+                                  className={styles.resourceThumbnailImg}
+                                  onError={(e) => {
+                                    e.target.style.opacity = '0.5';
                                   }}
-                                  title="Clic para ampliar vista previa"
-                                >
-                                  <img
-                                    src={info.previewImgSrc}
-                                    alt={nodeTitle(node)}
-                                    className={styles.resourceThumbnailImg}
-                                    onError={(e) => {
-                                      e.target.style.opacity = '0.5';
-                                    }}
-                                  />
-                                  <div className={styles.resourcePreviewHover}>
-                                    <span>🔍 Ampliar</span>
-                                  </div>
+                                />
+                                <div className={styles.resourcePreviewHover}>
+                                  <span>🔍 Ampliar</span>
                                 </div>
-                              );
-                            }
+                              </div>
+                            )}
 
-                            if (info.isPdf) {
-                              return (
-                                <div
-                                  className={styles.resourceDocBadge}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setPreviewResourceModal({
-                                      isOpen: true,
-                                      title: nodeTitle(node),
-                                      resourceType: 'documento',
-                                      url: info.effectiveUrl,
-                                      fileData: node.draftFields?.fileData,
-                                      notes: node.draftFields?.notes || '',
-                                    });
-                                  }}
-                                >
-                                  <span style={{ fontSize: '20px' }}>📄</span>
-                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#dc2626' }}>
-                                      {info.fileName || 'Documento PDF'}
-                                    </div>
-                                    <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
-                                      {info.fileSize ? `${Math.round(info.fileSize / 1024)} KB` : 'Ver / Descargar PDF'}
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            }
-
-                            if (info.isModel) {
-                              return (
-                                <div
-                                  className={styles.resourceModelBadge}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
+                            {/* 2. MODELO 3D CAD: SOLIDWORKS, INVENTOR, STEP, DWG */}
+                            {!isUploading && !info.previewImgSrc && info.isModel && (
+                              <div
+                                className={styles.resourceModelBadge}
+                                style={{
+                                  background: info.cadBrand === 'solidworks' ? 'rgba(225, 29, 72, 0.08)' : info.cadBrand === 'inventor' ? 'rgba(217, 119, 6, 0.08)' : 'rgba(13, 148, 136, 0.08)',
+                                  borderColor: info.cadColor || '#0d9488',
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (info.fileUrl && !info.fileUrl.startsWith('data:')) {
+                                    window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
+                                  } else {
                                     setPreviewResourceModal({
                                       isOpen: true,
                                       title: nodeTitle(node),
@@ -3533,45 +3559,84 @@ const EditorVisualPage = ({ standalone = false }) => {
                                       fileData: node.draftFields?.fileData,
                                       notes: node.draftFields?.notes || '',
                                     });
-                                  }}
-                                >
-                                  <span style={{ fontSize: '18px' }}>🧊</span>
-                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#0d9488' }}>
-                                      {info.fileName || 'Modelo CAD 3D'}
-                                    </div>
-                                    <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
-                                      {info.fileSize ? `${Math.round(info.fileSize / 1024)} KB` : 'Ficha 3D'}
-                                    </div>
+                                  }
+                                }}
+                                title="Clic para descargar / abrir ficha CAD"
+                              >
+                                <span style={{ fontSize: '22px' }}>{info.cadIcon || '🧊'}</span>
+                                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                  <div style={{ fontSize: '11px', fontWeight: 800, color: info.cadColor || '#0d9488' }}>
+                                    {info.cadLabel || 'Modelo 3D CAD'}
+                                  </div>
+                                  <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {info.fileName || (info.fileSize ? `${Math.round(info.fileSize / 1024)} KB` : 'Descargar archivo CAD')}
                                   </div>
                                 </div>
-                              );
-                            }
+                              </div>
+                            )}
 
-                            if (info.rawUrl) {
-                              return (
-                                <div
-                                  className={styles.resourceLinkBadge}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
-                                  }}
-                                  title={`Abrir: ${info.rawUrl}`}
-                                >
-                                  <span style={{ fontSize: '18px' }}>🔗</span>
-                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#2563eb' }}>
-                                      {info.rawUrl.replace(/^https?:\/\//, '').split('/')[0]}
-                                    </div>
-                                    <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
-                                      Clic para abrir enlace
-                                    </div>
+                            {/* 3. DOCUMENTO / PLANO PDF */}
+                            {!isUploading && !info.previewImgSrc && info.isPdf && (
+                              <div
+                                className={styles.resourceDocBadge}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (info.effectiveUrl) {
+                                    window.open(formatExternalUrl(info.effectiveUrl), '_blank', 'noopener,noreferrer');
+                                  } else {
+                                    setPreviewResourceModal({
+                                      isOpen: true,
+                                      title: nodeTitle(node),
+                                      resourceType: 'documento',
+                                      url: info.effectiveUrl,
+                                      fileData: node.draftFields?.fileData,
+                                      notes: node.draftFields?.notes || '',
+                                    });
+                                  }
+                                }}
+                                title="Clic para abrir plano PDF"
+                              >
+                                <span style={{ fontSize: '20px' }}>📄</span>
+                                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#dc2626' }}>
+                                    {info.fileName || 'Plano PDF'}
+                                  </div>
+                                  <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)' }}>
+                                    {info.fileSize ? `${Math.round(info.fileSize / 1024)} KB · Clic para abrir` : 'Abrir documento'}
                                   </div>
                                 </div>
-                              );
-                            }
+                              </div>
+                            )}
 
-                            return (
+                            {/* 4. ENLACE WEB DIRECTO (Google Drive, Figma, OneDrive, Web) */}
+                            {!isUploading && !info.previewImgSrc && !info.isModel && !info.isPdf && info.rawUrl && (
+                              <div
+                                className={styles.resourceLinkBadge}
+                                style={{
+                                  borderColor: info.linkProvider?.color ? `${info.linkProvider.color}40` : undefined,
+                                  background: info.linkProvider?.color ? `${info.linkProvider.color}10` : undefined,
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Redirección directa al hacer clic
+                                  window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
+                                }}
+                                title={`Clic para ir directamente a: ${info.rawUrl}`}
+                              >
+                                <span style={{ fontSize: '20px' }}>{info.linkProvider?.icon || '🔗'}</span>
+                                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                  <div style={{ fontSize: '11px', fontWeight: 800, color: info.linkProvider?.color || '#2563eb' }}>
+                                    {info.linkProvider?.name || 'Enlace Externo'}
+                                  </div>
+                                  <div style={{ fontSize: '9.5px', color: 'var(--color-gray-500)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {info.rawUrl.replace(/^https?:\/\//i, '').split('/')[0]} · Clic para abrir ↗
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 5. VACÍO (Sin archivo ni URL) */}
+                            {!isUploading && !info.previewImgSrc && !info.isModel && !info.isPdf && !info.rawUrl && (
                               <div
                                 className={styles.resourceEmptyBox}
                                 onClick={(e) => {
@@ -3583,83 +3648,107 @@ const EditorVisualPage = ({ standalone = false }) => {
                                 📂 <strong>Sin archivo adjunto</strong>
                                 <div style={{ fontSize: '10px', marginTop: '2px' }}>Haz clic para configurar en panel</div>
                               </div>
-                            );
-                          })()}
+                            )}
 
-                          {/* INDICADOR DE ACTIVIDAD / PROYECTO ASIGNADO POR CABLE */}
-                          {(() => {
-                            const connectedEdge = edges.find(
-                              (e) =>
-                                (e.from === node.id && (findNode(e.to)?.type === 'actividad' || findNode(e.to)?.type === 'proyecto')) ||
-                                (e.to === node.id && (findNode(e.from)?.type === 'actividad' || findNode(e.from)?.type === 'proyecto'))
-                            );
-                            const targetNode = connectedEdge
-                              ? findNode(findNode(connectedEdge.from)?.type === 'actividad' || findNode(connectedEdge.from)?.type === 'proyecto' ? connectedEdge.from : connectedEdge.to)
-                              : null;
+                            {/* INDICADOR DE ACTIVIDAD / PROYECTO ASIGNADO POR CABLE */}
+                            {(() => {
+                              const connectedEdge = edges.find(
+                                (e) =>
+                                  (e.from === node.id && (findNode(e.to)?.type === 'actividad' || findNode(e.to)?.type === 'proyecto')) ||
+                                  (e.to === node.id && (findNode(e.from)?.type === 'actividad' || findNode(e.from)?.type === 'proyecto'))
+                              );
+                              const targetNode = connectedEdge
+                                ? findNode(findNode(connectedEdge.from)?.type === 'actividad' || findNode(connectedEdge.from)?.type === 'proyecto' ? connectedEdge.from : connectedEdge.to)
+                                : null;
 
-                            if (targetNode) {
+                              if (targetNode) {
+                                return (
+                                  <div style={{ fontSize: '10.5px', color: 'var(--color-primary, #ea580c)', fontWeight: 700, margin: '3px 0', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                    <span>{targetNode.type === 'proyecto' ? '🗂️ Ligado a Proy:' : '📌 Ligado a Tarea:'}</span>
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nodeTitle(targetNode)}</span>
+                                  </div>
+                                );
+                              }
                               return (
-                                <div style={{ fontSize: '10.5px', color: 'var(--color-primary, #ea580c)', fontWeight: 700, margin: '3px 0', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                  <span>{targetNode.type === 'proyecto' ? '🗂️ Ligado a Proy:' : '📌 Ligado a Tarea:'}</span>
-                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nodeTitle(targetNode)}</span>
+                                <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', fontStyle: 'italic', margin: '2px 0' }}>
+                                  🔌 Conecta un cable a una Actividad o Proyecto
                                 </div>
                               );
-                            }
-                            return (
-                              <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', fontStyle: 'italic', margin: '2px 0' }}>
-                                🔌 Conecta un cable a una Actividad o Proyecto
-                              </div>
-                            );
-                          })()}
+                            })()}
 
-                          {/* BOTONES DE ACCIÓN: EXPANDIR Y DESCARGAR/ABRIR */}
-                          <div className={styles.resourceActions}>
-                            <button
-                              type="button"
-                              className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const info = getResourcePreviewInfo(node);
-                                setPreviewResourceModal({
-                                  isOpen: true,
-                                  title: nodeTitle(node),
-                                  resourceType: info.resType,
-                                  url: info.rawUrl || info.fileUrl || '',
-                                  fileData: node.draftFields?.fileData || null,
-                                  notes: node.draftFields?.notes || '',
-                                });
-                              }}
-                              title="Ver y ampliar esta ayuda visual"
-                            >
-                              🔍 Ver / Expandir
-                            </button>
-
-                            {(() => {
-                              const info = getResourcePreviewInfo(node);
-                              const hasAction = info.fileUrl || info.rawUrl;
-                              if (!hasAction) return null;
-
-                              return (
+                            {/* BOTONES DE ACCIÓN DIRECTOS */}
+                            <div className={styles.resourceActions}>
+                              {info.rawUrl && (
                                 <button
                                   type="button"
-                                  className={styles.resourceActionBtn}
+                                  className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (info.fileUrl && !info.fileUrl.startsWith('data:')) {
-                                      window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
-                                    } else if (info.rawUrl) {
-                                      window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
-                                    }
+                                    window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer');
                                   }}
-                                  title={info.fileName ? `Descargar / Abrir ${info.fileName}` : 'Abrir enlace'}
+                                  title="Abrir enlace en pestaña nueva"
                                 >
-                                  {info.fileName ? '📥 Archivo' : '🔗 Abrir'}
+                                  🌐 Ir al Enlace ↗
                                 </button>
-                              );
-                            })()}
+                              )}
+
+                              {info.fileUrl && !info.rawUrl && info.isModel && (
+                                <button
+                                  type="button"
+                                  className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.open(info.fileUrl, '_blank', 'noopener,noreferrer');
+                                  }}
+                                  title="Descargar archivo CAD"
+                                >
+                                  📥 Descargar CAD
+                                </button>
+                              )}
+
+                              {info.previewImgSrc && (
+                                <button
+                                  type="button"
+                                  className={`${styles.resourceActionBtn} ${styles.resourceActionBtnPrimary}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewResourceModal({
+                                      isOpen: true,
+                                      title: nodeTitle(node),
+                                      resourceType: info.resType,
+                                      url: info.rawUrl || info.previewImgSrc,
+                                      fileData: node.draftFields?.fileData || null,
+                                      notes: node.draftFields?.notes || '',
+                                    });
+                                  }}
+                                  title="Ver y ampliar esta ayuda visual"
+                                >
+                                  🔍 Ampliar
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                className={styles.resourceActionBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewResourceModal({
+                                    isOpen: true,
+                                    title: nodeTitle(node),
+                                    resourceType: info.resType,
+                                    url: info.rawUrl || info.fileUrl || '',
+                                    fileData: node.draftFields?.fileData || null,
+                                    notes: node.draftFields?.notes || '',
+                                  });
+                                }}
+                                title="Ver detalles o notas técnicas"
+                              >
+                                📋 Info / Ficha
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
 
                     {/* 4 PUERTOS DE CONEXIÓN (IZQUIERDA, DERECHA, ARRIBA, ABAJO) */}
@@ -4482,44 +4571,57 @@ const EditorVisualPage = ({ standalone = false }) => {
                 </div>
               )}
 
-              {/* ENLACE WEB */}
+              {/* ENLACE WEB / SERVICIOS CLOUD */}
               {info.isLink && !info.previewImgSrc && (
-                <div style={{ width: '100%', padding: '20px', background: 'rgba(37, 99, 235, 0.06)', border: '1.5px dashed rgba(37, 99, 235, 0.3)', borderRadius: '12px', textAlign: 'center' }}>
-                  <span style={{ fontSize: '36px', display: 'block', marginBottom: '8px' }}>🌐</span>
-                  <strong style={{ fontSize: '14px', color: '#2563eb', display: 'block', marginBottom: '6px' }}>Enlace Web / Cloud</strong>
-                  <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', wordBreak: 'break-all', margin: '0 0 12px 0' }}>
+                <div style={{ width: '100%', padding: '20px', background: info.linkProvider?.color ? `${info.linkProvider.color}0c` : 'rgba(37, 99, 235, 0.06)', border: `1.5px solid ${info.linkProvider?.color || '#2563eb'}40`, borderRadius: '12px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '38px', display: 'block', marginBottom: '8px' }}>{info.linkProvider?.icon || '🌐'}</span>
+                  <strong style={{ fontSize: '15px', color: info.linkProvider?.color || '#2563eb', display: 'block', marginBottom: '6px' }}>
+                    {info.linkProvider?.name || 'Enlace Externo'}
+                  </strong>
+                  <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', wordBreak: 'break-all', margin: '0 0 14px 0' }}>
                     {info.rawUrl || 'Sin enlace configurado'}
                   </p>
                   {info.rawUrl && (
                     <Button
                       variant="primary"
-                      size="sm"
+                      size="md"
                       onClick={() => window.open(formatExternalUrl(info.rawUrl), '_blank', 'noopener,noreferrer')}
                     >
-                      🔗 Abrir Enlace en Pestaña Nueva
+                      🌐 Abrir Enlace en Pestaña Nueva ↗
                     </Button>
                   )}
                 </div>
               )}
 
-              {/* MODELO 3D */}
+              {/* MODELO 3D CAD: SOLIDWORKS, INVENTOR, STEP, DWG */}
               {info.isModel && !info.previewImgSrc && (
-                <div style={{ width: '100%', padding: '20px', background: 'rgba(13, 148, 136, 0.06)', border: '1.5px dashed rgba(13, 148, 136, 0.3)', borderRadius: '12px', textAlign: 'center' }}>
-                  <span style={{ fontSize: '36px', display: 'block', marginBottom: '8px' }}>🧊</span>
-                  <strong style={{ fontSize: '14px', color: '#0d9488', display: 'block', marginBottom: '6px' }}>
-                    {info.fileName || 'Modelo CAD 3D'}
+                <div style={{ width: '100%', padding: '20px', background: info.cadBrand === 'solidworks' ? 'rgba(225, 29, 72, 0.06)' : info.cadBrand === 'inventor' ? 'rgba(217, 119, 6, 0.06)' : 'rgba(13, 148, 136, 0.06)', border: `1.5px solid ${info.cadColor || '#0d9488'}40`, borderRadius: '12px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '38px', display: 'block', marginBottom: '8px' }}>{info.cadIcon || '🧊'}</span>
+                  <strong style={{ fontSize: '15px', color: info.cadColor || '#0d9488', display: 'block', marginBottom: '4px' }}>
+                    {info.cadLabel || 'Modelo 3D CAD'}
                   </strong>
-                  <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', margin: '0 0 12px 0' }}>
-                    Ficha de diseño técnico para manufactura
+                  <p style={{ fontSize: '12.5px', color: 'var(--color-gray-600)', margin: '0 0 12px 0', wordBreak: 'break-all' }}>
+                    {info.fileName || 'Archivo CAD técnico para ensamble o manufactura'}
+                    {info.fileSize ? ` (${Math.round(info.fileSize / 1024)} KB)` : ''}
                   </p>
                   {info.effectiveUrl && (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => window.open(formatExternalUrl(info.effectiveUrl), '_blank', 'noopener,noreferrer')}
-                    >
-                      📥 Abrir / Descargar Modelo CAD
-                    </Button>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <Button
+                        variant="primary"
+                        size="md"
+                        onClick={() => window.open(info.fileUrl || formatExternalUrl(info.effectiveUrl), '_blank', 'noopener,noreferrer')}
+                      >
+                        📥 Descargar Archivo {info.cadBrand ? info.cadBrand.toUpperCase() : 'CAD'}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="md"
+                        onClick={() => window.open('https://viewer.autodesk.com/', '_blank', 'noopener,noreferrer')}
+                        title="Visor gratuito oficial en navegador para modelos SolidWorks, Inventor, STEP y DWG"
+                      >
+                        📐 Abrir en Autodesk Viewer Web ↗
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}
