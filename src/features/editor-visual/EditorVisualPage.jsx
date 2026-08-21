@@ -27,26 +27,33 @@ import useAuth from '../../hooks/useAuth';
 import { AREA_SEQUENCE_DEPENDENCIES, isAreaBlockedBySequence } from '../../context/ProduccionContext';
 import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
+import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import styles from './EditorVisualPage.module.css';
 
+/** Dimensiones del Gran Espacio de Trabajo CAD (Inventor / SolidWorks style) */
+const WORKSPACE_WIDTH = 6000;
+const WORKSPACE_HEIGHT = 6000;
+const GRID_SIZE = 25;
+const GRID_MAJOR_SIZE = 125;
+
 /** Ancho/alto aproximado de un nodo, usado para calcular dónde dibujar cada línea */
-const NODE_WIDTH = 214;
+const NODE_WIDTH = 260;
 const NODE_HEIGHT = 80;
 
-/** Límites de zoom del lienzo (40%–200%), en pasos de 10 puntos porcentuales */
-const MIN_ZOOM = 0.4;
-const MAX_ZOOM = 2;
+/** Límites de zoom del lienzo CAD (20%–250%), en pasos de 10 puntos porcentuales */
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 2.5;
 const ZOOM_STEP = 0.1;
 const clampZoom = (z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z * 100) / 100));
 
-/** Tipos de nodo disponibles, con su color de marca y si permiten crear un registro nuevo */
+/** Tipos de nodo disponibles, con su color de marca */
 const NODE_TYPES = {
+  bloque: { icon: '📦', label: 'Nodo de Trabajo', colorVar: 'var(--color-primary)', allowCreate: true },
   proyecto: { icon: '🗂️', label: 'Proyecto', colorVar: 'var(--color-secondary)', allowCreate: true },
   juego: { icon: '🎮', label: 'Juego', colorVar: 'var(--color-tiffany-blue)', allowCreate: true },
   area: { icon: '🏭', label: 'Área', colorVar: 'var(--color-princeton-orange)', allowCreate: false },
   actividad: { icon: '📌', label: 'Actividad', colorVar: 'var(--color-golden-yellow)', allowCreate: true },
   colaborador: { icon: '👷', label: 'Colaborador', colorVar: 'var(--color-purple-x11)', allowCreate: false },
-  bloque: { icon: '📦', label: 'Bloque de Actividades', colorVar: 'var(--color-alert)', allowCreate: true },
 };
 
 // ALL_BLOCK_AREAS is computed dynamically inside components
@@ -75,9 +82,25 @@ const nextEdgeId = () => {
   return `e-${edgeSeq}`;
 };
 
+/**
+ * Genera el trazo de cable maleable y curvo estilo CAD/Física con soporte de curvatura natural
+ */
 const bezierPath = (p1, p2) => {
-  const dx = Math.max(60, Math.abs(p2.x - p1.x) * 0.5);
-  return `M ${p1.x} ${p1.y} C ${p1.x + dx} ${p1.y}, ${p2.x - dx} ${p2.y}, ${p2.x} ${p2.y}`;
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const dist = Math.hypot(dx, dy);
+
+  // Curvatura suave y maleable adaptativa según distancia y orientación
+  const curveFactor = Math.max(65, Math.min(Math.abs(dx) * 0.55 + 30, 260));
+  // Efecto catenario físico (ligera comba de cable colgante)
+  const gravitySag = Math.min(Math.max(dist * 0.05, 0), 32);
+
+  const cp1x = p1.x + curveFactor;
+  const cp1y = p1.y + (dy >= 0 ? gravitySag : -gravitySag * 0.4);
+  const cp2x = p2.x - curveFactor;
+  const cp2y = p2.y + (dy <= 0 ? gravitySag : -gravitySag * 0.4);
+
+  return `M ${p1.x} ${p1.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
 };
 
 /**
@@ -151,17 +174,21 @@ const EditorVisualPage = ({ standalone = false }) => {
   const [previewWire, setPreviewWire] = useState(null);
 
   // ============================================
-  // ZOOM DEL LIENZO
+  // ZOOM Y NAVEGACIÓN CAD DEL LIENZO
   // ============================================
   const [zoom, setZoom] = useState(1);
-  // Espejo en refs de "zoom"/"worldOffset": el listener nativo de rueda del mouse (ver
-  // más abajo) se registra una sola vez al montar, así que no puede depender de un
-  // closure de React que quede desactualizado — lee siempre el valor más reciente
-  // desde aquí en vez de necesitar volver a suscribirse en cada cambio.
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   const worldOffsetRef = useRef(worldOffset);
   worldOffsetRef.current = worldOffset;
+  
+  // Soporte CAD: Tecla Espacio para Panning, Snap a Cuadrícula y Coordenadas
+  const isSpacePressedRef = useRef(false);
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
+  const [snapToGrid, setSnapToGrid] = useState(true);
+  const [cursorCoords, setCursorCoords] = useState({ x: 0, y: 0 });
+  const [showMinimap, setShowMinimap] = useState(true);
+
   const [isExporting, setIsExporting] = useState(false);
   const [nodeSearch, setNodeSearch] = useState('');
 
@@ -250,17 +277,28 @@ const EditorVisualPage = ({ standalone = false }) => {
   const nodeSummary = useCallback(
     (node) => {
       if (node.type === 'bloque') {
-        const areaName = allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId;
+        const areaName = allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId || 'Sin área';
+        const projName = proyectos.find((p) => p.id === node.projectId)?.name || null;
+        const gameName = juegos.find((j) => j.id === node.gameId)?.name || null;
         const count = node.activityIds?.length || 0;
+        const colabDirect = operarios.find((o) => o.id === node.operarioId)?.name;
         const colabEdge = edges.find(
           (e) =>
             (e.from === node.id && findNode(e.to)?.type === 'colaborador') ||
             (e.to === node.id && findNode(e.from)?.type === 'colaborador')
         );
-        const colabName = colabEdge
+        const colabConnected = colabEdge
           ? nodeTitle(findNode(findNode(colabEdge.from)?.type === 'colaborador' ? colabEdge.from : colabEdge.to))
           : null;
-        return `${areaName} · ${count} actividad${count === 1 ? '' : 'es'}${colabName ? ` · 👷 ${colabName}` : ' · sin colaborador conectado'}`;
+        const colabName = colabDirect || colabConnected;
+
+        const parts = [];
+        if (projName) parts.push(`🗂️ ${projName}`);
+        if (gameName) parts.push(`🎮 ${gameName}`);
+        parts.push(`🏭 ${areaName}`);
+        parts.push(`📌 ${count} act.`);
+        if (colabName) parts.push(`👷 ${colabName}`);
+        return parts.join(' · ');
       }
       if (node.draft) return '🆕 Aún no guardado en el sistema';
       const entity = getLinkedEntity(node);
@@ -285,10 +323,8 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (node.type === 'area') return 'Área de manufactura';
       return '';
     },
-    [getLinkedEntity, getBlockedAreas, operarios, dynamicAreas, allBlockAreas, edges, findNode, nodeTitle]
+    [getLinkedEntity, getBlockedAreas, proyectos, juegos, operarios, dynamicAreas, allBlockAreas, edges, findNode, nodeTitle]
   );
-
-  // ============================================
   // POSICIONES DE PUERTOS Y LÍNEAS
   // ============================================
   const portPos = useCallback((node, side) => ({
@@ -297,11 +333,11 @@ const EditorVisualPage = ({ standalone = false }) => {
   }), []);
 
   const worldBounds = useMemo(() => {
-    let maxX = 500;
-    let maxY = 500;
+    let maxX = WORKSPACE_WIDTH;
+    let maxY = WORKSPACE_HEIGHT;
     nodes.forEach((n) => {
-      maxX = Math.max(maxX, n.x + NODE_WIDTH + 260);
-      maxY = Math.max(maxY, n.y + NODE_HEIGHT + 160);
+      maxX = Math.max(maxX, n.x + NODE_WIDTH + 300);
+      maxY = Math.max(maxY, n.y + NODE_HEIGHT + 300);
     });
     return { width: maxX, height: maxY };
   }, [nodes]);
@@ -310,6 +346,8 @@ const EditorVisualPage = ({ standalone = false }) => {
   // ARRASTRAR NODOS
   // ============================================
   const handleNodeMouseDown = (e, nodeId) => {
+    // Si se presiona el botón central o la tecla espacio, no arrastra el nodo, sino el lienzo
+    if (e.button === 1 || isSpacePressedRef.current) return;
     if (!canEditDiagram) return;
     if (
       e.target.closest('[data-role="port"]') ||
@@ -400,27 +438,58 @@ const EditorVisualPage = ({ standalone = false }) => {
   const localPoint = (e) => {
     const rect = canvasWrapRef.current.getBoundingClientRect();
     return {
-      x: (e.clientX - rect.left - worldOffset.x) / zoom,
-      y: (e.clientY - rect.top - worldOffset.y) / zoom,
+      x: (e.clientX - rect.left - worldOffsetRef.current.x) / zoomRef.current,
+      y: (e.clientY - rect.top - worldOffsetRef.current.y) / zoomRef.current,
     };
   };
 
+  // ============================================
+  // PANNING DEL LIENZO (ESTILO INVENTOR / SOLIDWORKS)
+  // Permite arrastre con botón central (rueda), botón derecho, clic izquierdo en fondo o Espacio
+  // ============================================
   const handleCanvasMouseDown = (e) => {
-    if (e.target !== canvasWrapRef.current && !e.target.dataset.canvasBg) return;
-    panStateRef.current = { startMouseX: e.clientX, startMouseY: e.clientY, startOffset: worldOffset };
-    setIsPanning(true);
+    const isMiddle = e.button === 1;
+    const isRight = e.button === 2;
+    const isBackgroundLeft = e.button === 0 && (
+      e.target === canvasWrapRef.current ||
+      e.target.dataset.canvasBg ||
+      e.target === worldRef.current ||
+      isSpacePressedRef.current
+    );
+
+    if (isMiddle || isRight || isBackgroundLeft) {
+      e.preventDefault();
+      panStateRef.current = {
+        startMouseX: e.clientX,
+        startMouseY: e.clientY,
+        startOffset: worldOffsetRef.current,
+      };
+      setIsPanning(true);
+    }
   };
 
   const handleWindowMouseMove = (e) => {
+    if (canvasWrapRef.current) {
+      const rect = canvasWrapRef.current.getBoundingClientRect();
+      const curX = Math.round((e.clientX - rect.left - worldOffsetRef.current.x) / zoomRef.current);
+      const curY = Math.round((e.clientY - rect.top - worldOffsetRef.current.y) / zoomRef.current);
+      setCursorCoords({ x: curX, y: curY });
+    }
+
     if (dragStateRef.current) {
       const { id, startMouseX, startMouseY, startNodeX, startNodeY } = dragStateRef.current;
-      // El arrastre se mide en píxeles de pantalla, pero la posición del nodo vive en
-      // coordenadas del "mundo" del lienzo — hay que deshacer el zoom para que el nodo
-      // se mueva a la misma velocidad que el cursor sin importar qué tan acercado esté.
       const dx = (e.clientX - startMouseX) / zoomRef.current;
       const dy = (e.clientY - startMouseY) / zoomRef.current;
+      const rawX = startNodeX + dx;
+      const rawY = startNodeY + dy;
+      const finalX = snapToGrid ? Math.round(rawX / GRID_SIZE) * GRID_SIZE : rawX;
+      const finalY = snapToGrid ? Math.round(rawY / GRID_SIZE) * GRID_SIZE : rawY;
       setNodes((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, x: Math.max(0, startNodeX + dx), y: Math.max(0, startNodeY + dy) } : n))
+        prev.map((n) => (n.id === id ? {
+          ...n,
+          x: Math.max(0, Math.min(WORKSPACE_WIDTH - NODE_WIDTH, finalX)),
+          y: Math.max(0, Math.min(WORKSPACE_HEIGHT - NODE_HEIGHT, finalY)),
+        } : n))
       );
     } else if (connectStateRef.current) {
       const { fromId, side } = connectStateRef.current;
@@ -435,7 +504,10 @@ const EditorVisualPage = ({ standalone = false }) => {
       );
     } else if (panStateRef.current) {
       const { startMouseX, startMouseY, startOffset } = panStateRef.current;
-      setWorldOffset({ x: startOffset.x + (e.clientX - startMouseX), y: startOffset.y + (e.clientY - startMouseY) });
+      setWorldOffset({
+        x: startOffset.x + (e.clientX - startMouseX),
+        y: startOffset.y + (e.clientY - startMouseY),
+      });
     }
   };
 
@@ -505,12 +577,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   /**
    * Cambia el zoom manteniendo fijo el punto del lienzo que está bajo (cursorX, cursorY)
-   * en coordenadas de pantalla — igual que Figma/Miro: acercarse con la rueda del mouse
-   * no "salta" la vista, siempre acerca hacia donde apunta el cursor.
-   * El zoom (y el desplazamiento que provoca al anclarse al cursor) es puramente una
-   * preferencia de vista local — igual que "expandedBlocks" más arriba, NO se guarda en
-   * Firestore ni se sincroniza entre colaboradores/ventanas; cada quien ve su propio
-   * acercamiento sin pisar la vista de los demás.
+   * en coordenadas de pantalla — igual que Figma/Inventor/SolidWorks.
    */
   const zoomAtPoint = (deltaZoom, cursorX, cursorY) => {
     const prevZoom = zoomRef.current;
@@ -533,27 +600,109 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const handleResetView = () => {
     setZoom(1);
-    setWorldOffset({ x: 40, y: 30 });
+    setWorldOffset({ x: 80, y: 60 });
   };
 
-  // Zoom con Ctrl/Cmd + rueda del mouse. Se registra con addEventListener nativo (no
-  // el onWheel de React) porque React 17+ adjunta los listeners de "wheel" como
-  // pasivos por defecto — preventDefault() ahí no funciona y solo genera un warning en
-  // consola; sin bloquear el evento, el navegador haría zoom de página en vez del lienzo.
+  /**
+   * Ajusta y centra automáticamente la cámara a todo el diagrama (Zoom to Fit / Tecla F)
+   */
+  const handleFitToView = useCallback(() => {
+    const rect = canvasWrapRef.current?.getBoundingClientRect();
+    if (!rect || nodes.length === 0) {
+      setZoom(1);
+      setWorldOffset({ x: 80, y: 60 });
+      return;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    nodes.forEach((n) => {
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + NODE_WIDTH);
+      maxY = Math.max(maxY, n.y + NODE_HEIGHT + (n.type === 'bloque' && expandedBlocks.has(n.id) ? 220 : 0));
+    });
+
+    const diagramWidth = Math.max(100, maxX - minX);
+    const diagramHeight = Math.max(100, maxY - minY);
+    const padding = 120;
+
+    const availableWidth = Math.max(100, rect.width - padding * 2);
+    const availableHeight = Math.max(100, rect.height - padding * 2);
+
+    const fitZoom = clampZoom(Math.min(availableWidth / diagramWidth, availableHeight / diagramHeight, 1.1));
+
+    const centerX = minX + diagramWidth / 2;
+    const centerY = minY + diagramHeight / 2;
+
+    const nextOffset = {
+      x: Math.round(rect.width / 2 - centerX * fitZoom),
+      y: Math.round(rect.height / 2 - centerY * fitZoom),
+    };
+
+    setZoom(fitZoom);
+    setWorldOffset(nextOffset);
+  }, [nodes, expandedBlocks]);
+
+  // Zoom suave directo con la rueda del ratón (CAD standard)
   useEffect(() => {
     const el = canvasWrapRef.current;
     if (!el) return undefined;
     const onWheel = (e) => {
-      if (!e.ctrlKey) return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
       zoomAtPoint(delta, e.clientX - rect.left, e.clientY - rect.top);
     };
+
+    const onContextMenu = (e) => {
+      if (panStateRef.current) {
+        e.preventDefault();
+      }
+    };
+
     el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    el.addEventListener('contextmenu', onContextMenu);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('contextmenu', onContextMenu);
+    };
   }, []);
+
+  // Atajos de teclado CAD: Espacio para arrastrar el lienzo, F para centrar diagrama
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+      if (e.code === 'Space' && !isInput) {
+        if (!isSpacePressedRef.current) {
+          isSpacePressedRef.current = true;
+          setIsSpacePressed(true);
+        }
+        e.preventDefault();
+      }
+      if (e.key.toLowerCase() === 'f' && !isInput && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        handleFitToView();
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      if (e.code === 'Space') {
+        isSpacePressedRef.current = false;
+        setIsSpacePressed(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [handleFitToView]);
 
   /**
    * Reacomoda todos los nodos en la misma cuadrícula ordenada que usa spawnNode al
@@ -671,10 +820,24 @@ const EditorVisualPage = ({ standalone = false }) => {
   const closePicker = () => setPicker({ isOpen: false, type: null, query: '' });
 
   const spawnNode = (type, node) => {
-    const column = nodes.length % 4;
-    const row = Math.floor(nodes.length / 4);
-    const spawnX = 40 + column * (NODE_WIDTH + 70);
-    const spawnY = 40 + row * (NODE_HEIGHT + 90);
+    const rect = canvasWrapRef.current?.getBoundingClientRect();
+    let spawnX, spawnY;
+    if (rect) {
+      const centerX = (rect.width / 2 - worldOffsetRef.current.x) / zoomRef.current;
+      const centerY = (rect.height / 2 - worldOffsetRef.current.y) / zoomRef.current;
+      const offsetCount = (nodes.length % 6) * 30;
+      spawnX = Math.max(60, Math.min(WORKSPACE_WIDTH - NODE_WIDTH - 60, centerX - NODE_WIDTH / 2 + offsetCount));
+      spawnY = Math.max(60, Math.min(WORKSPACE_HEIGHT - NODE_HEIGHT - 60, centerY - NODE_HEIGHT / 2 + offsetCount));
+    } else {
+      const column = nodes.length % 4;
+      const row = Math.floor(nodes.length / 4);
+      spawnX = 60 + column * (NODE_WIDTH + 70);
+      spawnY = 60 + row * (NODE_HEIGHT + 90);
+    }
+    if (snapToGrid) {
+      spawnX = Math.round(spawnX / GRID_SIZE) * GRID_SIZE;
+      spawnY = Math.round(spawnY / GRID_SIZE) * GRID_SIZE;
+    }
     const created = { id: nextNodeId(), type, x: spawnX, y: spawnY, ...node };
     const nextNodes = [...nodes, created];
     setNodes(nextNodes);
@@ -704,42 +867,248 @@ const EditorVisualPage = ({ standalone = false }) => {
   }, [picker.type, picker.query, catalogFor]);
 
   // ============================================
-  // BLOQUES: contenedores de actividades reales, agrupadas por área
+  // ASISTENTE GUIADO DE CREACIÓN DE NODOS (WIZARD)
   // ============================================
-  // A diferencia de los demás tipos de nodo, un Bloque no representa un solo registro de
-  // Firestore que se busca o se crea — necesita su propio nombre y un área desde el
-  // arranque, así que su botón de la paleta abre este modal en vez del picker genérico.
-  const [blockSetup, setBlockSetup] = useState({ isOpen: false, name: '', areaId: '' });
+  const EMPTY_WIZARD = {
+    isOpen: false,
+    step: 1, // 1: Rol, 2: Proyecto, 3: Juego (si aplica), 4: Área/Responsable
+    role: 'juego', // 'proyecto' | 'juego' | 'bloque'
+    name: '',
+
+    // Proyecto
+    projectMode: 'existing', // 'existing' | 'new'
+    projectId: '',
+    newProjectName: '',
+    newProjectClient: '',
+    newProjectDesc: '',
+    newProjectStartDate: '',
+    newProjectEndDate: '',
+    newProjectStatus: 'diseno',
+
+    // Juego
+    gameMode: 'existing', // 'existing' | 'new'
+    gameId: '',
+    newGameName: '',
+    newGameAreas: ['herreria', 'corte-laser'],
+    newGameTargets: { herreria: 10, 'corte-laser': 10 },
+
+    // Área y Operario
+    areaId: '',
+    operarioId: '',
+  };
+
+  const [wizard, setWizard] = useState(EMPTY_WIZARD);
 
   const openBlockSetup = () => {
     if (!canEditDiagram) return;
-    setBlockSetup({ isOpen: true, name: '', areaId: '' });
+    const today = getTodayLocalDateStr();
+    const hasProjects = proyectos.length > 0;
+    const firstProjId = proyectoActivoId || (hasProjects ? proyectos[0].id : '');
+
+    setWizard({
+      ...EMPTY_WIZARD,
+      isOpen: true,
+      step: 1,
+      role: 'juego',
+      projectMode: hasProjects ? 'existing' : 'new',
+      projectId: firstProjId,
+      newProjectStartDate: today,
+      newProjectEndDate: today,
+      newGameAreas: ['herreria', 'corte-laser'],
+      newGameTargets: { herreria: 10, 'corte-laser': 10 },
+      areaId: dynamicAreas[0]?.id || 'herreria',
+    });
   };
 
-  const closeBlockSetup = () => setBlockSetup({ isOpen: false, name: '', areaId: '' });
+  const closeWizard = () => setWizard(EMPTY_WIZARD);
 
-  const handleCreateBlock = () => {
-    if (!blockSetup.name.trim() || !blockSetup.areaId) {
-      toast.danger('Ingresa un nombre y selecciona un área para el bloque.');
+  const handleToggleWizardGameArea = (areaId) => {
+    setWizard((prev) => {
+      const isSelected = prev.newGameAreas.includes(areaId);
+      let nextAreas = isSelected
+        ? prev.newGameAreas.filter((id) => id !== areaId)
+        : [...prev.newGameAreas, areaId];
+
+      const nextTargets = { ...prev.newGameTargets };
+
+      if (isSelected && areaId === 'corte-laser' && nextAreas.includes('herreria')) {
+        nextAreas = nextAreas.filter((id) => id !== 'herreria');
+        delete nextTargets['herreria'];
+      }
+      if (!isSelected && areaId === 'herreria' && !nextAreas.includes('corte-laser')) {
+        nextAreas.push('corte-laser');
+        nextTargets['corte-laser'] = nextTargets['corte-laser'] || 10;
+      }
+
+      if (isSelected) {
+        delete nextTargets[areaId];
+      } else {
+        nextTargets[areaId] = nextTargets[areaId] || 10;
+      }
+
+      return {
+        ...prev,
+        newGameAreas: nextAreas,
+        newGameTargets: nextTargets,
+      };
+    });
+  };
+
+  const handleWizardNext = () => {
+    if (wizard.step === 1) {
+      if (wizard.role === 'juego') {
+        if (proyectos.length === 0) {
+          setWizard((prev) => ({ ...prev, projectMode: 'new', step: 2 }));
+        } else {
+          setWizard((prev) => ({ ...prev, step: 2 }));
+        }
+      } else {
+        setWizard((prev) => ({ ...prev, step: 2 }));
+      }
       return;
     }
-    spawnNode('bloque', {
-      blockName: blockSetup.name.trim(),
-      areaId: blockSetup.areaId,
-      activityIds: [],
-    });
-    closeBlockSetup();
+
+    if (wizard.step === 2 && wizard.role === 'juego') {
+      if (wizard.projectMode === 'new') {
+        if (!wizard.newProjectName.trim() || !wizard.newProjectClient.trim()) {
+          toast.danger('Por favor ingresa el Nombre del Proyecto y el Cliente.');
+          return;
+        }
+      } else {
+        if (!wizard.projectId) {
+          toast.danger('Selecciona el proyecto al que pertenecerá el juego.');
+          return;
+        }
+      }
+      const availableGames = juegos.filter((j) => j.projectId === wizard.projectId);
+      const autoGameMode = (wizard.projectMode === 'new' || availableGames.length === 0) ? 'new' : 'existing';
+      setWizard((prev) => ({ ...prev, gameMode: autoGameMode, step: 3 }));
+      return;
+    }
+
+    if (wizard.step === 3 && wizard.role === 'juego') {
+      if (wizard.gameMode === 'new') {
+        if (!wizard.newGameName.trim()) {
+          toast.danger('Ingresa el nombre del juego / modelo.');
+          return;
+        }
+      } else {
+        if (!wizard.gameId) {
+          toast.danger('Selecciona un juego existente.');
+          return;
+        }
+      }
+      setWizard((prev) => ({
+        ...prev,
+        step: 4,
+        name: prev.name || (prev.gameMode === 'new' ? prev.newGameName.trim() : (juegos.find((j) => j.id === prev.gameId)?.name || 'Nodo de Juego')),
+      }));
+      return;
+    }
   };
 
-  /** Cambia el nombre de un Bloque (la única propiedad editable directamente en el lienzo) */
+  const handleWizardBack = () => {
+    setWizard((prev) => ({ ...prev, step: Math.max(1, prev.step - 1) }));
+  };
+
+  const handleWizardFinish = async () => {
+    let finalProjectId = wizard.projectId;
+    let finalProjectName = proyectos.find((p) => p.id === finalProjectId)?.name || '';
+
+    // 1. Crear proyecto nuevo si aplica
+    if (wizard.projectMode === 'new' && (wizard.role === 'proyecto' || wizard.role === 'juego' || wizard.newProjectName.trim())) {
+      if (!wizard.newProjectName.trim() || !wizard.newProjectClient.trim()) {
+        toast.danger('Ingresa Nombre del Proyecto y Cliente.');
+        return;
+      }
+      const today = getTodayLocalDateStr();
+      try {
+        finalProjectId = await addProject({
+          name: wizard.newProjectName.trim(),
+          client: wizard.newProjectClient.trim(),
+          description: wizard.newProjectDesc.trim() || 'Sin descripción',
+          startDate: wizard.newProjectStartDate || today,
+          endDate: wizard.newProjectEndDate || today,
+          status: wizard.newProjectStatus || 'diseno',
+        });
+        finalProjectName = wizard.newProjectName.trim();
+        toast.success(`🗂️ Proyecto "${finalProjectName}" registrado.`);
+      } catch (err) {
+        console.error('Error creando proyecto en wizard:', err);
+      }
+    }
+
+    let finalGameId = wizard.gameId;
+
+    // 2. Crear juego nuevo si aplica
+    if (wizard.role === 'juego' && wizard.gameMode === 'new') {
+      if (!wizard.newGameName.trim()) {
+        toast.danger('Ingresa el nombre del juego.');
+        return;
+      }
+      let chosenAreas = wizard.newGameAreas && wizard.newGameAreas.length > 0
+        ? wizard.newGameAreas
+        : [wizard.areaId || 'herreria'];
+
+      if (chosenAreas.includes('herreria') && !chosenAreas.includes('corte-laser')) {
+        chosenAreas.push('corte-laser');
+      }
+
+      const targets = {};
+      chosenAreas.forEach((ar) => {
+        targets[ar] = Number(wizard.newGameTargets?.[ar]) || 10;
+      });
+
+      try {
+        finalGameId = await addGame({
+          name: wizard.newGameName.trim(),
+          projectName: finalProjectName || 'General',
+          projectId: finalProjectId || null,
+          areas: chosenAreas,
+          targetPieces: targets,
+        });
+        toast.success(`🎮 Juego "${wizard.newGameName.trim()}" registrado.`);
+      } catch (err) {
+        console.error('Error creando juego en wizard:', err);
+      }
+    }
+
+    const defaultNodeName =
+      wizard.name.trim() ||
+      (wizard.role === 'proyecto'
+        ? (wizard.projectMode === 'new' ? wizard.newProjectName : finalProjectName || 'Proyecto')
+        : wizard.role === 'juego'
+        ? (wizard.gameMode === 'new' ? wizard.newGameName : juegos.find((j) => j.id === finalGameId)?.name || 'Juego')
+        : 'Nodo de Trabajo');
+
+    spawnNode('bloque', {
+      blockName: defaultNodeName,
+      nodeRole: wizard.role,
+      projectId: finalProjectId || null,
+      gameId: finalGameId || null,
+      areaId: wizard.areaId || (dynamicAreas[0]?.id || 'herreria'),
+      operarioId: wizard.operarioId || null,
+      activityIds: [],
+    });
+
+    closeWizard();
+    toast.success('📦 Nodo creado con éxito en el lienzo.');
+  };
+
+  /** Actualiza cualquier propiedad de un Bloque (nombre, proyecto, juego, área, colaborador) */
+  const updateBlockField = (nodeId, field, value) => {
+    setNodes((prev) => {
+      const next = prev.map((n) => (n.id === nodeId ? { ...n, [field]: value } : n));
+      saveToFirestore(next, edges);
+      return next;
+    });
+  };
+
   const updateBlockName = (nodeId, value) => {
-    setNodes((prev) => prev.map((n) => (n.id === nodeId ? { ...n, blockName: value } : n)));
+    updateBlockField(nodeId, 'blockName', value);
   };
 
   // ---- Crear una actividad NUEVA (real, en Firestore) directamente dentro de un Bloque ----
-  // El responsable YA NO se elige a mano por actividad: se toma del Colaborador conectado
-  // al bloque por cable (ver getConnectedColaboradorNode) — así "se asigna la tarea" al
-  // ligar el bloque con su colaborador, no en cada actividad por separado.
   const EMPTY_BLOCK_ACTIVITY = {
     isOpen: false,
     blockNodeId: null,
@@ -749,8 +1118,6 @@ const EditorVisualPage = ({ standalone = false }) => {
     dueDate: '',
     attachments: [],
     linksText: '',
-    // "Modelo" es distinto de los adjuntos de referencia de arriba: es el archivo/link
-    // puntual que abre el botón "🎬 Abrir Modelo" del bloque (ver handleCreateBlockActivity)
     modelFile: null,
     modelLink: '',
   };
@@ -785,6 +1152,7 @@ const EditorVisualPage = ({ standalone = false }) => {
       return;
     }
     const colaboradorNode = getConnectedColaboradorNode(blockNode.id);
+    const assignedOperarioId = blockNode.operarioId || colaboradorNode?.refId || null;
     const links = blockActivityForm.linksText
       .split('\n')
       .map((l) => l.trim())
@@ -795,7 +1163,9 @@ const EditorVisualPage = ({ standalone = false }) => {
       title: blockActivityForm.title.trim(),
       description: blockActivityForm.description || 'Sin descripción.',
       areaId: blockNode.areaId,
-      operarioId: colaboradorNode?.refId || null,
+      projectId: blockNode.projectId || null,
+      gameId: blockNode.gameId || null,
+      operarioId: assignedOperarioId,
       dueDate: blockActivityForm.dueDate || null,
       priority: blockActivityForm.priority,
       attachments: blockActivityForm.attachments,
@@ -808,10 +1178,10 @@ const EditorVisualPage = ({ standalone = false }) => {
       toast.danger('❌ No se pudo crear la actividad. Intenta de nuevo.');
       return;
     }
-    const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, activityIds: [...n.activityIds, newId] } : n));
+    const nextNodes = nodes.map((n) => (n.id === blockNode.id ? { ...n, activityIds: [...(n.activityIds || []), newId] } : n));
     setNodes(nextNodes);
     saveToFirestore(nextNodes, edges);
-    toast.success(`✅ Actividad "${blockActivityForm.title.trim()}" creada y agregada al bloque.`);
+    toast.success(`✅ Actividad "${blockActivityForm.title.trim()}" creada y agregada al nodo.`);
     closeBlockActivityForm();
   };
 
@@ -842,10 +1212,32 @@ const EditorVisualPage = ({ standalone = false }) => {
   /** Quita una actividad del Bloque (solo la desvincula de este lienzo; no la borra del sistema) */
   const handleUnlinkActivity = (blockNodeId, activityId) => {
     const nextNodes = nodes.map((n) =>
-      n.id === blockNodeId ? { ...n, activityIds: n.activityIds.filter((id) => id !== activityId) } : n
+      n.id === blockNodeId ? { ...n, activityIds: (n.activityIds || []).filter((id) => id !== activityId) } : n
     );
     setNodes(nextNodes);
     saveToFirestore(nextNodes, edges);
+    toast.info('Actividad desvinculada del nodo visual.');
+  };
+
+  /** Elimina la actividad permanentemente de Firestore y despacha aviso al chat del personal */
+  const handleDeleteActivityCompletely = async (blockNodeId, activityId) => {
+    const act = actividades.find((a) => a.id === activityId);
+    if (!act) return;
+    if (act.status !== 'pendiente') {
+      toast.warning('Solo se pueden eliminar actividades en estado pendiente.');
+      return;
+    }
+    const res = await deleteActividad(activityId);
+    if (res?.ok) {
+      const nextNodes = nodes.map((n) =>
+        n.id === blockNodeId ? { ...n, activityIds: (n.activityIds || []).filter((id) => id !== activityId) } : n
+      );
+      setNodes(nextNodes);
+      saveToFirestore(nextNodes, edges);
+      toast.success(`🗑️ Actividad "${act.title}" eliminada y aviso enviado al chat interno.`);
+    } else {
+      toast.danger(res?.error || 'No se pudo eliminar la actividad.');
+    }
   };
 
   /**
@@ -1001,6 +1393,22 @@ const EditorVisualPage = ({ standalone = false }) => {
     );
   };
 
+  const handleMinimapClick = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = (e.clientX - rect.left) / rect.width;
+    const clickY = (e.clientY - rect.top) / rect.height;
+    const targetWorldX = clickX * WORKSPACE_WIDTH;
+    const targetWorldY = clickY * WORKSPACE_HEIGHT;
+
+    const wrapRect = canvasWrapRef.current?.getBoundingClientRect();
+    if (!wrapRect) return;
+
+    setWorldOffset({
+      x: Math.round(wrapRect.width / 2 - targetWorldX * zoom),
+      y: Math.round(wrapRect.height / 2 - targetWorldY * zoom),
+    });
+  };
+
   // ============================================
   // ANIMACIONES
   // ============================================
@@ -1092,19 +1500,20 @@ const EditorVisualPage = ({ standalone = false }) => {
           <aside className={styles.rail}>
             {canEditDiagram ? (
               <div>
-                <h2 className={styles.railTitle}>Agregar Nodo</h2>
+                <h2 className={styles.railTitle}>Estructura</h2>
                 <div className={styles.palette}>
-                  {Object.entries(NODE_TYPES).map(([type, meta]) => (
-                    <button
-                      key={type}
-                      type="button"
-                      className={styles.paletteChip}
-                      style={{ '--chip-color': meta.colorVar }}
-                      onClick={() => (type === 'bloque' ? openBlockSetup() : openPicker(type))}
-                    >
-                      {meta.icon} {meta.label}
-                    </button>
-                  ))}
+                  <button
+                    type="button"
+                    className={styles.addNodeMainBtn}
+                    onClick={openBlockSetup}
+                    title="Crear un nuevo nodo de trabajo integral con proyecto, juego, área y actividades"
+                  >
+                    <span style={{ fontSize: '18px' }}>➕</span>
+                    <div style={{ textAlign: 'left' }}>
+                      <strong style={{ display: 'block', fontSize: '13.5px', letterSpacing: '-0.01em' }}>Agregar Nodo</strong>
+                      <small style={{ fontSize: '11px', opacity: 0.9, fontWeight: 400 }}>Configuración de proyecto y actividades</small>
+                    </div>
+                  </button>
                 </div>
               </div>
             ) : (
@@ -1160,26 +1569,92 @@ const EditorVisualPage = ({ standalone = false }) => {
             </p>
           </aside>
 
-          {/* ---------- Lienzo ---------- */}
+          {/* ---------- Lienzo de Ingeniería CAD (Inventor / SolidWorks Style) ---------- */}
           <div
             ref={canvasWrapRef}
             data-canvas-bg="true"
-            className={`${styles.canvasWrap} ${isPanning ? styles.panning : ''}`}
+            className={`${styles.canvasWrap} ${isPanning ? styles.panning : ''} ${isSpacePressed ? styles.spaceGrab : ''}`}
+            style={{
+              backgroundSize: `${GRID_SIZE * zoom}px ${GRID_SIZE * zoom}px, ${GRID_SIZE * zoom}px ${GRID_SIZE * zoom}px, ${GRID_MAJOR_SIZE * zoom}px ${GRID_MAJOR_SIZE * zoom}px, ${GRID_MAJOR_SIZE * zoom}px ${GRID_MAJOR_SIZE * zoom}px`,
+              backgroundPosition: `${worldOffset.x}px ${worldOffset.y}px, ${worldOffset.x}px ${worldOffset.y}px, ${worldOffset.x}px ${worldOffset.y}px, ${worldOffset.x}px ${worldOffset.y}px`,
+            }}
             onMouseDown={handleCanvasMouseDown}
             onMouseMove={handleWindowMouseMove}
             onMouseUp={handleWindowMouseUp}
             onMouseLeave={handleWindowMouseUp}
           >
+            {/* Minimapa CAD flotante (Radar) */}
+            {showMinimap && (
+              <div
+                className={styles.minimapWrap}
+                onClick={handleMinimapClick}
+                title="Radar CAD: Clic en cualquier zona para centrar vista"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className={styles.minimapTitle}>🗺️ Radar CAD</div>
+                <div className={styles.minimapCanvas}>
+                  {nodes.map((n) => {
+                    const nodeX = (n.x / WORKSPACE_WIDTH) * 100;
+                    const nodeY = (n.y / WORKSPACE_HEIGHT) * 100;
+                    const nodeW = Math.max(4, (NODE_WIDTH / WORKSPACE_WIDTH) * 100);
+                    const nodeH = Math.max(3, (NODE_HEIGHT / WORKSPACE_HEIGHT) * 100);
+                    return (
+                      <div
+                        key={`mini-${n.id}`}
+                        className={styles.minimapNode}
+                        style={{
+                          left: `${nodeX}%`,
+                          top: `${nodeY}%`,
+                          width: `${nodeW}%`,
+                          height: `${nodeH}%`,
+                          backgroundColor: NODE_TYPES[n.type]?.colorVar || '#ea580c',
+                        }}
+                      />
+                    );
+                  })}
+
+                  {(() => {
+                    const rect = canvasWrapRef.current?.getBoundingClientRect() || { width: 800, height: 600 };
+                    const viewWorldX = (-worldOffset.x / zoom) / WORKSPACE_WIDTH * 100;
+                    const viewWorldY = (-worldOffset.y / zoom) / WORKSPACE_HEIGHT * 100;
+                    const viewWorldW = (rect.width / zoom) / WORKSPACE_WIDTH * 100;
+                    const viewWorldH = (rect.height / zoom) / WORKSPACE_HEIGHT * 100;
+                    return (
+                      <div
+                        className={styles.minimapViewport}
+                        style={{
+                          left: `${Math.max(0, Math.min(96, viewWorldX))}%`,
+                          top: `${Math.max(0, Math.min(96, viewWorldY))}%`,
+                          width: `${Math.max(6, Math.min(100, viewWorldW))}%`,
+                          height: `${Math.max(6, Math.min(100, viewWorldH))}%`,
+                        }}
+                      />
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
             <div
               ref={worldRef}
               className={styles.world}
               style={{
                 transform: `translate(${worldOffset.x}px, ${worldOffset.y}px) scale(${zoom})`,
                 transformOrigin: '0 0',
-                width: worldBounds.width,
-                height: worldBounds.height,
+                width: WORKSPACE_WIDTH,
+                height: WORKSPACE_HEIGHT,
               }}
             >
+              {/* Marco delimitador visual del espacio de trabajo */}
+              <div className={styles.workspaceBoundary}>
+                <div className={styles.originMarker}>
+                  <span className={styles.originIcon}>⌖</span>
+                  <span>Origen</span>
+                  <span className={styles.axisX}>X →</span>
+                  <span className={styles.axisY}>↓ Y</span>
+                </div>
+                <div className={styles.workspaceDimLabelTop}>Espacio de Trabajo: 6,000 × 6,000 mm</div>
+              </div>
               <svg className={styles.wires} width={worldBounds.width} height={worldBounds.height}>
                 {edges.map((edge) => {
                   const fromNode = findNode(edge.from);
@@ -1194,26 +1669,37 @@ const EditorVisualPage = ({ standalone = false }) => {
                     juegoEntity && areaEntity && isAreaBlockedBySequence(juegoEntity, areaEntity.id)
                   );
 
+                  const pathData = bezierPath(p1, p2);
+                  const color = isBlockedLink ? 'var(--color-alert)' : NODE_TYPES[fromNode.type].colorVar;
+
                   return (
-                    <path
-                      key={edge.id}
-                      d={bezierPath(p1, p2)}
-                      className={styles.wirePath}
-                      stroke={isBlockedLink ? 'var(--color-alert)' : NODE_TYPES[fromNode.type].colorVar}
-                      strokeDasharray={isBlockedLink ? '7 5' : undefined}
-                      onClick={() => {
-                        if (!canEditDiagram) return;
-                        const nextEdges = edges.filter((e) => e.id !== edge.id);
-                        setEdges(nextEdges);
-                        saveToFirestore(nodes, nextEdges);
-                      }}
-                    >
-                      <title>
-                        {isBlockedLink
-                          ? `🔒 Bloqueado: ${dynamicAreas.find((a) => a.id === AREA_SEQUENCE_DEPENDENCIES[areaEntity.id])?.name} todavía no completa su meta. Clic para eliminar esta conexión.`
-                          : 'Clic para eliminar esta conexión'}
-                      </title>
-                    </path>
+                    <g key={edge.id} className={styles.wireGroup}>
+                      {/* Trazo base de cable físico flexible */}
+                      <path
+                        d={pathData}
+                        className={styles.wireBase}
+                        stroke={color}
+                      />
+                      {/* Línea punteada técnica de conexión interactiva */}
+                      <path
+                        d={pathData}
+                        className={`${styles.wirePath} ${styles.wireDashed}`}
+                        stroke={color}
+                        strokeDasharray={isBlockedLink ? '4 4' : '7 5'}
+                        onClick={() => {
+                          if (!canEditDiagram) return;
+                          const nextEdges = edges.filter((e) => e.id !== edge.id);
+                          setEdges(nextEdges);
+                          saveToFirestore(nodes, nextEdges);
+                        }}
+                      >
+                        <title>
+                          {isBlockedLink
+                            ? `🔒 Bloqueado: ${dynamicAreas.find((a) => a.id === AREA_SEQUENCE_DEPENDENCIES[areaEntity.id])?.name} todavía no completa su meta. Clic para eliminar este cable.`
+                            : 'Clic para desconectar este cable'}
+                        </title>
+                      </path>
+                    </g>
                   );
                 })}
                 {previewWire && (
@@ -1255,12 +1741,32 @@ const EditorVisualPage = ({ standalone = false }) => {
                       style={node.type === 'bloque' ? { cursor: 'pointer' } : undefined}
                     >
                       <span className={styles.nodeEyebrow}>{meta.label}</span>
-                      <span className={styles.nodeTag}>
-                        {nodeSummary(node)}
-                        {node.type === 'bloque' && (
-                          <span style={{ float: 'right' }}>{expandedBlocks.has(node.id) ? '▲' : '▼'}</span>
-                        )}
-                      </span>
+                      {node.type === 'bloque' ? (
+                        <div className={styles.nodeBadgesGrid}>
+                          <div className={styles.nodeBadgeTag} title="Proyecto">
+                            🗂️ {proyectos.find((p) => p.id === node.projectId)?.name || 'Sin proyecto'}
+                          </div>
+                          <div className={styles.nodeBadgeTag} title="Juego">
+                            🎮 {juegos.find((j) => j.id === node.gameId)?.name || 'Sin juego'}
+                          </div>
+                          <div className={styles.nodeBadgeTag} title="Área">
+                            🏭 {allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId}
+                          </div>
+                          <div className={styles.nodeBadgeTag} title="Responsable">
+                            👷 {operarios.find((o) => o.id === node.operarioId)?.name || (
+                              getConnectedColaboradorNode(node.id) ? nodeTitle(getConnectedColaboradorNode(node.id)) : 'Sin asignar'
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                            <span>📌 {(node.activityIds || []).length} actividades</span>
+                            <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>{expandedBlocks.has(node.id) ? '▲ Ocultar' : '▼ Ver detalles'}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className={styles.nodeTag}>
+                          {nodeSummary(node)}
+                        </span>
+                      )}
                     </div>
 
                     {node.type === 'bloque' && expandedBlocks.has(node.id) && (
@@ -1271,23 +1777,17 @@ const EditorVisualPage = ({ standalone = false }) => {
                       >
                         {(() => {
                           const colaboradorNode = getConnectedColaboradorNode(node.id);
-                          if (!colaboradorNode) {
-                            return (
-                              <p className={styles.blockDropdownEmpty}>
-                                ℹ️ Sin colaborador conectado — conecta un nodo Colaborador a este bloque (arrastra desde
-                                sus puertos) para asignarle las actividades.
-                              </p>
-                            );
-                          }
+                          const directOperario = operarios.find((o) => o.id === node.operarioId);
+                          const currentResponsable = directOperario?.name || (colaboradorNode ? nodeTitle(colaboradorNode) : null);
                           return (
                             <div className={styles.blockDropdownResponsable}>
-                              <span>👷 Responsable del bloque: <strong>{nodeTitle(colaboradorNode)}</strong></span>
-                              {canEditDiagram && (node.activityIds || []).length > 0 && (
+                              <span>👷 Responsable: <strong>{currentResponsable || 'Sin asignar'}</strong></span>
+                              {canEditDiagram && currentResponsable && (node.activityIds || []).length > 0 && (
                                 <button
                                   type="button"
                                   className={styles.blockDropdownAction}
-                                  onClick={() => handleReassignBlockActivities(node)}
-                                  title="Reasignar todas las actividades del bloque a este colaborador"
+                                  onClick={() => handleReassignBlockActivities(node, colaboradorNode)}
+                                  title="Reasignar todas las actividades de este nodo al responsable actual"
                                 >
                                   🔗 Reasignar todas
                                 </button>
@@ -1297,7 +1797,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                         })()}
 
                         {(node.activityIds || []).length === 0 && (
-                          <p className={styles.blockDropdownEmpty}>Aún no hay actividades en este bloque.</p>
+                          <p className={styles.blockDropdownEmpty}>Aún no hay actividades en este nodo.</p>
                         )}
                         {(node.activityIds || []).map((activityId) => {
                           const act = actividades.find((a) => a.id === activityId);
@@ -1305,7 +1805,6 @@ const EditorVisualPage = ({ standalone = false }) => {
                           const responsable = operarios.find((o) => o.id === act.operarioId)?.name;
                           const attachmentCount = act.attachments?.length || 0;
                           const linkCount = act.links?.length || 0;
-                          // Preferir el archivo subido (Storage) sobre el link externo si hay ambos
                           const modelUrl = act.modelFile?.url || act.modelLink || null;
                           return (
                             <div key={activityId} className={styles.blockDropdownItem}>
@@ -1337,14 +1836,27 @@ const EditorVisualPage = ({ standalone = false }) => {
                                 )}
                               </div>
                               {canEditDiagram && (
-                                <button
-                                  type="button"
-                                  className={styles.blockDropdownRemove}
-                                  title="Quitar del bloque"
-                                  onClick={() => handleUnlinkActivity(node.id, activityId)}
-                                >
-                                  ✕
-                                </button>
+                                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                  <button
+                                    type="button"
+                                    className={styles.blockDropdownRemove}
+                                    title="Desvincular del nodo visual"
+                                    onClick={() => handleUnlinkActivity(node.id, activityId)}
+                                  >
+                                    ✕
+                                  </button>
+                                  {act.status === 'pendiente' && (
+                                    <button
+                                      type="button"
+                                      className={styles.blockDropdownRemove}
+                                      style={{ color: 'var(--color-alert)' }}
+                                      title="Eliminar actividad permanentemente y avisar al personal en el chat"
+                                      onClick={() => handleDeleteActivityCompletely(node.id, activityId)}
+                                    >
+                                      🗑️
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </div>
                           );
@@ -1395,17 +1907,56 @@ const EditorVisualPage = ({ standalone = false }) => {
               )}
             </div>
 
-            {/* ---------- Controles de Zoom (flotantes, esquina inferior derecha) ---------- */}
+            {/* ---------- Barra de Información Técnica CAD (Inferior Izquierda) ---------- */}
+            <div className={styles.cadInfoBar} onMouseDown={(e) => e.stopPropagation()}>
+              <div className={styles.cadCoords}>
+                <span>📍</span> X: {cursorCoords.x} mm &nbsp;|&nbsp; Y: {cursorCoords.y} mm
+              </div>
+              <div className={styles.cadShortcuts}>
+                🖱️ Rueda: Zoom · Clic Rueda / Espacio: Mover · F: Centrar
+              </div>
+            </div>
+
+            {/* ---------- Controles de Zoom y HUD (Flotantes, Esquina Inferior Derecha) ---------- */}
             <div className={styles.zoomControls} onMouseDown={(e) => e.stopPropagation()}>
-              <button type="button" className={styles.zoomBtn} title="Alejar" onClick={() => handleZoomButton(-ZOOM_STEP)}>
+              <button type="button" className={styles.zoomBtn} title="Alejar (Rueda hacia abajo)" onClick={() => handleZoomButton(-ZOOM_STEP)}>
                 −
               </button>
               <span className={styles.zoomLabel}>{Math.round(zoom * 100)}%</span>
-              <button type="button" className={styles.zoomBtn} title="Acercar" onClick={() => handleZoomButton(ZOOM_STEP)}>
+              <button type="button" className={styles.zoomBtn} title="Acercar (Rueda hacia arriba)" onClick={() => handleZoomButton(ZOOM_STEP)}>
                 +
               </button>
-              <button type="button" className={styles.zoomResetBtn} title="Restablecer vista" onClick={handleResetView}>
+              <button
+                type="button"
+                className={styles.zoomResetBtn}
+                title="Centrar y ajustar todo el diagrama (Tecla F)"
+                onClick={handleFitToView}
+              >
+                🎯 Centrar (F)
+              </button>
+              <button
+                type="button"
+                className={styles.zoomResetBtn}
+                title="Restablecer zoom a 100%"
+                onClick={handleResetView}
+              >
                 ⤢ 100%
+              </button>
+              <button
+                type="button"
+                className={`${styles.snapToggleBtn} ${snapToGrid ? styles.active : ''}`}
+                title={snapToGrid ? 'Alineación magnética a cuadrícula activa (25mm)' : 'Alineación magnética desactivada'}
+                onClick={() => setSnapToGrid((prev) => !prev)}
+              >
+                🧲 {snapToGrid ? 'Snap ON' : 'Snap OFF'}
+              </button>
+              <button
+                type="button"
+                className={styles.snapToggleBtn}
+                title={showMinimap ? 'Ocultar radar CAD' : 'Mostrar radar CAD'}
+                onClick={() => setShowMinimap((prev) => !prev)}
+              >
+                🗺️ Radar
               </button>
             </div>
           </div>
@@ -1425,11 +1976,19 @@ const EditorVisualPage = ({ standalone = false }) => {
                 onSaveActividad={() => handleSaveActividad(selectedNode)}
                 onAssignColaborador={handleAssignColaboradorToArea}
                 getConnectedAreaNode={getConnectedAreaNode}
+                getConnectedColaboradorNode={getConnectedColaboradorNode}
                 actividades={actividades}
                 operarios={operarios}
+                proyectos={proyectos}
+                juegos={juegos}
+                addProject={addProject}
+                addGame={addGame}
                 canEditDiagram={canEditDiagram}
+                updateBlockField={(field, value) => updateBlockField(selectedNode.id, field, value)}
                 updateBlockName={(value) => updateBlockName(selectedNode.id, value)}
                 onSaveBlockName={() => saveToFirestore(nodes, edges)}
+                openBlockActivityForm={() => openBlockActivityForm(selectedNode.id)}
+                handleReassignBlockActivities={(colabNode) => handleReassignBlockActivities(selectedNode, colabNode)}
                 dynamicAreas={dynamicAreas}
                 allBlockAreas={allBlockAreas}
               />
@@ -1482,43 +2041,443 @@ const EditorVisualPage = ({ standalone = false }) => {
         </div>
       </Modal>
 
-      {/* ---------- MODAL: CREAR BLOQUE ---------- */}
-      <Modal isOpen={blockSetup.isOpen} onClose={closeBlockSetup} title="📦 Nuevo Bloque de Actividades">
-        <div className={styles.field}>
-          <label>Nombre del bloque</label>
-          <input
-            type="text"
-            autoFocus
-            placeholder="Ej. Corte Láser — Semana 32"
-            value={blockSetup.name}
-            onChange={(e) => setBlockSetup((prev) => ({ ...prev, name: e.target.value }))}
-          />
-        </div>
-        <div className={styles.field}>
-          <label>Área</label>
-          <select
-            value={blockSetup.areaId}
-            onChange={(e) => setBlockSetup((prev) => ({ ...prev, areaId: e.target.value }))}
-          >
-            <option value="">Seleccionar área...</option>
-            <optgroup label="🏭 Áreas de manufactura">
-              {dynamicAreas.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </optgroup>
-            <optgroup label="✏️ Otras áreas">
-              {NON_PRODUCTION_AREAS.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </optgroup>
-          </select>
-        </div>
-        <div className={styles.calloutBox} style={{ background: 'rgba(255, 51, 0, 0.06)', border: '1px solid rgba(255, 51, 0, 0.2)' }}>
-          Todas las actividades que crees dentro de este bloque quedarán asignadas a esta área automáticamente.
-        </div>
-        <Button variant="primary" size="md" onClick={handleCreateBlock} style={{ marginTop: '10px' }}>
-          Crear Bloque
-        </Button>
+      {/* ---------- MODAL: ASISTENTE GUIADO DE CREACIÓN DE NODOS (WIZARD) ---------- */}
+      <Modal
+        isOpen={wizard.isOpen}
+        onClose={closeWizard}
+        title={
+          wizard.step === 1
+            ? '📦 Asistente de Creación: ¿Qué representará este nodo?'
+            : wizard.role === 'proyecto'
+            ? '🗂️ Configuración del Proyecto'
+            : wizard.role === 'juego' && wizard.step === 2
+            ? '🗂️ Paso 2: Proyecto Requerido para el Juego'
+            : wizard.role === 'juego' && wizard.step === 3
+            ? '🎮 Paso 3: Configuración del Juego / Modelo'
+            : wizard.role === 'juego' && wizard.step === 4
+            ? '🏭 Paso 4: Área y Colaborador Responsable'
+            : '📌 Configuración de Actividades del Nodo'
+        }
+      >
+        {/* PASO 1: SELECCIONAR QUÉ REPRESENTARÁ EL NODO */}
+        {wizard.step === 1 && (
+          <div className={styles.wizardContainer}>
+            <p style={{ fontSize: '13px', color: 'var(--color-gray-600)', margin: '0 0 6px 0' }}>
+              Elige la función o entidad principal que representará este nodo en el diagrama:
+            </p>
+            <div className={styles.wizardRoleGrid}>
+              {/* Tarjeta 1: Juego / Modelo */}
+              <div
+                className={`${styles.wizardRoleCard} ${wizard.role === 'juego' ? styles.wizardRoleCardActive : ''}`}
+                onClick={() => setWizard((prev) => ({ ...prev, role: 'juego' }))}
+              >
+                <div className={styles.wizardRoleIcon}>🎮</div>
+                <div className={styles.wizardRoleText}>
+                  <span className={styles.wizardRoleTitle}>Juego / Modelo de Producción</span>
+                  <span className={styles.wizardRoleDesc}>
+                    Modelo físico que pasa por manufactura (Herrería, Láser, Pintura, etc.) con metas de piezas y control de calidad. Requiere un Proyecto.
+                  </span>
+                </div>
+              </div>
+
+              {/* Tarjeta 2: Proyecto General */}
+              <div
+                className={`${styles.wizardRoleCard} ${wizard.role === 'proyecto' ? styles.wizardRoleCardActive : ''}`}
+                onClick={() => setWizard((prev) => ({ ...prev, role: 'proyecto' }))}
+              >
+                <div className={styles.wizardRoleIcon}>🗂️</div>
+                <div className={styles.wizardRoleText}>
+                  <span className={styles.wizardRoleTitle}>Proyecto General</span>
+                  <span className={styles.wizardRoleDesc}>
+                    Representa un contrato, cliente, parque o proyecto maestro en el sistema.
+                  </span>
+                </div>
+              </div>
+
+              {/* Tarjeta 3: Bloque de Actividades */}
+              <div
+                className={`${styles.wizardRoleCard} ${wizard.role === 'bloque' ? styles.wizardRoleCardActive : ''}`}
+                onClick={() => setWizard((prev) => ({ ...prev, role: 'bloque' }))}
+              >
+                <div className={styles.wizardRoleIcon}>📌</div>
+                <div className={styles.wizardRoleText}>
+                  <span className={styles.wizardRoleTitle}>Bloque Operativo de Actividades</span>
+                  <span className={styles.wizardRoleDesc}>
+                    Contenedor de tareas y actividades operativas para un área de trabajo o colaborador.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className={styles.wizardFooterNav}>
+              <Button variant="ghost" size="md" onClick={closeWizard}>Cancelar</Button>
+              <Button variant="primary" size="md" onClick={handleWizardNext}>Continuar →</Button>
+            </div>
+          </div>
+        )}
+
+        {/* PASO 2: PROYECTO (Para Rol Proyecto) */}
+        {wizard.step === 2 && wizard.role === 'proyecto' && (
+          <div className={styles.wizardContainer}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <label style={{ margin: 0, fontWeight: 600 }}>Configuración del Proyecto</label>
+              {proyectos.length > 0 && (
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
+                  onClick={() => setWizard((prev) => ({ ...prev, projectMode: prev.projectMode === 'new' ? 'existing' : 'new' }))}
+                >
+                  {wizard.projectMode === 'new' ? '✕ Usar existente' : '➕ Crear Proyecto Nuevo'}
+                </button>
+              )}
+            </div>
+
+            {wizard.projectMode === 'existing' && proyectos.length > 0 ? (
+              <div className={styles.field}>
+                <label>Seleccionar Proyecto Existente</label>
+                <select
+                  value={wizard.projectId}
+                  onChange={(e) => setWizard((prev) => ({ ...prev, projectId: e.target.value }))}
+                >
+                  <option value="">Seleccionar Proyecto...</option>
+                  {proyectos.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className={styles.inlineCreateBox}>
+                <div className={styles.createGrid2}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre del Proyecto *</label>
+                    <input
+                      type="text"
+                      placeholder="Nombre..."
+                      value={wizard.newProjectName}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectName: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Cliente / Entidad *</label>
+                    <input
+                      type="text"
+                      placeholder="Cliente..."
+                      value={wizard.newProjectClient}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectClient: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className={styles.createGrid2}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Inicio</label>
+                    <input
+                      type="date"
+                      value={wizard.newProjectStartDate}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectStartDate: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Entrega</label>
+                    <input
+                      type="date"
+                      value={wizard.newProjectEndDate}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectEndDate: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Descripción</label>
+                  <textarea
+                    rows="2"
+                    placeholder="Descripción u observaciones..."
+                    value={wizard.newProjectDesc}
+                    onChange={(e) => setWizard((prev) => ({ ...prev, newProjectDesc: e.target.value }))}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className={styles.field}>
+              <label>Nombre del Nodo en el Lienzo (Opcional)</label>
+              <input
+                type="text"
+                placeholder="Por defecto tomará el nombre del proyecto"
+                value={wizard.name}
+                onChange={(e) => setWizard((prev) => ({ ...prev, name: e.target.value }))}
+              />
+            </div>
+
+            <div className={styles.wizardFooterNav}>
+              <Button variant="ghost" size="md" onClick={handleWizardBack}>← Volver</Button>
+              <Button variant="primary" size="md" onClick={handleWizardFinish}>➕ Crear Nodo en el Lienzo</Button>
+            </div>
+          </div>
+        )}
+
+        {/* PASO 2: PROYECTO OBLIGATORIO PARA JUEGO */}
+        {wizard.step === 2 && wizard.role === 'juego' && (
+          <div className={styles.wizardContainer}>
+            {proyectos.length === 0 ? (
+              <div className={styles.calloutBox} style={{ background: 'rgba(234, 88, 12, 0.08)', border: '1px solid rgba(234, 88, 12, 0.3)' }}>
+                ℹ️ <strong>Todo modelo de juego debe pertenecer a un Proyecto.</strong> Como aún no hay proyectos registrados, regístralo a continuación para continuar con el juego:
+              </div>
+            ) : (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                <label style={{ margin: 0, fontWeight: 600 }}>¿A qué proyecto pertenecerá este juego?</label>
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
+                  onClick={() => setWizard((prev) => ({ ...prev, projectMode: prev.projectMode === 'new' ? 'existing' : 'new' }))}
+                >
+                  {wizard.projectMode === 'new' ? '✕ Elegir proyecto existente' : '➕ Crear Proyecto Nuevo'}
+                </button>
+              </div>
+            )}
+
+            {wizard.projectMode === 'existing' && proyectos.length > 0 ? (
+              <div className={styles.field}>
+                <select
+                  value={wizard.projectId}
+                  onChange={(e) => setWizard((prev) => ({ ...prev, projectId: e.target.value, gameId: '' }))}
+                >
+                  <option value="">Selecciona el Proyecto...</option>
+                  {proyectos.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className={styles.inlineCreateBox}>
+                <div className={styles.createGrid2}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre del Proyecto *</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Parque Metropolitano 2026..."
+                      value={wizard.newProjectName}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectName: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Cliente / Entidad *</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Municipio / Constructora..."
+                      value={wizard.newProjectClient}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectClient: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className={styles.createGrid2}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Inicio</label>
+                    <input
+                      type="date"
+                      value={wizard.newProjectStartDate}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectStartDate: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Entrega</label>
+                    <input
+                      type="date"
+                      value={wizard.newProjectEndDate}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, newProjectEndDate: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Descripción</label>
+                  <textarea
+                    rows="2"
+                    placeholder="Descripción u observaciones del proyecto..."
+                    value={wizard.newProjectDesc}
+                    onChange={(e) => setWizard((prev) => ({ ...prev, newProjectDesc: e.target.value }))}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className={styles.wizardFooterNav}>
+              <Button variant="ghost" size="md" onClick={handleWizardBack}>← Volver</Button>
+              <Button variant="primary" size="md" onClick={handleWizardNext}>Continuar al Juego →</Button>
+            </div>
+          </div>
+        )}
+
+        {/* PASO 3: CONFIGURACIÓN DEL JUEGO / MODELO */}
+        {wizard.step === 3 && wizard.role === 'juego' && (
+          <div className={styles.wizardContainer}>
+            {wizard.projectMode === 'existing' && juegos.filter((j) => j.projectId === wizard.projectId).length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                <label style={{ margin: 0, fontWeight: 600 }}>Modelo de Juego</label>
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
+                  onClick={() => setWizard((prev) => ({ ...prev, gameMode: prev.gameMode === 'new' ? 'existing' : 'new' }))}
+                >
+                  {wizard.gameMode === 'new' ? '✕ Usar juego existente' : '➕ Crear Juego Nuevo'}
+                </button>
+              </div>
+            )}
+
+            {wizard.gameMode === 'existing' && juegos.filter((j) => j.projectId === wizard.projectId).length > 0 ? (
+              <div className={styles.field}>
+                <label>Seleccionar Juego Existente</label>
+                <select
+                  value={wizard.gameId}
+                  onChange={(e) => setWizard((prev) => ({ ...prev, gameId: e.target.value }))}
+                >
+                  <option value="">Selecciona el Juego...</option>
+                  {juegos
+                    .filter((j) => j.projectId === wizard.projectId || j.projectName === proyectos.find((p) => p.id === wizard.projectId)?.name)
+                    .map((j) => (
+                      <option key={j.id} value={j.id}>{j.name} ({j.projectName || 'General'})</option>
+                    ))}
+                </select>
+              </div>
+            ) : (
+              <div className={styles.inlineCreateBox}>
+                <label style={{ fontSize: '11.5px', color: 'var(--color-gray-700)', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
+                  Nombre del Modelo / Juego *
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej. Resbaladilla Acero Inoxidable..."
+                  value={wizard.newGameName}
+                  onChange={(e) => setWizard((prev) => ({ ...prev, newGameName: e.target.value }))}
+                />
+
+                <label style={{ fontSize: '11.5px', color: 'var(--color-gray-700)', fontWeight: 600, display: 'block', marginTop: '6px', marginBottom: '2px' }}>
+                  Áreas de Manufactura Requeridas:
+                </label>
+                <div className={styles.areasGridPills}>
+                  {dynamicAreas.map((a) => {
+                    const isSelected = wizard.newGameAreas?.includes(a.id);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                        onClick={() => handleToggleWizardGameArea(a.id)}
+                      >
+                        {isSelected ? '✓' : '＋'} {a.name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {wizard.newGameAreas?.length > 0 && (
+                  <div className={styles.areaTargetsList}>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>
+                      Metas de piezas por área:
+                    </label>
+                    {wizard.newGameAreas.map((areaId) => {
+                      const aName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+                      return (
+                        <div key={areaId} className={styles.areaTargetItem}>
+                          <span>🏭 {aName}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <input
+                              type="number"
+                              min="1"
+                              style={{ width: '70px', padding: '3px 6px', fontSize: '12px' }}
+                              value={wizard.newGameTargets?.[areaId] ?? 10}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setWizard((prev) => ({
+                                  ...prev,
+                                  newGameTargets: { ...prev.newGameTargets, [areaId]: val }
+                                }));
+                              }}
+                            />
+                            <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>pzas</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className={styles.wizardFooterNav}>
+              <Button variant="ghost" size="md" onClick={handleWizardBack}>← Volver</Button>
+              <Button variant="primary" size="md" onClick={handleWizardNext}>Continuar a Asignación →</Button>
+            </div>
+          </div>
+        )}
+
+        {/* PASO 4 (Para Juego) O PASO 2 (Para Bloque): ÁREA Y RESPONSABLE */}
+        {((wizard.step === 4 && wizard.role === 'juego') || (wizard.step === 2 && wizard.role === 'bloque')) && (
+          <div className={styles.wizardContainer}>
+            <div className={styles.field}>
+              <label>Nombre del Nodo en el Lienzo</label>
+              <input
+                type="text"
+                placeholder="Ej. Estructura — Herrería"
+                value={wizard.name}
+                onChange={(e) => setWizard((prev) => ({ ...prev, name: e.target.value }))}
+              />
+            </div>
+
+            {wizard.role === 'bloque' && (
+              <div className={styles.field}>
+                <label>🗂️ Proyecto Ligado (Opcional)</label>
+                <select
+                  value={wizard.projectId}
+                  onChange={(e) => setWizard((prev) => ({ ...prev, projectId: e.target.value }))}
+                >
+                  <option value="">Sin proyecto ligado...</option>
+                  {proyectos.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className={styles.field}>
+              <label>🏭 Área Asignada</label>
+              <select
+                value={wizard.areaId}
+                onChange={(e) => setWizard((prev) => ({ ...prev, areaId: e.target.value }))}
+              >
+                <option value="">Seleccionar área...</option>
+                <optgroup label="🏭 Áreas de manufactura">
+                  {dynamicAreas.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="✏️ Otras áreas">
+                  {NON_PRODUCTION_AREAS.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+
+            <div className={styles.field}>
+              <label>👷 Colaborador Responsable (Opcional)</label>
+              <select
+                value={wizard.operarioId}
+                onChange={(e) => setWizard((prev) => ({ ...prev, operarioId: e.target.value }))}
+              >
+                <option value="">Sin asignar (o conectar por cable)</option>
+                {operarios.map((o) => {
+                  const areaName = dynamicAreas.find((a) => a.id === o.currentArea)?.name || o.currentArea;
+                  return (
+                    <option key={o.id} value={o.id}>{o.name} — {areaName}</option>
+                  );
+                })}
+              </select>
+            </div>
+
+            <div className={styles.wizardFooterNav}>
+              <Button variant="ghost" size="md" onClick={handleWizardBack}>← Volver</Button>
+              <Button variant="primary" size="md" onClick={handleWizardFinish}>➕ Crear Nodo en el Lienzo</Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* ---------- MODAL: NUEVA ACTIVIDAD DENTRO DE UN BLOQUE ---------- */}
@@ -1791,18 +2750,118 @@ const NodeInspector = ({
   onSaveActividad,
   onAssignColaborador,
   getConnectedAreaNode,
+  getConnectedColaboradorNode,
   actividades,
   operarios,
+  proyectos = [],
+  juegos = [],
+  addProject,
+  addGame,
   canEditDiagram,
+  updateBlockField,
   updateBlockName,
   onSaveBlockName,
+  openBlockActivityForm,
+  handleReassignBlockActivities,
   dynamicAreas,
   allBlockAreas,
 }) => {
   const meta = NODE_TYPES[node.type];
+  const toast = useToast();
+
+  const [isCreatingProj, setIsCreatingProj] = useState(false);
+  const [newProjName, setNewProjName] = useState('');
+  const [newProjClient, setNewProjClient] = useState('');
+  const [newProjDesc, setNewProjDesc] = useState('');
+  const [newProjStartDate, setNewProjStartDate] = useState(getTodayLocalDateStr());
+  const [newProjEndDate, setNewProjEndDate] = useState(getTodayLocalDateStr());
+  const [newProjStatus, setNewProjStatus] = useState('diseno');
+
+  const [isCreatingGame, setIsCreatingGame] = useState(false);
+  const [newGameName, setNewGameName] = useState('');
+  const [newGameAreas, setNewGameAreas] = useState(['herreria', 'corte-laser']);
+  const [newGameTargets, setNewGameTargets] = useState({ herreria: 10, 'corte-laser': 10 });
 
   const incoming = edges.filter((e) => e.to === node.id);
   const outgoing = edges.filter((e) => e.from === node.id);
+
+  const handleToggleInspectorGameArea = (areaId) => {
+    const isSelected = newGameAreas.includes(areaId);
+    let nextAreas = isSelected ? newGameAreas.filter((id) => id !== areaId) : [...newGameAreas, areaId];
+    const nextTargets = { ...newGameTargets };
+
+    if (isSelected && areaId === 'corte-laser' && nextAreas.includes('herreria')) {
+      nextAreas = nextAreas.filter((id) => id !== 'herreria');
+      delete nextTargets['herreria'];
+    }
+    if (!isSelected && areaId === 'herreria' && !nextAreas.includes('corte-laser')) {
+      nextAreas.push('corte-laser');
+      nextTargets['corte-laser'] = nextTargets['corte-laser'] || 10;
+    }
+
+    if (isSelected) {
+      delete nextTargets[areaId];
+    } else {
+      nextTargets[areaId] = nextTargets[areaId] || 10;
+    }
+
+    setNewGameAreas(nextAreas);
+    setNewGameTargets(nextTargets);
+  };
+
+  const handleQuickCreateProject = async () => {
+    if (!newProjName.trim() || !newProjClient.trim()) {
+      toast.danger('Ingresa el Nombre del proyecto y el Cliente.');
+      return;
+    }
+    const newId = await addProject({
+      name: newProjName.trim(),
+      client: newProjClient.trim(),
+      description: newProjDesc.trim() || 'Sin descripción',
+      startDate: newProjStartDate || getTodayLocalDateStr(),
+      endDate: newProjEndDate || getTodayLocalDateStr(),
+      status: newProjStatus || 'diseno',
+    });
+    if (newId) {
+      updateBlockField('projectId', newId);
+      setIsCreatingProj(false);
+      setNewProjName('');
+      setNewProjClient('');
+      setNewProjDesc('');
+      toast.success(`🗂️ Proyecto "${newProjName.trim()}" registrado y asignado.`);
+    }
+  };
+
+  const handleQuickCreateGame = async () => {
+    if (!newGameName.trim()) {
+      toast.danger('Ingresa un nombre para el juego.');
+      return;
+    }
+    let chosenAreas = newGameAreas.length > 0 ? newGameAreas : [node.areaId || 'herreria'];
+    if (chosenAreas.includes('herreria') && !chosenAreas.includes('corte-laser')) {
+      chosenAreas.push('corte-laser');
+    }
+
+    const targets = {};
+    chosenAreas.forEach((ar) => {
+      targets[ar] = Number(newGameTargets[ar]) || 10;
+    });
+
+    const projName = proyectos.find((p) => p.id === node.projectId)?.name || 'General';
+    const newId = await addGame({
+      name: newGameName.trim(),
+      projectName: projName,
+      projectId: node.projectId || null,
+      areas: chosenAreas,
+      targetPieces: targets,
+    });
+    if (newId) {
+      updateBlockField('gameId', newId);
+      setIsCreatingGame(false);
+      setNewGameName('');
+      toast.success(`🎮 Juego "${newGameName.trim()}" registrado y asignado.`);
+    }
+  };
 
   return (
     <>
@@ -2002,8 +3061,9 @@ const NodeInspector = ({
 
       {node.type === 'bloque' && (
         <>
+          {/* Nombre del Nodo */}
           <div className={styles.field}>
-            <label>Nombre del bloque</label>
+            <label>Nombre del Nodo</label>
             <input
               type="text"
               value={node.blockName}
@@ -2012,12 +3072,275 @@ const NodeInspector = ({
               onBlur={onSaveBlockName}
             />
           </div>
+
+          {/* 🗂️ Proyecto Ligado */}
           <div className={styles.field}>
-            <label>Área</label>
-            <input type="text" value={allBlockAreas.find((a) => a.id === node.areaId)?.name || node.areaId} disabled />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <label style={{ margin: 0 }}>🗂️ Proyecto Ligado</label>
+              {canEditDiagram && (
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
+                  onClick={() => setIsCreatingProj((prev) => !prev)}
+                >
+                  {isCreatingProj ? '✕ Usar existente' : '➕ Nuevo Proyecto'}
+                </button>
+              )}
+            </div>
+            {!isCreatingProj ? (
+              <select
+                value={node.projectId || ''}
+                disabled={!canEditDiagram}
+                onChange={(e) => {
+                  updateBlockField('projectId', e.target.value);
+                  updateBlockField('gameId', '');
+                }}
+              >
+                <option value="">Sin proyecto asignado...</option>
+                {proyectos.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name} {p.client ? `(${p.client})` : ''}</option>
+                ))}
+              </select>
+            ) : (
+              <div className={styles.inlineCreateBox}>
+                <div className={styles.createGrid2}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre *</label>
+                    <input
+                      type="text"
+                      placeholder="Nombre..."
+                      value={newProjName}
+                      onChange={(e) => setNewProjName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Cliente *</label>
+                    <input
+                      type="text"
+                      placeholder="Cliente..."
+                      value={newProjClient}
+                      onChange={(e) => setNewProjClient(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className={styles.createGrid2}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Inicio</label>
+                    <input
+                      type="date"
+                      value={newProjStartDate}
+                      onChange={(e) => setNewProjStartDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Fecha Entrega</label>
+                    <input
+                      type="date"
+                      value={newProjEndDate}
+                      onChange={(e) => setNewProjEndDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Descripción</label>
+                  <textarea
+                    rows="2"
+                    placeholder="Descripción..."
+                    value={newProjDesc}
+                    onChange={(e) => setNewProjDesc(e.target.value)}
+                  />
+                </div>
+                <Button variant="primary" size="sm" onClick={handleQuickCreateProject} style={{ alignSelf: 'flex-start' }}>
+                  💾 Guardar y Asignar
+                </Button>
+              </div>
+            )}
           </div>
-          <div className={styles.calloutBox} style={{ background: 'rgba(255, 51, 0, 0.06)', border: '1px solid rgba(255, 51, 0, 0.2)' }}>
-            Haz clic en el cuerpo del bloque (en el lienzo) para desplegar o cerrar su lista de actividades.
+
+          {/* 🎮 Juego Ligado */}
+          <div className={styles.field}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <label style={{ margin: 0 }}>🎮 Juego Ligado</label>
+              {canEditDiagram && (
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '11.5px', cursor: 'pointer', fontWeight: 600 }}
+                  onClick={() => setIsCreatingGame((prev) => !prev)}
+                >
+                  {isCreatingGame ? '✕ Usar existente' : '➕ Nuevo Juego'}
+                </button>
+              )}
+            </div>
+            {!isCreatingGame ? (
+              <select
+                value={node.gameId || ''}
+                disabled={!canEditDiagram}
+                onChange={(e) => updateBlockField('gameId', e.target.value)}
+              >
+                <option value="">Sin juego asignado...</option>
+                {juegos
+                  .filter((j) => !node.projectId || j.projectId === node.projectId || j.projectName === proyectos.find((p) => p.id === node.projectId)?.name)
+                  .map((j) => (
+                    <option key={j.id} value={j.id}>{j.name} ({j.projectName || 'General'})</option>
+                  ))}
+              </select>
+            ) : (
+              <div className={styles.inlineCreateBox}>
+                <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>Nombre del Modelo / Juego *</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Resbaladilla Acero Inox..."
+                  value={newGameName}
+                  onChange={(e) => setNewGameName(e.target.value)}
+                />
+
+                <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginTop: '4px', marginBottom: '2px' }}>
+                  Áreas de Manufactura Requeridas:
+                </label>
+                <div className={styles.areasGridPills}>
+                  {dynamicAreas.map((a) => {
+                    const isSelected = newGameAreas.includes(a.id);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                        onClick={() => handleToggleInspectorGameArea(a.id)}
+                      >
+                        {isSelected ? '✓' : '＋'} {a.name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {newGameAreas.length > 0 && (
+                  <div className={styles.areaTargetsList}>
+                    <label style={{ fontSize: '11px', color: 'var(--color-gray-500)', display: 'block', marginBottom: '2px' }}>
+                      Metas de piezas por área:
+                    </label>
+                    {newGameAreas.map((areaId) => {
+                      const aName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+                      return (
+                        <div key={areaId} className={styles.areaTargetItem}>
+                          <span>🏭 {aName}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <input
+                              type="number"
+                              min="1"
+                              style={{ width: '70px', padding: '3px 6px', fontSize: '12px' }}
+                              value={newGameTargets[areaId] ?? 10}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setNewGameTargets((prev) => ({ ...prev, [areaId]: val }));
+                              }}
+                            />
+                            <span style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>pzas</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <Button variant="primary" size="sm" onClick={handleQuickCreateGame} style={{ alignSelf: 'flex-start', marginTop: '4px' }}>
+                  💾 Guardar y Asignar
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* 🏭 Área Asignada */}
+          <div className={styles.field}>
+            <label>🏭 Área Asignada</label>
+            <select
+              value={node.areaId || ''}
+              disabled={!canEditDiagram}
+              onChange={(e) => updateBlockField('areaId', e.target.value)}
+            >
+              <option value="">Seleccionar área...</option>
+              <optgroup label="🏭 Áreas de manufactura">
+                {dynamicAreas.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </optgroup>
+              <optgroup label="✏️ Otras áreas">
+                {NON_PRODUCTION_AREAS.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </optgroup>
+            </select>
+          </div>
+
+          {/* 👷 Colaborador Responsable */}
+          <div className={styles.field}>
+            <label>👷 Colaborador Responsable</label>
+            <select
+              value={node.operarioId || ''}
+              disabled={!canEditDiagram}
+              onChange={(e) => updateBlockField('operarioId', e.target.value)}
+            >
+              <option value="">Sin asignar (o conectar por cable)</option>
+              {operarios.map((o) => {
+                const areaName = dynamicAreas.find((a) => a.id === o.currentArea)?.name || o.currentArea;
+                return (
+                  <option key={o.id} value={o.id}>{o.name} — {areaName}</option>
+                );
+              })}
+            </select>
+            {(() => {
+              const colaboradorNode = getConnectedColaboradorNode?.(node.id);
+              const directOperario = operarios.find((o) => o.id === node.operarioId);
+              const currentResponsable = directOperario?.name || (colaboradorNode ? nodeTitle(colaboradorNode) : null);
+              if (currentResponsable && canEditDiagram && (node.activityIds || []).length > 0) {
+                return (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleReassignBlockActivities?.(colaboradorNode)}
+                    style={{ marginTop: '6px', width: '100%', fontSize: '11px' }}
+                  >
+                    🔗 Reasignar {(node.activityIds || []).length} actividades a {currentResponsable}
+                  </Button>
+                );
+              }
+              return null;
+            })()}
+          </div>
+
+          {/* 📌 Actividades del Bloque */}
+          <div style={{ marginTop: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <p className={styles.inspectorEyebrow} style={{ margin: 0 }}>
+                Actividades ({(node.activityIds || []).length})
+              </p>
+              {canEditDiagram && (
+                <Button variant="primary" size="sm" onClick={openBlockActivityForm}>
+                  ➕ Nueva Actividad
+                </Button>
+              )}
+            </div>
+
+            {(node.activityIds || []).length === 0 ? (
+              <span className={styles.emptyConns}>Sin actividades agregadas en este nodo.</span>
+            ) : (
+              <div className={styles.areaStatusList}>
+                {(node.activityIds || []).map((actId) => {
+                  const act = actividades.find((a) => a.id === actId);
+                  if (!act) return null;
+                  const responsable = operarios.find((o) => o.id === act.operarioId)?.name;
+                  return (
+                    <div key={actId} className={styles.areaStatusRow}>
+                      <strong>📌 {act.title}</strong>
+                      <div className={styles.areaStatusMeta}>
+                        <span>{act.status}</span>
+                        <span>· {act.priority}</span>
+                        {responsable && <span>· 👷 {responsable}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </>
       )}

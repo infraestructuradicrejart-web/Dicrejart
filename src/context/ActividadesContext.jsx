@@ -26,6 +26,7 @@ import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { AuthContext } from './AuthContext';
 import { logAudit } from '../utils/auditLog';
 import { uploadAttachments, deleteEvidencePhotos } from '../utils/evidenceStorage';
+import { notifyActivityDeleted } from '../services/chatNotificationService';
 
 export const ActividadesContext = createContext(null);
 
@@ -241,7 +242,8 @@ export const ActividadesProvider = ({ children }) => {
   }, [actividades, user]);
 
   /**
-   * Elimina una actividad si su estatus es 'pendiente', junto con sus adjuntos en Storage
+   * Elimina una actividad si su estatus es 'pendiente', junto con sus adjuntos en Storage,
+   * y despacha un aviso automático al chat del colaborador asignado y al canal general.
    */
   const deleteActividad = useCallback(async (activityId) => {
     if (!db) return { ok: false, error: 'Firebase no inicializado' };
@@ -253,6 +255,13 @@ export const ActividadesProvider = ({ children }) => {
     }
 
     try {
+      // 1. Despachar aviso al chat interno antes de borrar el documento
+      notifyActivityDeleted({
+        activity: act,
+        user,
+      }).catch((err) => console.error('Error al notificar eliminación de actividad al chat:', err));
+
+      // 2. Eliminar de Firestore y registrar auditoría
       await deleteDoc(doc(db, 'actividades', activityId));
       logAudit({ user, module: 'actividades', action: 'Eliminó una actividad', details: act.title || activityId });
     } catch (error) {

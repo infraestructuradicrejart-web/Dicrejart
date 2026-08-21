@@ -31,6 +31,7 @@ import { uploadEvidencePhotos as uploadEvidencePhotosShared, deleteEvidencePhoto
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { AuthContext } from './AuthContext';
 import { logAudit } from '../utils/auditLog';
+import { notifyProjectDeleted } from '../services/chatNotificationService';
 
 /**
  * Comprime y sube a Firebase Storage la evidencia fotográfica de un registro de
@@ -879,11 +880,17 @@ export const ProduccionProvider = ({ children }) => {
     }
 
     try {
-      // Eliminar juegos asociados (que tienen 0% avance)
+      // 1. Despachar aviso al chat interno de la empresa antes de borrar
+      notifyProjectDeleted({
+        project,
+        user,
+      }).catch((err) => console.error('Error al notificar eliminación de proyecto al chat:', err));
+
+      // 2. Eliminar juegos asociados (que tienen 0% avance)
       const batchPromises = projectGames.map((g) => deleteDoc(doc(db, 'juegos', g.id)));
       await Promise.all(batchPromises);
 
-      // Eliminar el proyecto
+      // 3. Eliminar el proyecto y registrar auditoría
       await deleteDoc(doc(db, 'proyectos', projectId));
       logAudit({ user, module: 'produccion', action: 'Eliminó un proyecto', details: project.name || projectId });
       return { ok: true };

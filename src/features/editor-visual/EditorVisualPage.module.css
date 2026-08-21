@@ -50,7 +50,277 @@
 .palette {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.addNodeMainBtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-family);
+  color: var(--color-white);
+  background: linear-gradient(135deg, var(--btn-primary-bg, #ea580c), #c2410c);
+  border: 1px solid rgba(249, 115, 22, 0.45);
+  border-radius: var(--radius-lg, 12px);
+  padding: 12px 14px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(234, 88, 12, 0.25);
+  transition: all var(--transition-fast) var(--ease-out);
+  width: 100%;
+}
+.addNodeMainBtn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(234, 88, 12, 0.35);
+  background: linear-gradient(135deg, #f97316, var(--btn-primary-bg, #ea580c));
+}
+.addNodeMainBtn:active {
+  transform: translateY(0);
+}
+
+.inlineCreateBox {
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+:global([data-theme="dark"]) .inlineCreateBox {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.createGrid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.areasGridPills {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  margin-top: 4px;
+}
+
+.areaPill {
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--color-gray-300);
+  background: var(--color-white);
+  color: var(--color-gray-700);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.areaPillActive {
+  border-color: var(--color-primary);
+  background: rgba(234, 88, 12, 0.08);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+:global([data-theme="dark"]) .areaPill {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--color-gray-300);
+}
+
+:global([data-theme="dark"]) .areaPillActive {
+  border-color: var(--color-primary);
+  background: rgba(234, 88, 12, 0.2);
+  color: #ff8a4c;
+}
+
+.areaTargetsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.areaTargetItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  background: var(--color-white);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-gray-200);
+}
+
+:global([data-theme="dark"]) .areaTargetItem {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ==========================================================================
+   WIZARD DE CREACIÓN GUIADA DE NODOS
+   ========================================================================== */
+.wizardContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.wizardStepBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--color-gray-100);
+  border-radius: var(--radius-md);
+  margin-bottom: 4px;
+}
+
+:global([data-theme="dark"]) .wizardStepBar {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.wizardStepItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-gray-500);
+}
+
+.wizardStepItemActive {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.wizardRoleGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.wizardRoleCard {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--color-white);
+  border: 1.5px solid var(--color-gray-200);
+  border-radius: var(--radius-lg, 12px);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.wizardRoleCard:hover {
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.wizardRoleCardActive {
+  border-color: var(--color-primary);
+  background: rgba(234, 88, 12, 0.05);
+  box-shadow: 0 0 0 1.5px var(--color-primary);
+}
+
+:global([data-theme="dark"]) .wizardRoleCard {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+:global([data-theme="dark"]) .wizardRoleCardActive {
+  background: rgba(234, 88, 12, 0.15);
+  border-color: var(--color-primary);
+}
+
+.wizardRoleIcon {
+  font-size: 26px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--color-gray-100);
+  flex-shrink: 0;
+}
+
+:global([data-theme="dark"]) .wizardRoleIcon {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.wizardRoleText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wizardRoleTitle {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-gray-800);
+}
+
+:global([data-theme="dark"]) .wizardRoleTitle {
+  color: var(--color-gray-100);
+}
+
+.wizardRoleDesc {
+  font-size: 11.5px;
+  color: var(--color-gray-500);
+  line-height: 1.35;
+}
+
+.wizardFooterNav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-gray-200);
+}
+
+:global([data-theme="dark"]) .wizardFooterNav {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+.nodeBadgesGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.nodeBadgeTag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-gray-700);
+  background: var(--color-gray-100);
+  padding: 3px 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global([data-theme="dark"]) .nodeBadgeTag {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-gray-300);
 }
 
 .paletteChip {
@@ -148,17 +418,18 @@
 /* ---------- Controles de Zoom (flotantes sobre el lienzo) ---------- */
 .zoomControls {
   position: absolute;
-  right: var(--space-4);
-  bottom: var(--space-4);
+  bottom: 16px;
+  right: 16px;
   display: flex;
   align-items: center;
   gap: 4px;
-  background: var(--color-white);
+  background: var(--card-bg, rgba(255, 255, 255, 0.94));
+  backdrop-filter: blur(12px);
+  padding: 5px 8px;
+  border-radius: var(--radius-lg, 12px);
   border: 1px solid var(--color-gray-200);
-  border-radius: var(--radius-md);
-  padding: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  z-index: 5;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  z-index: 20;
 }
 
 .zoomBtn {
@@ -174,55 +445,316 @@
   border: none;
   border-radius: var(--radius-sm, 6px);
   cursor: pointer;
+  transition: background var(--transition-fast) var(--ease-out);
 }
 .zoomBtn:hover { background: var(--color-gray-100); }
 
 .zoomLabel {
-  min-width: 42px;
+  min-width: 48px;
   text-align: center;
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--color-gray-600);
+  font-weight: 600;
+  color: var(--color-gray-700);
 }
 
 .zoomResetBtn {
   margin-left: 4px;
-  padding: 0 8px;
+  padding: 0 10px;
   height: 28px;
   font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-gray-700);
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--color-gray-200);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+  transition: all var(--transition-fast) var(--ease-out);
+}
+.zoomResetBtn:hover { color: var(--color-primary); background: var(--color-gray-100); }
+
+.snapToggleBtn {
+  margin-left: 4px;
+  padding: 0 8px;
+  height: 28px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--color-gray-600);
   background: transparent;
   border: none;
   border-left: 1px solid var(--color-gray-200);
   cursor: pointer;
+  border-radius: var(--radius-sm, 6px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all var(--transition-fast) var(--ease-out);
 }
-.zoomResetBtn:hover { color: var(--color-primary); }
+.snapToggleBtn.active {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+  font-weight: 700;
+}
+.snapToggleBtn:hover {
+  background: var(--color-gray-100);
+}
 
-/* ---------- Lienzo ---------- */
+/* ---------- Lienzo de Ingeniería CAD (Inventor / SolidWorks Style) ---------- */
 .canvasWrap {
   flex: 1;
   position: relative;
   overflow: hidden;
   cursor: grab;
-  background-color: var(--color-gray-50);
-  background-image: radial-gradient(rgba(51, 0, 102, 0.12) 1.4px, transparent 1.4px);
-  background-size: 26px 26px;
+  background-color: var(--canvas-bg, #f8fafc);
+  background-image: 
+    linear-gradient(to right, var(--canvas-grid-minor, rgba(51, 0, 102, 0.05)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--canvas-grid-minor, rgba(51, 0, 102, 0.05)) 1px, transparent 1px),
+    linear-gradient(to right, var(--canvas-grid-major, rgba(51, 0, 102, 0.14)) 1.5px, transparent 1.5px),
+    linear-gradient(to bottom, var(--canvas-grid-major, rgba(51, 0, 102, 0.14)) 1.5px, transparent 1.5px);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-gray-200);
+  user-select: none;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.04);
 }
-.canvasWrap.panning { cursor: grabbing; }
 
-.world { position: absolute; top: 0; left: 0; }
-.wires { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
-.wirePath { fill: none; stroke-width: 2.25; pointer-events: stroke; cursor: pointer; }
-.wirePath:hover { stroke-width: 3.25; }
-.wirePreview { fill: none; stroke: var(--color-primary); stroke-width: 2.25; stroke-dasharray: 6 5; pointer-events: none; }
+:global([data-theme="dark"]) .canvasWrap {
+  --canvas-bg: #0d0b17;
+  --canvas-grid-minor: rgba(255, 255, 255, 0.04);
+  --canvas-grid-major: rgba(168, 85, 247, 0.15);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.canvasWrap.panning { cursor: grabbing !important; }
+.canvasWrap.spaceGrab { cursor: grab !important; }
+.canvasWrap.spaceGrab.panning { cursor: grabbing !important; }
+
+/* Barra de información técnica CAD (Inferior Izquierda) */
+.cadInfoBar {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card-bg, rgba(255, 255, 255, 0.92));
+  backdrop-filter: blur(10px);
+  padding: 6px 12px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--color-gray-200);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-gray-600);
+  z-index: 20;
+  pointer-events: none;
+}
+
+.cadCoords {
+  display: flex;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--color-dark);
+}
+.cadCoords span {
+  color: var(--color-primary);
+}
+
+.cadShortcuts {
+  font-size: 10.5px;
+  color: var(--color-gray-500);
+  border-left: 1px solid var(--color-gray-200);
+  padding-left: 10px;
+}
+
+/* Espacio de trabajo físico (Mundo CAD) */
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* Borde perimetral del espacio de trabajo */
+.workspaceBoundary {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 2px dashed rgba(168, 85, 247, 0.35);
+  border-radius: 16px;
+  pointer-events: none;
+}
+
+.originMarker {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  background: var(--card-bg, rgba(255, 255, 255, 0.95));
+  border: 1.5px solid var(--color-primary);
+  border-radius: 6px;
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--color-dark);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.originIcon {
+  color: var(--color-primary);
+  font-size: 14px;
+}
+
+.axisX {
+  color: #ef4444;
+  font-weight: 800;
+  font-size: 10px;
+}
+
+.axisY {
+  color: #10b981;
+  font-weight: 800;
+  font-size: 10px;
+}
+
+.workspaceDimLabelTop {
+  position: absolute;
+  top: 8px;
+  left: 140px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-gray-500);
+  background: var(--card-bg, rgba(255, 255, 255, 0.8));
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-gray-200);
+}
+
+/* Minimapa CAD flotante */
+.minimapWrap {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 130px;
+  height: 130px;
+  background: var(--card-bg, rgba(255, 255, 255, 0.92));
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 20;
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+.minimapTitle {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-gray-500);
+  padding: 3px 6px;
+  background: var(--color-gray-100);
+  border-bottom: 1px solid var(--color-gray-200);
+}
+
+.minimapCanvas {
+  position: relative;
+  width: 100%;
+  height: calc(100% - 18px);
+  background: var(--canvas-bg, #f1f5f9);
+}
+
+.minimapNode {
+  position: absolute;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.minimapViewport {
+  position: absolute;
+  border: 1.5px solid var(--color-primary);
+  background: rgba(234, 88, 12, 0.15);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.wires {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.wireGroup {
+  pointer-events: stroke;
+}
+
+.wireBase {
+  fill: none;
+  stroke-width: 4px;
+  stroke-linecap: round;
+  opacity: 0.22;
+  pointer-events: none;
+  transition: opacity 0.2s ease, stroke-width 0.2s ease;
+}
+
+.wirePath {
+  fill: none;
+  stroke-width: 2.5px;
+  stroke-linecap: round;
+  pointer-events: stroke;
+  cursor: pointer;
+  transition: stroke-width 0.2s ease, filter 0.2s ease;
+}
+
+.wireDashed {
+  stroke-dasharray: 7 5;
+  animation: cableDashAnim 14s linear infinite;
+}
+
+@keyframes cableDashAnim {
+  to {
+    stroke-dashoffset: -120;
+  }
+}
+
+.wireGroup:hover .wireBase {
+  opacity: 0.45;
+  stroke-width: 6px;
+}
+
+.wireGroup:hover .wirePath {
+  stroke-width: 3.8px;
+  filter: drop-shadow(0 0 6px var(--color-primary));
+}
+
+.wirePreview {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: 2.5px;
+  stroke-linecap: round;
+  stroke-dasharray: 6 5;
+  animation: cableDashAnim 6s linear infinite;
+  pointer-events: none;
+  filter: drop-shadow(0 0 4px rgba(234, 88, 12, 0.4));
+}
 
 /* ---------- Nodos ---------- */
 .node {
   position: absolute;
-  width: 214px;
+  width: 260px;
   background: var(--color-white);
   border: 1px solid var(--color-gray-200);
   border-radius: var(--radius-lg);
