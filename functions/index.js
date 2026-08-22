@@ -797,7 +797,7 @@ const claimRHDailyLock = async (lockField, todayStr) => {
     let claimed = false;
     await admin.firestore().runTransaction(async (tx) => {
       const snap = await tx.get(configRef);
-      const current = snap.exists() ? snap.data()[lockField] : null;
+      const current = snap.exists ? snap.data()[lockField] : null;
       if (current === todayStr) return;
       tx.set(configRef, { [lockField]: todayStr }, { merge: true });
       claimed = true;
