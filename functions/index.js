@@ -868,7 +868,7 @@ const buildDailyRHReport = (operariosList, horasExtraToday, todayStr, emailRH) =
 };
 
 /** Relación de horas extra autorizadas hoy (corte de tarde L-V o sábado). */
-const buildOvertimeOnlyReport = (horasExtraToday, todayStr, emailRH, horaLabel) => {
+const buildOvertimeOnlyReport = (horasExtraToday, todayStr, emailRH, horaLabel, upcomingOvertime = []) => {
   const subject = `[Dicrejart System] Relación de Horas Extra Autorizadas - ${todayStr} (${horaLabel})`;
   const rows = horasExtraToday.map((he) => [
     `<strong>${he.operarioName}</strong><br/><span style="font-size:11px;color:#6b7280;">ID: ${he.operarioId}</span>`,
@@ -877,11 +877,31 @@ const buildOvertimeOnlyReport = (horasExtraToday, todayStr, emailRH, horaLabel) 
     he.overtimeTasks || 'N/A',
     he.authorizedBy || 'N/A',
   ]);
+
+  // Horas extra ya autorizadas con anticipación para días futuros (ej. alguien se queda a
+  // trabajar hoy en un turno extendido, o entra un día normalmente no laborable como
+  // mañana o el próximo lunes) — para que RH se entere desde ahora, no hasta el día que
+  // corresponda. Cada una se sigue reportando también, con el detalle completo, el día
+  // real de su corte.
+  const upcomingRows = upcomingOvertime.map((he) => [
+    `<strong>${he.operarioName}</strong><br/><span style="font-size:11px;color:#6b7280;">ID: ${he.operarioId}</span>`,
+    `<strong>${he.authorizedDate}</strong>`,
+    he.areaId || 'N/A',
+    `<span style="color:#92400e;font-weight:600;">${rhDescribeOvertime(he)}</span>`,
+    he.authorizedBy || 'N/A',
+  ]);
+  const upcomingSection = upcomingOvertime.length > 0 ? `
+    <h3 style="font-size: 15px; color: #1f2937; border-bottom: 2px solid #1e293b; padding-bottom: 6px; margin-top: 24px;">📅 Ya autorizadas para días próximos (${upcomingOvertime.length})</h3>
+    <p style="font-size: 12.5px; color: #6b7280; margin: 0 0 4px;">Adelanto informativo — autorizadas con anticipación para una fecha posterior a hoy.</p>
+    ${rhTable(['Colaborador', 'Fecha', 'Área', 'Horas', 'Autorizó'], upcomingRows, '')}
+  ` : '';
+
   const innerHtml = `
     <p style="font-size: 14px; color: #374151;"><strong>Fecha:</strong> ${todayStr}</p>
     <p style="font-size: 14px; color: #374151;"><strong>Destinatario RH:</strong> <span style="color:#2563eb;">${emailRH}</span></p>
     <p style="font-size: 14px; color: #374151;"><strong>Total:</strong> <span style="background-color:#fef3c7;color:#92400e;padding:3px 8px;border-radius:4px;font-weight:bold;">${horasExtraToday.length} autorización(es)</span></p>
     ${rhTable(['Colaborador', 'Área', 'Horas', 'Tareas', 'Autorizó'], rows, 'No se autorizaron horas extra el día de hoy.')}
+    ${upcomingSection}
   `;
   return { subject, bodyHtml: rhEmailWrapper(`Relación de Horas Extra — Corte de ${horaLabel}`, innerHtml) };
 };
@@ -967,10 +987,16 @@ exports.rhScheduledNotificationsCheck = onSchedule(
         if (await claimRHDailyLock('lastRHOvertimeNotificationDate', todayStr)) {
           const heSnap = await db.collection('horas_extra').where('authorizedDate', '==', todayStr).get();
           const heToday = heSnap.docs.map((d) => d.data()).filter((h) => h.verificationStatus !== 'cancelado');
-          const { subject, bodyHtml } = buildOvertimeOnlyReport(heToday, todayStr, emailRH, horaLabel);
+          const upcomingSnap = await db.collection('horas_extra')
+            .where('authorizedDate', '>', todayStr)
+            .orderBy('authorizedDate', 'asc')
+            .limit(50)
+            .get();
+          const upcomingOvertime = upcomingSnap.docs.map((d) => d.data()).filter((h) => h.verificationStatus !== 'cancelado');
+          const { subject, bodyHtml } = buildOvertimeOnlyReport(heToday, todayStr, emailRH, horaLabel, upcomingOvertime);
           await db.collection('notificaciones_rh').add({
             id: `NOTIF-RH-HE-${Date.now()}`, type: 'horas_extra', date: todayStr, timestamp: new Date().toISOString(),
-            emailRH, horasExtraCount: heToday.length, status: 'enviado', subject, bodyHtml,
+            emailRH, horasExtraCount: heToday.length, upcomingOvertimeCount: upcomingOvertime.length, status: 'enviado', subject, bodyHtml,
             enviadoPor: 'Sistema Programado (Servidor)',
           });
         }
