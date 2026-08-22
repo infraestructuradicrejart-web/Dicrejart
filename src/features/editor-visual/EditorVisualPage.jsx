@@ -632,35 +632,79 @@ const EditorVisualPage = ({ standalone = false }) => {
   // Confirmación antes de borrar un Bloque que ya tiene actividades reales adentro
   const [deleteBlockConfirm, setDeleteBlockConfirm] = useState({ isOpen: false, nodeId: null });
 
-  // Qué nodos están "colapsados" (ocultando a sus vecinos conectados directo) — solo
-  // local, no se guarda en Firestore: es una preferencia de visualización de cada quien,
-  // no un cambio al contenido del lienzo. Colapsar solo oculta UN salto (los vecinos
-  // directos), nunca en cascada — así un nodo compartido entre dos ramas (ej. un
-  // colaborador ligado a dos juegos) nunca desaparece por accidente al colapsar solo una.
+  // Qué nodos están "colapsados" — se guarda en el propio documento del lienzo
+  // (`lienzos/{id}.collapsedNodeIds`, ver el listener de abajo y toggleNodeCollapsed),
+  // así que se ve igual para cualquiera que abra este lienzo, no solo para quien colapsó.
   const [collapsedNodeIds, setCollapsedNodeIds] = useState(() => new Set());
 
-  const getDirectNeighborIds = useCallback((nodeId) => {
+  // Solo cuenta como "hijo" (se oculta al colapsar) el nodo del lado "to" del cable — el
+  // "from" nunca se oculta a sí mismo ni hacia atrás. Si un cable apunta al revés de lo
+  // esperado, se corrige con "⇄ Invertir dirección" en la barra del cable seleccionado
+  // (reverseEdgeDirection), no cambiando esta función.
+  const getDirectChildIds = useCallback((nodeId) => {
     const ids = new Set();
     edges.forEach((e) => {
       if (e.from === nodeId) ids.add(e.to);
-      if (e.to === nodeId) ids.add(e.from);
     });
     return ids;
   }, [edges]);
 
+  // Colapsar oculta TODA la cadena que cuelga del ancla (en cascada, siguiendo la
+  // dirección de los cables) — no solo el primer salto. Un nodo de la cadena solo se
+  // oculta si TODOS sus cables de entrada vienen de un ancla colapsada o de otro nodo ya
+  // oculto — si le sigue entrando un cable desde algo que sigue visible (una rama
+  // compartida que no colapsaste), se queda visible, para no ocultar por accidente algo
+  // que sigue siendo relevante en esa otra rama.
   const hiddenNodeIds = useMemo(() => {
+    if (collapsedNodeIds.size === 0) return new Set();
+
+    // 1. Alcance: todo lo alcanzable hacia adelante desde cualquier ancla colapsada
+    const candidates = new Set();
+    const visited = new Set(collapsedNodeIds);
+    const queue = [...collapsedNodeIds];
+    while (queue.length) {
+      const current = queue.shift();
+      edges.forEach((e) => {
+        if (e.from === current && !visited.has(e.to)) {
+          visited.add(e.to);
+          candidates.add(e.to);
+          queue.push(e.to);
+        }
+      });
+    }
+
+    // 2. De ese alcance, ocultar solo lo que quede completamente "cubierto" — sin ningún
+    //    cable de entrada proveniente de un nodo que siga visible
     const hidden = new Set();
-    collapsedNodeIds.forEach((anchorId) => {
-      getDirectNeighborIds(anchorId).forEach((id) => hidden.add(id));
-    });
+    let changed = true;
+    while (changed) {
+      changed = false;
+      candidates.forEach((nodeId) => {
+        if (hidden.has(nodeId)) return;
+        const incomingSources = edges.filter((e) => e.to === nodeId).map((e) => e.from);
+        const fullyCovered = incomingSources.every((src) => collapsedNodeIds.has(src) || hidden.has(src));
+        if (fullyCovered) {
+          hidden.add(nodeId);
+          changed = true;
+        }
+      });
+    }
     return hidden;
-  }, [collapsedNodeIds, getDirectNeighborIds]);
+  }, [collapsedNodeIds, edges]);
 
   const toggleNodeCollapsed = (nodeId) => {
     setCollapsedNodeIds((prev) => {
       const next = new Set(prev);
       if (next.has(nodeId)) next.delete(nodeId);
       else next.add(nodeId);
+      // Escritura propia y ligera (no pasa por saveToFirestore/todo el arreglo de nodos y
+      // cables) — así colapsar/expandir no compite por la misma escritura completa del
+      // lienzo que ya usan mover nodos o conectar cables.
+      if (db && lienzoActivoId) {
+        setDoc(doc(db, 'lienzos', lienzoActivoId), { collapsedNodeIds: [...next] }, { merge: true }).catch((err) => {
+          console.error('Error al guardar estado de colapso del nodo:', err);
+        });
+      }
       return next;
     });
   };
@@ -676,6 +720,10 @@ const EditorVisualPage = ({ standalone = false }) => {
   const canvasWrapRef = useRef(null);
   const worldRef = useRef(null);
   const dragStateRef = useRef(null);
+  // true justo después de soltar un nodo que sí se arrastró (no un clic estacionario) —
+  // evita que el clic nativo del navegador, que dispara igual tras soltar, abra un enlace
+  // o dispare otra acción de "clic simple" cuando en realidad se estaba moviendo el nodo.
+  const justDraggedRef = useRef(false);
   const connectStateRef = useRef(null);
   const panStateRef = useRef(null);
   const nodeSizesRef = useRef({});
@@ -717,6 +765,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     if (!db || !lienzoActivoId) {
       setNodes([]);
       setEdges([]);
+      setCollapsedNodeIds(new Set());
       return;
     }
 
@@ -728,6 +777,8 @@ const EditorVisualPage = ({ standalone = false }) => {
             const data = docSnap.data();
             setNodes(data.nodes || []);
             setEdges(data.edges || []);
+            // Compartido entre todos los que abren este lienzo — no es preferencia local.
+            setCollapsedNodeIds(new Set(data.collapsedNodeIds || []));
             if (data.worldOffset) {
               setWorldOffset(data.worldOffset);
             }
@@ -739,6 +790,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                   nodes: data.nodes || [],
                   edges: data.edges || [],
                   worldOffset: data.worldOffset || { x: 40, y: 30 },
+                  collapsedNodeIds: data.collapsedNodeIds || [],
                   savedAt: Date.now(),
                 })
               );
@@ -752,6 +804,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                 if (parsed.nodes && parsed.nodes.length > 0) {
                   setNodes(parsed.nodes);
                   setEdges(parsed.edges || []);
+                  setCollapsedNodeIds(new Set(parsed.collapsedNodeIds || []));
                   if (parsed.worldOffset) setWorldOffset(parsed.worldOffset);
                   return;
                 }
@@ -759,6 +812,7 @@ const EditorVisualPage = ({ standalone = false }) => {
             }
             setNodes([]);
             setEdges([]);
+            setCollapsedNodeIds(new Set());
           }
         },
         (err) => {
@@ -1603,6 +1657,7 @@ const EditorVisualPage = ({ standalone = false }) => {
       const { leadId, hasMoved, isAlt, isShiftOrCtrl } = dragStateRef.current;
       if (hasMoved) {
         hasDraggedNodes = true;
+        justDraggedRef.current = true;
       } else {
         // Fue un clic estacionario sin arrastrar
         if (!isShiftOrCtrl && !isAlt) {
@@ -3036,6 +3091,22 @@ const EditorVisualPage = ({ standalone = false }) => {
     });
   };
 
+  /**
+   * Invierte a qué nodo "apunta" un cable (from↔to, junto con sus puertos) — define hacia
+   * dónde colapsa: colapsar el nodo "from" oculta al "to", nunca al revés. Como el cable
+   * se pudo haber dibujado en cualquier orden al crearlo, esto permite corregirlo después
+   * sin tener que borrar y volver a conectar.
+   */
+  const reverseEdgeDirection = (edgeId) => {
+    setEdges((prev) => {
+      const next = prev.map((e) =>
+        e.id === edgeId ? { ...e, from: e.to, to: e.from, fromPort: e.toPort, toPort: e.fromPort } : e
+      );
+      saveToFirestore(nodes, next);
+      return next;
+    });
+  };
+
   const updateBlockName = (nodeId, value) => {
     updateBlockField(nodeId, 'blockName', value);
   };
@@ -4006,6 +4077,21 @@ const EditorVisualPage = ({ standalone = false }) => {
 
                   return (
                     <g key={edge.id} className={`${styles.wireGroup} ${isSelected ? styles.wireGroupSelected : ''} ${wireIsolationClass}`}>
+                      {/* Área de clic ampliada e invisible — el trazo visible es delgado y
+                          difícil de acertar; esta franja más ancha (sin pintar) es la que
+                          realmente recibe el clic para seleccionar el cable */}
+                      <path
+                        d={pathData}
+                        fill="none"
+                        stroke="transparent"
+                        strokeWidth="22"
+                        style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEdgeId(isSelected ? null : edge.id);
+                          setSelectedNodeId(null);
+                        }}
+                      />
                       {/* Trazo de halo suave / Resplandor cuando está seleccionado o flujo activo */}
                       <path
                         d={pathData}
@@ -4037,9 +4123,29 @@ const EditorVisualPage = ({ standalone = false }) => {
                             : 'Clic en este cable para cambiar su color o desconectarlo'}
                         </title>
                       </path>
-                      {/* Puntos terminales en los puertos físicos */}
+                      {/* Punto de origen y flecha de destino — muestran hacia dónde "apunta" el
+                          cable (define qué se oculta al colapsar el nodo de origen; se puede
+                          invertir con "⇄ Invertir" en la barra del cable seleccionado) */}
                       <circle cx={p1.x} cy={p1.y} r={isSelected ? '5.5' : '4'} fill={wireColor} stroke="#ffffff" strokeWidth="2" style={{ pointerEvents: 'none' }} />
-                      <circle cx={p2.x} cy={p2.y} r={isSelected ? '5.5' : '4'} fill={wireColor} stroke="#ffffff" strokeWidth="2" style={{ pointerEvents: 'none' }} />
+                      {(() => {
+                        const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+                        const arrowSize = isSelected ? 9 : 7;
+                        const wingAngle = Math.PI / 6.5;
+                        const ax1 = p2.x - arrowSize * Math.cos(angle - wingAngle);
+                        const ay1 = p2.y - arrowSize * Math.sin(angle - wingAngle);
+                        const ax2 = p2.x - arrowSize * Math.cos(angle + wingAngle);
+                        const ay2 = p2.y - arrowSize * Math.sin(angle + wingAngle);
+                        return (
+                          <polygon
+                            points={`${p2.x},${p2.y} ${ax1},${ay1} ${ax2},${ay2}`}
+                            fill={wireColor}
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                            strokeLinejoin="round"
+                            style={{ pointerEvents: 'none' }}
+                          />
+                        );
+                      })()}
                     </g>
                   );
                 })}
@@ -4333,11 +4439,17 @@ const EditorVisualPage = ({ standalone = false }) => {
                         className={styles.framelessLinkEmblem}
                         onClick={(e) => {
                           e.stopPropagation();
+                          // Si el clic viene justo después de arrastrar el nodo a otra
+                          // posición, no abrir el enlace — solo se movió, no se quiso abrir.
+                          if (justDraggedRef.current) {
+                            justDraggedRef.current = false;
+                            return;
+                          }
                           if (targetUrl && targetUrl !== '#') {
                             window.open(targetUrl, '_blank', 'noopener,noreferrer');
                           }
                         }}
-                        title={`Clic para abrir enlace: ${targetUrl}`}
+                        title={`Arrastra para mover · Clic para abrir enlace: ${targetUrl}`}
                       >
                         {renderLinkBrandSymbol(targetUrl)}
 
@@ -4437,7 +4549,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                       <span className={styles.nodeIcon}>{meta.icon}</span>
                       <span className={styles.nodeTitle}>{nodeTitle(node)}</span>
                       {(() => {
-                        const neighborCount = getDirectNeighborIds(node.id).size;
+                        const neighborCount = getDirectChildIds(node.id).size;
                         if (neighborCount === 0) return null;
                         const isCollapsed = collapsedNodeIds.has(node.id);
                         return (
@@ -4445,7 +4557,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                             type="button"
                             data-role="collapse"
                             className={styles.nodeCollapseBtn}
-                            title={isCollapsed ? `Expandir ${neighborCount} nodo(s) conectado(s)` : 'Colapsar nodos conectados directo'}
+                            title={isCollapsed ? `Expandir ${neighborCount} nodo(s) conectado(s)` : 'Colapsar nodos conectados directo (⇄ invierte la dirección de un cable si hace falta)'}
                             onClick={() => toggleNodeCollapsed(node.id)}
                           >
                             {isCollapsed ? `▸ ${neighborCount}` : '▾'}
@@ -5450,6 +5562,17 @@ const EditorVisualPage = ({ standalone = false }) => {
                       title="Alternar entre línea punteada y sólida"
                     >
                       {edge.style === 'solid' ? '━━ Sólida' : '┅┅ Punteada'}
+                    </button>
+
+                    <div className={styles.wireToolbarDivider} />
+
+                    <button
+                      type="button"
+                      className={styles.wireToolbarBtn}
+                      onClick={() => reverseEdgeDirection(edge.id)}
+                      title="Invertir hacia dónde apunta el cable (define qué se oculta al colapsar el nodo de origen)"
+                    >
+                      ⇄ Invertir
                     </button>
 
                     <div className={styles.wireToolbarDivider} />
