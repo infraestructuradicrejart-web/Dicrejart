@@ -1,0 +1,298 @@
+/**
+ * Estilos propios de la vista de Ruta de Fabricación. Las tarjetas reusan las clases de
+ * cabecera/cuerpo de nodo (.nodeHead, .nodeBody, .nodeIcon, .nodeTitle) de
+ * EditorVisualPage.module.css para mantener el mismo lenguaje visual — aquí solo se define
+ * el layout en fila (en vez de canvas de posición libre) y los elementos nuevos: badge de
+ * orden, barra de cuota, conectores y controles de reordenar.
+ */
+
+.readOnlyBanner {
+  margin: 0 24px 16px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+}
+
+.chainScroll {
+  overflow-x: auto;
+  padding: 8px 24px 32px;
+}
+
+.chainRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  min-width: max-content;
+}
+
+.routeCard {
+  position: relative;
+  width: 232px;
+  flex: none;
+  border: 1.5px solid var(--color-gray-300, #cbd5e1);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  overflow: visible;
+}
+
+:global([data-theme="dark"]) .routeCard {
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.routeCard.locked {
+  opacity: 0.6;
+}
+
+.routeCard.terminal {
+  align-self: center;
+}
+
+.orderBadge {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--card-bg, #ffffff);
+  border: 2.5px solid var(--node-color);
+  color: var(--node-color);
+  font-family: var(--font-heading);
+  font-size: 12px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  z-index: 3;
+}
+
+.pinnedBadge {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  font-size: 14px;
+  z-index: 3;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+}
+
+.connector {
+  flex: none;
+  width: 36px;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 30px;
+}
+
+.connector::before {
+  content: '';
+  position: absolute;
+  width: 28px;
+  height: 0;
+  border-top: 2.5px dashed var(--color-gray-400, #9ca3af);
+}
+
+.arrow {
+  position: relative;
+  color: var(--color-secondary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.qtyRow {
+  font-size: 11px;
+  color: var(--color-gray-600, #4b5563);
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
+
+.barTrack {
+  height: 5px;
+  background: var(--color-gray-200, #e5e7eb);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--node-color);
+}
+
+.statusPill {
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-gray-100, #f3f4f6);
+  color: var(--color-gray-600, #4b5563);
+}
+
+.statusPill.done { background: rgba(16, 185, 129, 0.16); color: #10b981; }
+.statusPill.progress { background: rgba(99, 102, 241, 0.16); color: var(--node-color); }
+.statusPill.pending { background: var(--color-gray-100, #f3f4f6); color: var(--color-gray-500, #6b7280); }
+.statusPill.rejected { background: rgba(220, 38, 38, 0.14); color: #dc2626; }
+
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.iconBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--color-gray-300, #cbd5e1);
+  background: var(--card-bg, #fff);
+  color: var(--color-dark);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease;
+}
+
+.iconBtn:hover:not(:disabled) { background: var(--color-gray-100, #f3f4f6); }
+.iconBtn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.gateToggle {
+  border: 1px dashed var(--color-gray-300, #cbd5e1);
+  background: transparent;
+  color: var(--color-gray-600, #4b5563);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.gateToggle:hover { background: var(--color-gray-100, #f3f4f6); }
+
+.caption {
+  font-size: 10.5px;
+  color: var(--color-gray-500, #6b7280);
+  line-height: 1.4;
+}
+
+/* ---------- Checklist del Punto de Calidad ---------- */
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.checklistItem {
+  border: 1px solid var(--color-gray-200, #e5e7eb);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.checklistLabel {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.checklistLabel input { margin-top: 2px; }
+
+.checklistTextDone {
+  text-decoration: line-through;
+  color: var(--color-gray-500, #6b7280);
+}
+
+.itemActions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  padding-left: 20px;
+}
+
+.linkBtn, .linkBtnDanger {
+  background: none;
+  border: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.linkBtn { color: var(--node-color); }
+.linkBtnDanger { color: #dc2626; }
+
+.photoRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+  padding-left: 20px;
+}
+
+.photoThumb {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--color-gray-200, #e5e7eb);
+}
+
+.photoThumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.photoRemove {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: none;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.addItemForm {
+  display: flex;
+  gap: 6px;
+}
+
+.addItemInput {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-gray-300, #cbd5e1);
+  background: var(--input-bg, #fff);
+  color: var(--color-dark);
+}
+
+.notesInput {
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-gray-300, #cbd5e1);
+  background: var(--input-bg, #fff);
+  color: var(--color-dark);
+  resize: vertical;
+  font-family: inherit;
+}
+
+.gateApproveRow {
+  display: flex;
+  gap: 8px;
+}

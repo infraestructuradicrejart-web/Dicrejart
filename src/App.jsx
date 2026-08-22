@@ -81,6 +81,7 @@ const ComprasPage = lazyWithRetry(() => import('./features/compras/ComprasPage')
 const AprobarRequisicionPage = lazyWithRetry(() => import('./features/compras/AprobarRequisicionPage'));
 const ChatPage = lazyWithRetry(() => import('./features/chat/ChatPage'));
 const EditorVisualPage = lazyWithRetry(() => import('./features/editor-visual/EditorVisualPage'));
+const RutaFabricacionView = lazyWithRetry(() => import('./features/editor-visual/RutaFabricacionView'));
 const DisenoPage = lazyWithRetry(() => import('./features/diseno/DisenoPage'));
 
 /**
@@ -293,7 +294,7 @@ function AppContent() {
           }
         />
         <Route
-          path="/editor-visual"
+          path="/editor-visual/:lienzoId?"
           element={
             <RoleRoute section="editor-visual">
               <DesktopOnlyRoute
@@ -303,6 +304,21 @@ function AppContent() {
                 message="El Editor Visual necesita más espacio en pantalla y funciona mejor con mouse. Ábrelo desde una computadora."
               >
                 <EditorVisualPage />
+              </DesktopOnlyRoute>
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="/editor-visual/ruta/:gameId"
+          element={
+            <RoleRoute section="editor-visual">
+              <DesktopOnlyRoute
+                title="Ruta de Fabricación"
+                shape="arco-doble"
+                accentColor="var(--color-secondary)"
+                message="La Ruta de Fabricación necesita más espacio en pantalla y funciona mejor con mouse. Ábrela desde una computadora."
+              >
+                <RutaFabricacionView />
               </DesktopOnlyRoute>
             </RoleRoute>
           }
@@ -385,7 +401,7 @@ function App() {
                           {/* Editor Visual en ventana aparte: sin Sidebar/Header, para aprovechar
                               todo el espacio cuando se abre desde el botón "Abrir en Ventana Aparte" */}
                           <Route
-                            path="/editor-visual/ventana"
+                            path="/editor-visual/ventana/:lienzoId?"
                             element={
                               <ProtectedRoute>
                                 <RoleRoute section="editor-visual">

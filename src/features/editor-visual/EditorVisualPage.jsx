@@ -12,21 +12,23 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
+import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { doc, setDoc, updateDoc, onSnapshot, collection, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, onSnapshot, collection, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../../config/firebase';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
+import LienzoSwitcherModal from './LienzoSwitcherModal';
 import useToast from '../../hooks/useToast';
 import useProduccion from '../../hooks/useProduccion';
 import useActividades from '../../hooks/useActividades';
 import useOperarios from '../../hooks/useOperarios';
 import useAuth from '../../hooks/useAuth';
 import { sendSystemChatMessage } from '../../services/chatNotificationService';
-import { AREA_SEQUENCE_DEPENDENCIES, isAreaBlockedBySequence } from '../../context/ProduccionContext';
+import { isAreaBlockedByRoute, getBlockingAreaForRoute } from '../../context/ProduccionContext';
 import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
@@ -34,8 +36,8 @@ import { compressImage } from '../../utils/imageCompressor';
 import styles from './EditorVisualPage.module.css';
 
 /** Dimensiones del Gran Espacio de Trabajo CAD (Inventor / SolidWorks style) */
-const WORKSPACE_WIDTH = 6000;
-const WORKSPACE_HEIGHT = 6000;
+const WORKSPACE_WIDTH = 20000;
+const WORKSPACE_HEIGHT = 20000;
 const GRID_SIZE = 25;
 const GRID_MAJOR_SIZE = 125;
 
@@ -454,6 +456,7 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
  * @returns {ReactElement}
  */
 const EditorVisualPage = ({ standalone = false }) => {
+  const navigate = useNavigate();
   const { proyectos, juegos, addProject, addGame, updateProject } = useProduccion();
   const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
@@ -550,7 +553,10 @@ const EditorVisualPage = ({ standalone = false }) => {
   // Un solo lienzo unificado donde residen todos los proyectos
   // ============================================
   const [isLeftRailOpen, setIsLeftRailOpen] = useState(false);
-  const lienzoActivoId = 'general';
+  // Sin id en la URL cae en 'general' — mismo comportamiento de siempre para quien no
+  // usa lienzos adicionales (ver LienzoSwitcherModal.jsx para crear/elegir otros).
+  const { lienzoId: lienzoIdParam } = useParams();
+  const lienzoActivoId = lienzoIdParam || 'general';
 
   // Modal para confirmar vaciar todos los nodos del lienzo
   const [clearNodesConfirm, setClearNodesConfirm] = useState(false);
@@ -587,15 +593,6 @@ const EditorVisualPage = ({ standalone = false }) => {
     setClearNodesConfirm(false);
     toast.success('🧹 Lienzo vaciado. Todos los nodos fueron removidos.');
   };
-
-  // Refleja el lienzo activo en la URL para no perder el estado
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
-    url.searchParams.delete('lienzoId');
-    url.searchParams.delete('proyectoId');
-    window.history.replaceState({}, '', url);
-  }, [lienzoActivoId]);
 
   // Proyecto vinculado si el lienzo actual corresponde al ID de un proyecto
   const currentProject = useMemo(() => {
@@ -635,6 +632,47 @@ const EditorVisualPage = ({ standalone = false }) => {
   // Confirmación antes de borrar un Bloque que ya tiene actividades reales adentro
   const [deleteBlockConfirm, setDeleteBlockConfirm] = useState({ isOpen: false, nodeId: null });
 
+  // Qué nodos están "colapsados" (ocultando a sus vecinos conectados directo) — solo
+  // local, no se guarda en Firestore: es una preferencia de visualización de cada quien,
+  // no un cambio al contenido del lienzo. Colapsar solo oculta UN salto (los vecinos
+  // directos), nunca en cascada — así un nodo compartido entre dos ramas (ej. un
+  // colaborador ligado a dos juegos) nunca desaparece por accidente al colapsar solo una.
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState(() => new Set());
+
+  const getDirectNeighborIds = useCallback((nodeId) => {
+    const ids = new Set();
+    edges.forEach((e) => {
+      if (e.from === nodeId) ids.add(e.to);
+      if (e.to === nodeId) ids.add(e.from);
+    });
+    return ids;
+  }, [edges]);
+
+  const hiddenNodeIds = useMemo(() => {
+    const hidden = new Set();
+    collapsedNodeIds.forEach((anchorId) => {
+      getDirectNeighborIds(anchorId).forEach((id) => hidden.add(id));
+    });
+    return hidden;
+  }, [collapsedNodeIds, getDirectNeighborIds]);
+
+  const toggleNodeCollapsed = (nodeId) => {
+    setCollapsedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  };
+
+  // Si el nodo abierto en el Inspector queda oculto porque otro nodo se colapsó, cierra
+  // el Inspector — no tiene caso seguir inspeccionando algo que ya no se ve.
+  useEffect(() => {
+    if (selectedNodeId && hiddenNodeIds.has(selectedNodeId)) {
+      setSelectedNodeId(null);
+    }
+  }, [selectedNodeId, hiddenNodeIds]);
+
   const canvasWrapRef = useRef(null);
   const worldRef = useRef(null);
   const dragStateRef = useRef(null);
@@ -659,6 +697,10 @@ const EditorVisualPage = ({ standalone = false }) => {
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [cursorCoords, setCursorCoords] = useState({ x: 0, y: 0 });
   const [showMinimap, setShowMinimap] = useState(true);
+  // Marco delimitador del área de trabajo — oculto por defecto: en un lienzo con mucho
+  // contenido estorba más de lo que orienta, se puede volver a mostrar con el botón.
+  const [showWorkspaceBoundary, setShowWorkspaceBoundary] = useState(false);
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
 
   const [isExporting, setIsExporting] = useState(false);
   const [nodeSearch, setNodeSearch] = useState('');
@@ -728,6 +770,23 @@ const EditorVisualPage = ({ standalone = false }) => {
       console.warn('Error en listener de lienzo activo:', e);
     }
   }, [lienzoActivoId]);
+
+  // Lista de lienzos existentes (para el selector "🗂️ Lienzos" — ver LienzoSwitcherModal.jsx),
+  // independiente del listener de arriba (que solo trae el lienzo activo).
+  const [lienzosList, setLienzosList] = useState([]);
+  const [isLienzoSwitcherOpen, setIsLienzoSwitcherOpen] = useState(false);
+
+  useEffect(() => {
+    if (!db) return undefined;
+    const unsubscribe = onSnapshot(
+      query(collection(db, 'lienzos'), orderBy('updatedAt', 'desc'), limit(50)),
+      (snap) => {
+        setLienzosList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.warn('Aviso leyendo lista de lienzos:', err)
+    );
+    return unsubscribe;
+  }, []);
 
   const findNode = useCallback((id) => nodes.find((n) => n.id === id) || null, [nodes]);
 
@@ -849,10 +908,11 @@ const EditorVisualPage = ({ standalone = false }) => {
 
     setSaveStatus('saving');
     try {
-      const canvasName = 'Lienzo General';
-
+      // "name" NO va aquí a propósito: con múltiples lienzos, este autosave corre en
+      // cada movimiento de nodo — si mandara un nombre fijo, pisaría el nombre real del
+      // lienzo (asignado una sola vez al crearlo, ver LienzoSwitcherModal.jsx) apenas
+      // alguien lo editara. Con {merge:true}, omitir la clave simplemente no la toca.
       await setDoc(doc(db, 'lienzos', lienzoActivoId), {
-        name: canvasName,
         nodes: sanitizedNodes,
         edges: newEdges,
         worldOffset: newOffset || worldOffset,
@@ -1117,7 +1177,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   /** Áreas de un Juego real que están bloqueadas por secuencia (ej. Herrería esperando Corte Láser) */
   const getBlockedAreas = useCallback(
-    (gameEntity) => (gameEntity?.areas || []).filter((areaId) => isAreaBlockedBySequence(gameEntity, areaId)),
+    (gameEntity) => (gameEntity?.areas || []).filter((areaId) => isAreaBlockedByRoute(gameEntity, areaId)),
     []
   );
 
@@ -1257,6 +1317,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     if (
       e.target.closest('[data-role="port"]') ||
       e.target.closest('[data-role="close"]') ||
+      e.target.closest('[data-role="collapse"]') ||
       e.target.closest('[data-role="block-panel"]')
     ) return;
     const node = findNode(nodeId);
@@ -1886,7 +1947,8 @@ const EditorVisualPage = ({ standalone = false }) => {
    */
   const handleFitToView = useCallback(() => {
     const rect = canvasWrapRef.current?.getBoundingClientRect();
-    if (!rect || nodes.length === 0) {
+    const visibleNodes = nodes.filter((n) => !hiddenNodeIds.has(n.id));
+    if (!rect || visibleNodes.length === 0) {
       setZoom(1);
       setWorldOffset({ x: 80, y: 60 });
       return;
@@ -1897,7 +1959,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    nodes.forEach((n) => {
+    visibleNodes.forEach((n) => {
       minX = Math.min(minX, n.x);
       minY = Math.min(minY, n.y);
       maxX = Math.max(maxX, n.x + NODE_WIDTH);
@@ -1923,7 +1985,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
     setZoom(fitZoom);
     setWorldOffset(nextOffset);
-  }, [nodes, expandedBlocks]);
+  }, [nodes, expandedBlocks, hiddenNodeIds]);
 
   // Zoom suave directo con la rueda del ratón (CAD standard)
   useEffect(() => {
@@ -2360,6 +2422,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     newGameProjectId: '',
     newGameAreas: ['herreria', 'corte-laser'],
     newGameTargets: { herreria: 10, 'corte-laser': 10 },
+    newGameUseRoute: false,
 
     // Actividad
     newActTitle: '',
@@ -2444,6 +2507,18 @@ const EditorVisualPage = ({ standalone = false }) => {
     if (chosenAreas.includes('herreria') && !chosenAreas.includes('corte-laser')) {
       chosenAreas.push('corte-laser');
     }
+    // Con Ruta de Fabricación, el orden del arreglo ES el orden real — Corte Láser debe
+    // quedar antes que Herrería. Solo se corrige si de verdad viola la regla (Herrería
+    // antes que Corte Láser): se intercambian esas dos posiciones nada más, sin tocar el
+    // orden del resto de las áreas ya elegidas.
+    if (nodeModal.newGameUseRoute && chosenAreas.includes('herreria') && chosenAreas.includes('corte-laser')) {
+      const herreriaIdx = chosenAreas.indexOf('herreria');
+      const corteIdx = chosenAreas.indexOf('corte-laser');
+      if (herreriaIdx < corteIdx) {
+        chosenAreas = [...chosenAreas];
+        [chosenAreas[herreriaIdx], chosenAreas[corteIdx]] = [chosenAreas[corteIdx], chosenAreas[herreriaIdx]];
+      }
+    }
     const targets = {};
     chosenAreas.forEach((ar) => {
       targets[ar] = Number(nodeModal.newGameTargets[ar]) || 10;
@@ -2456,11 +2531,14 @@ const EditorVisualPage = ({ standalone = false }) => {
       projectId: nodeModal.newGameProjectId || null,
       areas: chosenAreas,
       targetPieces: targets,
+      useManufacturingRoute: nodeModal.newGameUseRoute,
     });
     if (newId) {
       spawnNode('juego', { draft: false, refId: newId, draftFields: {} });
+      const useRoute = nodeModal.newGameUseRoute;
       closeNodeModal();
       toast.success(`🎮 Juego "${nodeModal.newGameName.trim()}" creado y agregado al lienzo.`);
+      if (useRoute) navigate(`/editor-visual/ruta/${newId}?from=${lienzoActivoId}`);
     }
   };
 
@@ -3287,7 +3365,7 @@ const EditorVisualPage = ({ standalone = false }) => {
   const handleOpenStandalone = () => {
     if (!lienzoActivoId) return;
     window.open(
-      `/editor-visual/ventana?lienzoId=${lienzoActivoId}`,
+      `/editor-visual/ventana/${lienzoActivoId}`,
       'DicrejartEditorVisual',
       'width=1680,height=960,menubar=no,toolbar=no,location=no,status=no'
     );
@@ -3321,6 +3399,18 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   return (
     <motion.div className={`${styles.page} ${standalone ? styles.standalonePage : ''}`} variants={containerVariants} initial="initial" animate="animate">
+      {isHeaderCollapsed ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 16px', background: 'var(--card-bg)', borderRadius: '12px', marginBottom: '10px' }}>
+          <button
+            type="button"
+            className={styles.snapToggleBtn}
+            title="Mostrar encabezado completo"
+            onClick={() => setIsHeaderCollapsed(false)}
+          >
+            ▾ Editor Visual de Asignaciones
+          </button>
+        </div>
+      ) : (
       <PageHeader
         title="Editor Visual de Asignaciones"
         subtitle="Crea y relaciona Proyectos, Juegos, Actividades, Áreas y Colaboradores arrastrando conexiones."
@@ -3328,6 +3418,26 @@ const EditorVisualPage = ({ standalone = false }) => {
         accentColor="var(--color-secondary)"
       >
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setIsHeaderCollapsed(true)}
+            title="Minimizar el encabezado para ganar espacio de lienzo"
+          >
+            ▲ Minimizar
+          </Button>
+
+          {!standalone && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsLienzoSwitcherOpen(true)}
+              title="Cambiar de lienzo o crear uno nuevo para trabajo aislado"
+            >
+              🗂️ {lienzosList.find((l) => l.id === lienzoActivoId)?.name || (lienzoActivoId === 'general' ? 'Lienzo General' : lienzoActivoId)} ▾
+            </Button>
+          )}
+
           {canEditDiagram && nodes.length > 0 && (
             <Button
               variant="secondary"
@@ -3378,6 +3488,18 @@ const EditorVisualPage = ({ standalone = false }) => {
           )}
         </div>
       </PageHeader>
+      )}
+
+      <LienzoSwitcherModal
+        isOpen={isLienzoSwitcherOpen}
+        onClose={() => setIsLienzoSwitcherOpen(false)}
+        lienzos={lienzosList}
+        lienzoActivoId={lienzoActivoId}
+        onNavigate={(id) => {
+          setIsLienzoSwitcherOpen(false);
+          navigate(`/editor-visual/${id}`);
+        }}
+      />
 
       {/* ---------- BARRA DE CONTROL PRINCIPAL DEL LIENZO MASTER ---------- */}
       {!standalone && (
@@ -3777,6 +3899,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                 <div className={styles.minimapTitle}>🗺️ Radar CAD</div>
                 <div className={styles.minimapCanvas}>
                   {nodes.map((n) => {
+                    if (hiddenNodeIds.has(n.id)) return null;
                     const nodeX = (n.x / WORKSPACE_WIDTH) * 100;
                     const nodeY = (n.y / WORKSPACE_HEIGHT) * 100;
                     const nodeW = Math.max(4, (NODE_WIDTH / WORKSPACE_WIDTH) * 100);
@@ -3828,7 +3951,8 @@ const EditorVisualPage = ({ standalone = false }) => {
                 height: WORKSPACE_HEIGHT,
               }}
             >
-              {/* Marco delimitador visual del espacio de trabajo */}
+              {/* Marco delimitador visual del espacio de trabajo — oculto por defecto, ver botón "⬚ Marco" */}
+              {showWorkspaceBoundary && (
               <div className={styles.workspaceBoundary}>
                 <div className={styles.originMarker}>
                   <span className={styles.originIcon}>⌖</span>
@@ -3836,20 +3960,21 @@ const EditorVisualPage = ({ standalone = false }) => {
                   <span className={styles.axisX}>X →</span>
                   <span className={styles.axisY}>↓ Y</span>
                 </div>
-                <div className={styles.workspaceDimLabelTop}>Espacio de Trabajo: 6,000 × 6,000 mm</div>
+                <div className={styles.workspaceDimLabelTop}>Espacio de Trabajo: {WORKSPACE_WIDTH.toLocaleString('es-MX')} × {WORKSPACE_HEIGHT.toLocaleString('es-MX')} mm</div>
               </div>
+              )}
               <svg className={styles.wires} width={worldBounds.width} height={worldBounds.height}>
                 {edges.map((edge) => {
                   const fromNode = findNode(edge.from);
                   const toNode = findNode(edge.to);
-                  if (!fromNode || !toNode) return null;
+                  if (!fromNode || !toNode || hiddenNodeIds.has(edge.from) || hiddenNodeIds.has(edge.to)) return null;
 
                   const { path: pathData, p1, p2 } = getSmartWirePath(fromNode, toNode, edge, nodeSizesRef.current);
 
                   const juegoEntity = fromNode.type === 'juego' ? getLinkedEntity(fromNode) : null;
                   const areaEntity = toNode.type === 'area' ? getLinkedEntity(toNode) : null;
                   const isBlockedLink = Boolean(
-                    juegoEntity && areaEntity && isAreaBlockedBySequence(juegoEntity, areaEntity.id)
+                    juegoEntity && areaEntity && isAreaBlockedByRoute(juegoEntity, areaEntity.id)
                   );
 
                   // Detección de enlace de secuencia entre actividades en cascada
@@ -3906,7 +4031,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                       >
                         <title>
                           {isBlockedLink
-                            ? `🔒 Bloqueado: ${dynamicAreas.find((a) => a.id === AREA_SEQUENCE_DEPENDENCIES[areaEntity.id])?.name} todavía no completa su meta. Clic para cambiar color o desconectar.`
+                            ? `🔒 Bloqueado: ${dynamicAreas.find((a) => a.id === getBlockingAreaForRoute(juegoEntity, areaEntity.id))?.name} todavía no completa su meta. Clic para cambiar color o desconectar.`
                             : isActToAct
                             ? `🔗 Secuencia de proceso: ${isPredecessorDone ? '✅ Fase previa culminada (flujo abierto)' : '⏳ Fase previa en espera / proceso'}`
                             : 'Clic en este cable para cambiar su color o desconectarlo'}
@@ -3944,6 +4069,7 @@ const EditorVisualPage = ({ standalone = false }) => {
               )}
 
               {nodes.map((node) => {
+                if (hiddenNodeIds.has(node.id)) return null;
                 const meta = NODE_TYPES[node.type] || DEFAULT_NODE_META;
                 const nodeThemeColor = node.customColor || meta.colorVar || '#ea580c';
                 const entity = getLinkedEntity(node);
@@ -4310,6 +4436,22 @@ const EditorVisualPage = ({ standalone = false }) => {
                     <div className={styles.nodeHead}>
                       <span className={styles.nodeIcon}>{meta.icon}</span>
                       <span className={styles.nodeTitle}>{nodeTitle(node)}</span>
+                      {(() => {
+                        const neighborCount = getDirectNeighborIds(node.id).size;
+                        if (neighborCount === 0) return null;
+                        const isCollapsed = collapsedNodeIds.has(node.id);
+                        return (
+                          <button
+                            type="button"
+                            data-role="collapse"
+                            className={styles.nodeCollapseBtn}
+                            title={isCollapsed ? `Expandir ${neighborCount} nodo(s) conectado(s)` : 'Colapsar nodos conectados directo'}
+                            onClick={() => toggleNodeCollapsed(node.id)}
+                          >
+                            {isCollapsed ? `▸ ${neighborCount}` : '▾'}
+                          </button>
+                        );
+                      })()}
                       <span className={styles.nodeBadge}>
                         {node.type === 'bloque' ? 'TRABAJO' : (node.draft ? 'NUEVO' : meta.badgeText)}
                       </span>
@@ -5261,7 +5403,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                 if (!edge) return null;
                 const fromNode = findNode(edge.from);
                 const toNode = findNode(edge.to);
-                if (!fromNode || !toNode) return null;
+                if (!fromNode || !toNode || hiddenNodeIds.has(edge.from) || hiddenNodeIds.has(edge.to)) return null;
                 const { p1, p2 } = getSmartWirePath(fromNode, toNode, edge, nodeSizesRef.current);
                 const midX = (p1.x + p2.x) / 2;
                 const midY = (p1.y + p2.y) / 2;
@@ -5441,6 +5583,14 @@ const EditorVisualPage = ({ standalone = false }) => {
               >
                 🗺️ Radar
               </button>
+              <button
+                type="button"
+                className={`${styles.snapToggleBtn} ${showWorkspaceBoundary ? styles.active : ''}`}
+                title={showWorkspaceBoundary ? 'Ocultar marco delimitador del área de trabajo' : 'Mostrar marco delimitador del área de trabajo'}
+                onClick={() => setShowWorkspaceBoundary((prev) => !prev)}
+              >
+                ⬚ Marco
+              </button>
             </div>
           </div>
 
@@ -5508,6 +5658,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                   previewResourceModal={previewResourceModal}
                   setPreviewResourceModal={setPreviewResourceModal}
                   handleDeployAllActivityResources={handleDeployAllActivityResources}
+                  onOpenRoute={(gameId) => navigate(`/editor-visual/ruta/${gameId}?from=${lienzoActivoId}`)}
                 />
               </motion.aside>
             )}
@@ -5763,6 +5914,20 @@ const EditorVisualPage = ({ standalone = false }) => {
                 );
               })}
             </div>
+
+            <label className={styles.inlineLabel} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={nodeModal.newGameUseRoute}
+                onChange={(e) => setNodeModal((prev) => ({ ...prev, newGameUseRoute: e.target.checked }))}
+              />
+              🛤️ Usar Ruta de Fabricación (áreas en orden, con Puntos de Calidad opcionales)
+            </label>
+            {nodeModal.newGameUseRoute && (
+              <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', margin: '4px 0 0 0' }}>
+                Al crear el juego se abrirá la Ruta de Fabricación para ordenar sus áreas.
+              </p>
+            )}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
               <Button variant="secondary" size="md" onClick={closeNodeModal}>Cancelar</Button>
@@ -6391,6 +6556,7 @@ const NodeInspector = ({
   previewResourceModal,
   setPreviewResourceModal,
   handleDeployAllActivityResources,
+  onOpenRoute,
 }) => {
   const meta = NODE_TYPES[node.type] || DEFAULT_NODE_META;
   const toast = useToast();
@@ -7394,10 +7560,22 @@ const NodeInspector = ({
             </Button>
           )}
 
+          {entity.useManufacturingRoute && (
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => onOpenRoute(entity.id)}
+              style={{ width: '100%', margin: '0 0 16px 0' }}
+              title="Ver y editar la Ruta de Fabricación ordenada de este juego"
+            >
+              🛤️ Ver Ruta de Fabricación
+            </Button>
+          )}
+
           {(entity.areas || [])
-            .filter((areaId) => isAreaBlockedBySequence(entity, areaId))
+            .filter((areaId) => isAreaBlockedByRoute(entity, areaId))
             .map((areaId) => {
-              const requiredAreaId = AREA_SEQUENCE_DEPENDENCIES[areaId];
+              const requiredAreaId = getBlockingAreaForRoute(entity, areaId);
               const requiredAreaName = dynamicAreas.find((a) => a.id === requiredAreaId)?.name;
               const blockedAreaName = dynamicAreas.find((a) => a.id === areaId)?.name;
               const produced = entity.producedPieces?.[requiredAreaId] || 0;

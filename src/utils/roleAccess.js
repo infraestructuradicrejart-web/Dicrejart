@@ -121,6 +121,24 @@ export const canAccessSection = (user, section, areaId) => {
 };
 
 /**
+ * Indica si un usuario puede editar la Ruta de Fabricación de un juego (reordenar áreas,
+ * activar/desactivar Puntos de Calidad) — más estricto que el lienzo libre del Editor
+ * Visual, que hoy permite editar a cualquier usuario con sesión iniciada. Ver
+ * RutaFabricacionView.jsx.
+ *
+ * @param {Object|null} user - Usuario autenticado
+ * @param {{areas: string[]}} game - Juego cuya ruta se quiere editar
+ * @returns {boolean}
+ */
+export const canUserEditRoute = (user, game) => {
+  if (!user || !game) return false;
+  if ([ROLE_TYPES.ADMIN, ROLE_TYPES.DIRECCION, ROLE_TYPES.CALIDAD].includes(user.roleType)) return true;
+  if (user.roleType === ROLE_TYPES.ENCARGADO_AREA) return game.areas.includes(user.areaId);
+  if (user.roleType === ROLE_TYPES.SUPERVISOR_AREA) return game.areas.some((a) => (user.areaIds || []).includes(a));
+  return false;
+};
+
+/**
  * Indica si el usuario solo puede consultar (solo lectura) una sección,
  * sin poder crear, editar ni eliminar información en ella
  *

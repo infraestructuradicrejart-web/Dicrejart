@@ -89,6 +89,64 @@ export const isAreaBlockedBySequence = (game, areaId) => {
 };
 
 /**
+ * Igual que `isAreaBlockedBySequence`, pero para juegos que usan la Ruta de Fabricación
+ * (`useManufacturingRoute: true`, ver EditorVisualPage → RutaFabricacionView). En esos
+ * juegos el orden del arreglo `areas` ES el orden real de fabricación: un área queda
+ * bloqueada mientras cualquier área anterior en `areas` no esté 'completado', o mientras
+ * un Punto de Calidad anterior (`qualityGates`) no tenga `qualityReview[...].status ===
+ * 'aprobado'`. Los juegos legacy (sin el flag) delegan tal cual en `isAreaBlockedBySequence`
+ * — cero cambio de comportamiento para ellos.
+ */
+export const isAreaBlockedByRoute = (game, areaId) => {
+  if (!game.useManufacturingRoute) return isAreaBlockedBySequence(game, areaId);
+  // La regla fija Herrería → Corte Láser se preserva siempre, sin importar la ruta.
+  if (isAreaBlockedBySequence(game, areaId)) return true;
+
+  const idx = game.areas.indexOf(areaId);
+  for (let i = 0; i < idx; i++) {
+    const priorAreaId = game.areas[i];
+    if (game.areaStatus?.[priorAreaId] !== 'completado') return true;
+    if (
+      game.qualityGates?.includes(priorAreaId) &&
+      game.qualityReview?.[priorAreaId]?.status !== 'aprobado'
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * Regresa el id del área que específicamente está bloqueando a `areaId` en la Ruta de
+ * Fabricación de un juego (o el área fija de `AREA_SEQUENCE_DEPENDENCIES` en juegos
+ * legacy), o `null` si no está bloqueada — útil para mostrar el mensaje de bloqueo.
+ */
+export const getBlockingAreaForRoute = (game, areaId) => {
+  if (!game.useManufacturingRoute) {
+    const requiredArea = AREA_SEQUENCE_DEPENDENCIES[areaId];
+    if (requiredArea && game.areas.includes(requiredArea) && game.areaStatus?.[requiredArea] !== 'completado') {
+      return requiredArea;
+    }
+    return null;
+  }
+
+  const requiredArea = AREA_SEQUENCE_DEPENDENCIES[areaId];
+  if (requiredArea && game.areas.includes(requiredArea) && game.areaStatus?.[requiredArea] !== 'completado') {
+    return requiredArea;
+  }
+
+  const idx = game.areas.indexOf(areaId);
+  for (let i = 0; i < idx; i++) {
+    const priorAreaId = game.areas[i];
+    if (game.areaStatus?.[priorAreaId] !== 'completado') return priorAreaId;
+    if (game.qualityGates?.includes(priorAreaId) && game.qualityReview?.[priorAreaId]?.status !== 'aprobado') {
+      return priorAreaId;
+    }
+  }
+  return null;
+};
+
+/**
  * Si `areaId` alimenta a otra área del MISMO juego (ej. Corte Láser → Herrería), regresa
  * el id de esa área dependiente; si no, null. Esa área NO entrega directo a Producto
  * Terminado (es un traspaso interno) y por lo tanto no requiere aprobación de Calidad ni
@@ -379,7 +437,7 @@ export const ProduccionProvider = ({ children }) => {
    */
   const addGame = useCallback(async (gameData) => {
     if (!db) return;
-    const { name, projectId, areas, targetPieces } = gameData;
+    const { name, projectId, areas, targetPieces, useManufacturingRoute = false, qualityGates = [] } = gameData;
     const project = proyectos.find((p) => p.id === projectId);
 
     const gameNumber = await getNextGameNumber();
@@ -433,6 +491,8 @@ export const ProduccionProvider = ({ children }) => {
       externalOrders: [],
       ledWork: null,
       qualityReview: {},
+      useManufacturingRoute,
+      qualityGates,
     };
 
     try {
@@ -511,6 +571,60 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, proyectos, user]);
 
   /**
+   * Reordena el arreglo `areas` de un juego con Ruta de Fabricación (`useManufacturingRoute:
+   * true`) — el orden del arreglo ES el orden real de fabricación (ver isAreaBlockedByRoute).
+   * Rechaza cualquier orden que deje a Herrería antes de Corte Láser, preservando esa regla
+   * fija sin importar cómo el usuario reordene el resto de la ruta.
+   */
+  const reorderGameAreas = useCallback(async (gameId, newOrder) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const game = juegos.find((j) => j.id === gameId);
+    if (!game) return { ok: false, error: 'Juego no encontrado.' };
+    if (!game.useManufacturingRoute) {
+      return { ok: false, error: 'Este juego no usa Ruta de Fabricación.' };
+    }
+    if (newOrder.length !== game.areas.length || !game.areas.every((a) => newOrder.includes(a))) {
+      return { ok: false, error: 'El nuevo orden debe contener exactamente las mismas áreas.' };
+    }
+    for (const [dependentArea, requiredArea] of Object.entries(AREA_SEQUENCE_DEPENDENCIES)) {
+      if (newOrder.includes(dependentArea) && newOrder.includes(requiredArea)) {
+        if (newOrder.indexOf(dependentArea) < newOrder.indexOf(requiredArea)) {
+          return { ok: false, error: `${dependentArea} no puede ir antes de ${requiredArea} en la ruta.` };
+        }
+      }
+    }
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), { areas: newOrder });
+      logAudit({ user, module: 'produccion', action: 'Reordenó la Ruta de Fabricación de un juego', details: `${game.name}: ${newOrder.join(' → ')}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al reordenar la ruta del juego:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
+   * Activa/desactiva un Punto de Calidad en la Ruta de Fabricación tras `areaId` — cuando
+   * está activo, `isAreaBlockedByRoute` exige `qualityReview[areaId].status === 'aprobado'`
+   * antes de desbloquear la siguiente área de la ruta.
+   */
+  const setQualityGate = useCallback(async (gameId, areaId, enabled) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const game = juegos.find((j) => j.id === gameId);
+    if (!game) return { ok: false, error: 'Juego no encontrado.' };
+    const current = game.qualityGates || [];
+    const next = enabled ? [...new Set([...current, areaId])] : current.filter((a) => a !== areaId);
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), { qualityGates: next });
+      logAudit({ user, module: 'produccion', action: enabled ? 'Activó Punto de Calidad en la ruta' : 'Quitó Punto de Calidad de la ruta', details: `${game.name} (${areaId})` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al actualizar el Punto de Calidad de la ruta:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
    * Renombra un juego ya creado (ej. se corrigió cómo lo pidió el cliente) — exclusivo de
    * Supervisor de Área y Admin (mismo permiso que updateGameTargetPieces, ver
    * canEditGameQuantities en JuegosPage.jsx). No afecta el nombre ya guardado en registros
@@ -566,7 +680,7 @@ export const ProduccionProvider = ({ children }) => {
       logAudit({ user, module: 'produccion', action: 'Registró salida de producción', details: `${qty} pzas de "${gameName}" en ${areaId}` });
 
       const game = juegos.find((j) => j.name === gameName);
-      if (game && !isAreaBlockedBySequence(game, areaId)) {
+      if (game && !isAreaBlockedByRoute(game, areaId)) {
         const currentProduced = game.producedPieces?.[areaId] || 0;
         const targetLimit = game.targetPieces?.[areaId] || 10;
         const newProduced = Math.min(targetLimit, currentProduced + qty);
@@ -701,7 +815,7 @@ export const ProduccionProvider = ({ children }) => {
     if (game.areaKickoff?.[areaId]) {
       return { ok: false, error: 'Ya se registró el inicio de esta área.' };
     }
-    if (isAreaBlockedBySequence(game, areaId)) {
+    if (isAreaBlockedByRoute(game, areaId)) {
       return { ok: false, error: 'Esta área todavía no puede iniciar (depende de que otra área termine primero).' };
     }
     try {
@@ -1587,6 +1701,63 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, user]);
 
   /**
+   * Sube y agrega evidencia fotográfica ("auditoría de piezas") a un punto del checklist de
+   * revisión de calidad de un área — mismo patrón que `addEvidenceToLog` de producción, vía
+   * `uploadEvidencePhotosShared` (comprime y sube a Storage bajo `quality-evidence/`).
+   */
+  const addQualityItemPhotos = useCallback(async (gameId, areaId, itemId, files) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    const review = getAreaReview(j, areaId);
+    const item = review.checklist.find((it) => it.id === itemId);
+    if (!item) return { ok: false, error: 'Punto de checklist no encontrado' };
+
+    try {
+      const newPhotos = await uploadEvidencePhotosShared('quality-evidence', `${gameId}_${areaId}_${itemId}`, files);
+      const nextChecklist = review.checklist.map((it) =>
+        it.id === itemId ? { ...it, photos: [...(it.photos || []), ...newPhotos] } : it
+      );
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`qualityReview.${areaId}`]: { ...review, checklist: nextChecklist },
+      });
+      logAudit({ user, module: 'produccion', action: 'Agregó evidencia fotográfica a un punto de revisión de calidad', details: `${j.name} (${areaId})` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al subir evidencia de revisión de calidad:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
+   * Quita una foto de evidencia de un punto del checklist de revisión de calidad (borra el
+   * archivo de Storage y actualiza el arreglo `photos` de ese ítem en Firestore).
+   */
+  const removeQualityItemPhoto = useCallback(async (gameId, areaId, itemId, photo) => {
+    if (!db) return { ok: false, error: 'Firestore no inicializado' };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    const review = getAreaReview(j, areaId);
+    const item = review.checklist.find((it) => it.id === itemId);
+    if (!item) return { ok: false, error: 'Punto de checklist no encontrado' };
+
+    try {
+      await deleteEvidencePhotos([photo]);
+      const nextChecklist = review.checklist.map((it) =>
+        it.id === itemId ? { ...it, photos: (it.photos || []).filter((p) => p.path !== photo.path) } : it
+      );
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`qualityReview.${areaId}`]: { ...review, checklist: nextChecklist },
+      });
+      logAudit({ user, module: 'produccion', action: 'Quitó evidencia fotográfica de un punto de revisión de calidad', details: `${j.name} (${areaId})` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al quitar evidencia de revisión de calidad:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
    * Aprueba la revisión de calidad del área
    */
   const approveQualityReview = useCallback(async (gameId, areaId, reviewerName, notes) => {
@@ -1725,6 +1896,8 @@ export const ProduccionProvider = ({ children }) => {
       updateProject,
       addGame,
       updateGameTargetPieces,
+      reorderGameAreas,
+      setQualityGate,
       updateGameName,
       deleteProject,
       deleteGame,
@@ -1758,6 +1931,8 @@ export const ProduccionProvider = ({ children }) => {
       addQualityChecklistItem,
       removeQualityChecklistItem,
       toggleQualityChecklistItem,
+      addQualityItemPhotos,
+      removeQualityItemPhoto,
       approveQualityReview,
       rejectQualityReview,
       approveReceptionForPT,
@@ -1773,6 +1948,8 @@ export const ProduccionProvider = ({ children }) => {
       updateProject,
       addGame,
       updateGameTargetPieces,
+      reorderGameAreas,
+      setQualityGate,
       updateGameName,
       deleteProject,
       deleteGame,
@@ -1806,6 +1983,8 @@ export const ProduccionProvider = ({ children }) => {
       addQualityChecklistItem,
       removeQualityChecklistItem,
       toggleQualityChecklistItem,
+      addQualityItemPhotos,
+      removeQualityItemPhoto,
       approveQualityReview,
       rejectQualityReview,
       approveReceptionForPT,

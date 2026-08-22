@@ -26,7 +26,8 @@ import useAreas from '../../hooks/useAreas';
 import PageHeader from '../../components/ui/PageHeader';
 import { triggerDailyRHNotification, triggerRHOvertimeNotification, triggerRHWeeklyOvertimeSummary } from '../../services/rhNotificationService';
 import { canAccessSection, isReadOnlySection } from '../../utils/roleAccess';
-import { getOvertimeWeekRange } from '../../utils/dateUtils';
+import { getOvertimeWeekRange, getTodayLocalDateStr } from '../../utils/dateUtils';
+import Input from '../../components/ui/Input';
 import styles from './AdminPage.module.css';
 
 /**
@@ -203,6 +204,26 @@ const AdminPage = () => {
 
   // Modal de vista previa de Notificaciones a RH
   const [rhPreviewModal, setRhPreviewModal] = useState({ isOpen: false, notifRecord: null });
+
+  // Filtro de la Bitácora del Sistema: texto libre (usuario, módulo, acción, detalle) +
+  // fecha rápida — para encontrar, ej., una autorización de horas extra de un supervisor
+  // en un día específico sin tener que leer las 100 entradas más recientes una por una.
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditDateFilter, setAuditDateFilter] = useState('todas');
+
+  const filteredAuditLog = auditLog.filter((entry) => {
+    if (auditDateFilter !== 'todas') {
+      const entryDateStr = getTodayLocalDateStr(new Date(entry.timestamp));
+      if (auditDateFilter === 'hoy' && entryDateStr !== getTodayLocalDateStr()) return false;
+      if (auditDateFilter === 'ayer' && entryDateStr !== getTodayLocalDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000))) return false;
+    }
+    if (auditSearch.trim()) {
+      const needle = auditSearch.trim().toLowerCase();
+      const haystack = `${entry.userName} ${entry.module} ${entry.action} ${entry.details}`.toLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
+    return true;
+  });
 
   // ============================================
   // HANDLERS - CONFIGURACIÓN
@@ -1091,7 +1112,34 @@ const AdminPage = () => {
           <h3 className={styles.sectionTitle}>Bitácora del Sistema</h3>
           <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', marginBottom: 'var(--space-3)' }}>
             Registro de toda acción realizada por cualquier usuario en cualquier módulo. Solo Admin puede verla.
+            Muestra las {limits.auditLogLimit} entradas más recientes — si no encuentras lo que buscas, sube
+            el límite de "Bitácora de Auditoría" arriba.
           </p>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', marginBottom: 'var(--space-4)' }}>
+            <div style={{ flex: '1 1 240px', minWidth: '220px' }}>
+              <Input
+                label="Buscar movimiento"
+                placeholder="Nombre, módulo, acción o detalle..."
+                value={auditSearch}
+                onChange={(e) => setAuditSearch(e.target.value)}
+                icon="🔍"
+              />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              <label style={{ fontSize: 'var(--body-size)', color: 'var(--color-gray-600)' }}>Fecha</label>
+              <Select
+                value={auditDateFilter}
+                onChange={(e) => setAuditDateFilter(e.target.value)}
+                options={[
+                  { value: 'todas', label: 'Todas las fechas' },
+                  { value: 'hoy', label: 'Hoy' },
+                  { value: 'ayer', label: 'Ayer' },
+                ]}
+              />
+            </div>
+          </div>
+
           <div className={styles.tableResponsive}>
             <table className={styles.table}>
               <thead>
@@ -1105,7 +1153,7 @@ const AdminPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {auditLog.map((entry) => (
+                {filteredAuditLog.map((entry) => (
                   <tr key={entry.id}>
                     <td data-label="Fecha/Hora" style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
                       {new Date(entry.timestamp).toLocaleString()}
@@ -1124,6 +1172,14 @@ const AdminPage = () => {
                   <tr>
                     <td colSpan={6} className={styles.emptyCell}>
                       Todavía no hay actividad registrada en la bitácora.
+                    </td>
+                  </tr>
+                )}
+
+                {auditLog.length > 0 && filteredAuditLog.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className={styles.emptyCell}>
+                      Ningún movimiento coincide con ese filtro.
                     </td>
                   </tr>
                 )}

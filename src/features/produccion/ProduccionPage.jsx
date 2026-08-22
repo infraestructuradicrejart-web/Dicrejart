@@ -23,7 +23,7 @@ import useToast from '../../hooks/useToast';
 import useOperarios from '../../hooks/useOperarios';
 import useProduccion from '../../hooks/useProduccion';
 import useMateriales from '../../hooks/useMateriales';
-import { isAreaBlockedBySequence, AREA_SEQUENCE_DEPENDENCIES, getFeederDependentAreaId } from '../../context/ProduccionContext';
+import { isAreaBlockedByRoute, getBlockingAreaForRoute, AREA_SEQUENCE_DEPENDENCIES, getFeederDependentAreaId } from '../../context/ProduccionContext';
 import useProgressiveList from '../../hooks/useProgressiveList';
 import useAuth from '../../hooks/useAuth';
 import { isReadOnlySection, canAccessSection } from '../../utils/roleAccess';
@@ -805,7 +805,7 @@ const ProduccionPage = () => {
       const target = j.targetPieces?.[areaId] || 10;
       const produced = j.producedPieces?.[areaId] || 0;
       if (produced >= target) return false;
-      if (isAreaBlockedBySequence(j, areaId)) return false;
+      if (isAreaBlockedByRoute(j, areaId)) return false;
       if (j.areaKickoff?.[areaId]) return false;
       return true;
     });
@@ -860,8 +860,8 @@ const ProduccionPage = () => {
 
   // Bloqueo por secuencia entre áreas (ej. Herrería requiere que Corte Láser ya haya
   // completado el material de este juego antes de poder registrar producción)
-  const sequenceBlocked = selectedGameObj ? isAreaBlockedBySequence(selectedGameObj, areaId) : false;
-  const requiredAreaId = AREA_SEQUENCE_DEPENDENCIES[areaId] || null;
+  const sequenceBlocked = selectedGameObj ? isAreaBlockedByRoute(selectedGameObj, areaId) : false;
+  const requiredAreaId = selectedGameObj ? getBlockingAreaForRoute(selectedGameObj, areaId) : (AREA_SEQUENCE_DEPENDENCIES[areaId] || null);
   const requiredAreaName = AREAS_CONFIG.find((a) => a.id === requiredAreaId)?.name;
   const requiredAreaProduced = selectedGameObj?.producedPieces?.[requiredAreaId] || 0;
   const requiredAreaTarget = selectedGameObj?.targetPieces?.[requiredAreaId] || 0;
@@ -1594,7 +1594,7 @@ const ProduccionPage = () => {
       let prefix = '💤 Sin Iniciar';
       if (completed) prefix = '✓ Completado';
       else if (produced > 0) prefix = '⏳ En Proceso';
-      if (isAreaBlockedBySequence(j, areaId)) prefix = '🔒 Bloqueado';
+      if (isAreaBlockedByRoute(j, areaId)) prefix = '🔒 Bloqueado';
 
       return {
         value: j.name,
