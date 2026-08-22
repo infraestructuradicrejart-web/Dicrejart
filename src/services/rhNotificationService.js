@@ -301,7 +301,7 @@ export const buildRHReportEmailContent = (absentList, dateStr, emailRH, horasExt
  * del reporte de las 10:00 AM SOLO incluye la relación de personal con horas extra
  * autorizadas el día de hoy (sin faltas ni verificaciones de días anteriores).
  */
-export const buildRHOvertimeReportEmailContent = (horasExtraList, dateStr, emailRH, horaLabel) => {
+export const buildRHOvertimeReportEmailContent = (horasExtraList, dateStr, emailRH, horaLabel, upcomingOvertimeList = []) => {
   const formattedDate = new Date(`${dateStr}T00:00:00`).toLocaleDateString('es-MX', {
     weekday: 'long',
     year: 'numeric',
@@ -337,6 +337,21 @@ export const buildRHOvertimeReportEmailContent = (horasExtraList, dateStr, email
     });
   }
 
+  if (upcomingOvertimeList.length > 0) {
+    textLines.push(``);
+    textLines.push(`=============================================================`);
+    textLines.push(`YA AUTORIZADAS PARA DÍAS PRÓXIMOS (${upcomingOvertimeList.length}) — adelanto informativo`);
+    textLines.push(`=============================================================`);
+    upcomingOvertimeList.forEach((he, index) => {
+      textLines.push(`${index + 1}. COLABORADOR: ${he.operarioName} (ID: ${he.operarioId})`);
+      textLines.push(`   • Fecha: ${he.authorizedDate}`);
+      textLines.push(`   • Área: ${he.areaId || 'N/A'}`);
+      textLines.push(`   • Horas Extra Autorizadas: ${describeOvertimeBlocks(he)}`);
+      textLines.push(`   • Autorizó: ${he.authorizedBy || 'N/A'}`);
+      textLines.push(`-------------------------------------------------------------`);
+    });
+  }
+
   textLines.push(``);
   textLines.push(`Este correo fue generado automáticamente por el Sistema Integral Dicrejart a las ${horaLabel}.`);
 
@@ -353,6 +368,35 @@ export const buildRHOvertimeReportEmailContent = (horasExtraList, dateStr, email
         <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280;">${he.authorizedBy || 'N/A'}</td>
       </tr>
     `).join('');
+
+  const upcomingRowsHtml = upcomingOvertimeList.map((he, i) => `
+      <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}; font-size: 13px;">
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: bold; color: #1f2937;">${he.operarioName} <br/><span style="font-size:11px; color:#6b7280; font-weight:normal;">ID: ${he.operarioId}</span></td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #1f2937; font-weight: bold;">${he.authorizedDate}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #374151;">${he.areaId || 'N/A'}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #92400e; font-weight: 600;">${describeOvertimeBlocks(he)}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; color: #6b7280;">${he.authorizedBy || 'N/A'}</td>
+      </tr>
+    `).join('');
+
+  const upcomingSectionHtml = upcomingOvertimeList.length > 0 ? `
+        <h3 style="font-size: 15px; color: #1f2937; border-bottom: 2px solid #1e293b; padding-bottom: 6px; margin-top: 24px;">📅 Ya autorizadas para días próximos (${upcomingOvertimeList.length})</h3>
+        <p style="font-size: 12.5px; color: #6b7280; margin: 0 0 4px;">Adelanto informativo — autorizadas con anticipación para una fecha posterior a hoy.</p>
+        <table style="width: 100%; border-collapse: collapse; margin-top: 8px;">
+          <thead>
+            <tr style="background-color: #f3f4f6; color: #374151; font-size: 12px; text-transform: uppercase;">
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Colaborador</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Fecha</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Área</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Horas</th>
+              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Autorizó</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${upcomingRowsHtml}
+          </tbody>
+        </table>
+  ` : '';
 
   const bodyHtml = `
     <div style="font-family: Arial, sans-serif; max-width: 680px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background-color: #ffffff;">
@@ -380,6 +424,7 @@ export const buildRHOvertimeReportEmailContent = (horasExtraList, dateStr, email
             ${rowsHtml}
           </tbody>
         </table>
+        ${upcomingSectionHtml}
       </div>
       <div style="background-color: #f9fafb; padding: 12px 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; text-align: center;">
         Generado automáticamente por el Sistema Dicrejart. Notificación programada para Recursos Humanos a las ${horaLabel}.
@@ -434,10 +479,15 @@ export const triggerRHOvertimeNotification = async ({
   }
 
   const horasExtraList = horasExtra.filter((he) => he.authorizedDate === todayStr && he.verificationStatus !== 'cancelado');
+  // Ya autorizadas con anticipación para una fecha posterior a hoy (ej. alguien entra
+  // mañana o un día normalmente no laborable) — adelanto informativo para RH.
+  const upcomingOvertimeList = horasExtra
+    .filter((he) => he.authorizedDate > todayStr && he.verificationStatus !== 'cancelado')
+    .sort((a, b) => a.authorizedDate.localeCompare(b.authorizedDate));
   const emailTarget = generalConfig.emailRH || 'recursoshumanos@dicrejart.com (Por definir)';
   const label = horaLabel || new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
 
-  const { subject, bodyText, bodyHtml } = buildRHOvertimeReportEmailContent(horasExtraList, todayStr, emailTarget, label);
+  const { subject, bodyText, bodyHtml } = buildRHOvertimeReportEmailContent(horasExtraList, todayStr, emailTarget, label, upcomingOvertimeList);
 
   const notifId = `NOTIF-RH-HE-${Date.now()}`;
   const notifRecord = {
@@ -447,6 +497,7 @@ export const triggerRHOvertimeNotification = async ({
     timestamp: new Date().toISOString(),
     emailRH: emailTarget,
     horasExtraCount: horasExtraList.length,
+    upcomingOvertimeCount: upcomingOvertimeList.length,
     horasExtraList: horasExtraList.map((he) => ({
       operarioId: he.operarioId,
       operarioName: he.operarioName,
