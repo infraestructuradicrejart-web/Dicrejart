@@ -724,6 +724,12 @@ const EditorVisualPage = ({ standalone = false }) => {
   // evita que el clic nativo del navegador, que dispara igual tras soltar, abra un enlace
   // o dispare otra acción de "clic simple" cuando en realidad se estaba moviendo el nodo.
   const justDraggedRef = useRef(false);
+  // La cámara (worldOffset) solo se debe tomar de Firestore UNA vez, al abrir el lienzo —
+  // no en cada actualización remota (ej. alguien colapsa un nodo, otro usuario mueve algo
+  // en otra parte). Si se reaplicara siempre, cualquier escritura ajena "regresaba" la
+  // vista al último worldOffset guardado, aunque el usuario ya hubiera hecho pan/zoom
+  // desde entonces sin guardar (paneo/zoom no se persiste en cada movimiento).
+  const hasAppliedInitialOffsetRef = useRef(false);
   const connectStateRef = useRef(null);
   const panStateRef = useRef(null);
   const nodeSizesRef = useRef({});
@@ -769,6 +775,8 @@ const EditorVisualPage = ({ standalone = false }) => {
       return;
     }
 
+    hasAppliedInitialOffsetRef.current = false;
+
     try {
       const unsubscribe = onSnapshot(
         doc(db, 'lienzos', lienzoActivoId),
@@ -779,9 +787,11 @@ const EditorVisualPage = ({ standalone = false }) => {
             setEdges(data.edges || []);
             // Compartido entre todos los que abren este lienzo — no es preferencia local.
             setCollapsedNodeIds(new Set(data.collapsedNodeIds || []));
-            if (data.worldOffset) {
+            // Solo la primera vez que se abre este lienzo — ver hasAppliedInitialOffsetRef.
+            if (data.worldOffset && !hasAppliedInitialOffsetRef.current) {
               setWorldOffset(data.worldOffset);
             }
+            hasAppliedInitialOffsetRef.current = true;
             // Actualizar backup local con la versión de Firestore
             try {
               localStorage.setItem(
@@ -4549,15 +4559,21 @@ const EditorVisualPage = ({ standalone = false }) => {
                       <span className={styles.nodeIcon}>{meta.icon}</span>
                       <span className={styles.nodeTitle}>{nodeTitle(node)}</span>
                       {(() => {
-                        const neighborCount = getDirectChildIds(node.id).size;
-                        if (neighborCount === 0) return null;
                         const isCollapsed = collapsedNodeIds.has(node.id);
+                        const neighborCount = getDirectChildIds(node.id).size;
+                        // Solo se puede colapsar desde un nodo raíz de verdad (sin ninguna
+                        // conexión entrante) — un nodo intermedio con varias conexiones no
+                        // tiene un "colapsar" con sentido claro (a él le siguen entrando
+                        // cables desde otras partes visibles). Si ya estaba colapsado antes
+                        // de que el grafo cambiara, se deja expandir de todos modos.
+                        const hasIncoming = edges.some((e) => e.to === node.id);
+                        if (!isCollapsed && (hasIncoming || neighborCount === 0)) return null;
                         return (
                           <button
                             type="button"
                             data-role="collapse"
                             className={styles.nodeCollapseBtn}
-                            title={isCollapsed ? `Expandir ${neighborCount} nodo(s) conectado(s)` : 'Colapsar nodos conectados directo (⇄ invierte la dirección de un cable si hace falta)'}
+                            title={isCollapsed ? `Expandir ${neighborCount} nodo(s) conectado(s)` : 'Colapsar todo lo conectado a este nodo raíz'}
                             onClick={() => toggleNodeCollapsed(node.id)}
                           >
                             {isCollapsed ? `▸ ${neighborCount}` : '▾'}
