@@ -649,6 +649,24 @@ const EditorVisualPage = ({ standalone = false }) => {
     return ids;
   }, [edges]);
 
+  /**
+   * "Grupo de colapso" de un nodo: él mismo + todos los que comparten su mismo padre
+   * (nodo(s) del lado "from" de un cable que apunta a él) — el "mismo nivel" del que
+   * habló el usuario. Un Proyecto con dos Juegos debajo: los dos Juegos son un grupo.
+   * Ocho Actividades colgando del mismo Juego: las ocho son un grupo, sin importar su
+   * tipo. Un nodo sin padre (raíz de todo, ej. un Proyecto) no tiene grupo — regresa
+   * solo él mismo, para poder colapsarlo de forma independiente de sus propios hijos.
+   */
+  const getCollapseGroupIds = useCallback((nodeId) => {
+    const parentIds = new Set(edges.filter((e) => e.to === nodeId).map((e) => e.from));
+    if (parentIds.size === 0) return new Set([nodeId]);
+    const group = new Set([nodeId]);
+    edges.forEach((e) => {
+      if (parentIds.has(e.from)) group.add(e.to);
+    });
+    return group;
+  }, [edges]);
+
   // Colapsar oculta TODA la cadena que cuelga del ancla (en cascada, siguiendo la
   // dirección de los cables) — no solo el primer salto. Un nodo de la cadena solo se
   // oculta si TODOS sus cables de entrada vienen de un ancla colapsada o de otro nodo ya
@@ -693,10 +711,20 @@ const EditorVisualPage = ({ standalone = false }) => {
   }, [collapsedNodeIds, edges]);
 
   const toggleNodeCollapsed = (nodeId) => {
+    // Colapsa/expande TODO el grupo (el nodo + sus hermanos del mismo padre) a la vez —
+    // así, por ejemplo, dos Juegos del mismo Proyecto se colapsan juntos en un solo clic,
+    // y lo que ambos alimentan en común (ej. una Actividad de recepción compartida) sí
+    // termina ocultándose, en vez de quedar a medias esperando que colapses cada uno por
+    // separado. Cada nodo del grupo sigue siendo visible por su cuenta — solo se oculta
+    // lo que cuelga de ellos (ver hiddenNodeIds).
+    const groupIds = getCollapseGroupIds(nodeId);
+    const willCollapse = !collapsedNodeIds.has(nodeId);
     setCollapsedNodeIds((prev) => {
       const next = new Set(prev);
-      if (next.has(nodeId)) next.delete(nodeId);
-      else next.add(nodeId);
+      groupIds.forEach((id) => {
+        if (willCollapse) next.add(id);
+        else next.delete(id);
+      });
       // Escritura propia y ligera (no pasa por saveToFirestore/todo el arreglo de nodos y
       // cables) — así colapsar/expandir no compite por la misma escritura completa del
       // lienzo que ya usan mover nodos o conectar cables.
@@ -4561,19 +4589,20 @@ const EditorVisualPage = ({ standalone = false }) => {
                       {(() => {
                         const isCollapsed = collapsedNodeIds.has(node.id);
                         const neighborCount = getDirectChildIds(node.id).size;
-                        // Solo se puede colapsar desde un nodo raíz de verdad (sin ninguna
-                        // conexión entrante) — un nodo intermedio con varias conexiones no
-                        // tiene un "colapsar" con sentido claro (a él le siguen entrando
-                        // cables desde otras partes visibles). Si ya estaba colapsado antes
-                        // de que el grafo cambiara, se deja expandir de todos modos.
-                        const hasIncoming = edges.some((e) => e.to === node.id);
-                        if (!isCollapsed && (hasIncoming || neighborCount === 0)) return null;
+                        // El botón aparece en cualquier tipo de nodo, siempre que colapsar
+                        // vaya a ocultar algo de verdad: o el nodo tiene hijos propios, o
+                        // alguno de sus hermanos (mismo padre — ver getCollapseGroupIds) sí
+                        // los tiene, porque el clic colapsa a todo el grupo junto. Si ya
+                        // estaba colapsado, se deja expandir aunque el grafo haya cambiado.
+                        const groupHasSomethingToHide = isCollapsed
+                          || [...getCollapseGroupIds(node.id)].some((id) => getDirectChildIds(id).size > 0);
+                        if (!groupHasSomethingToHide) return null;
                         return (
                           <button
                             type="button"
                             data-role="collapse"
                             className={styles.nodeCollapseBtn}
-                            title={isCollapsed ? `Expandir ${neighborCount} nodo(s) conectado(s)` : 'Colapsar todo lo conectado a este nodo raíz'}
+                            title={isCollapsed ? `Expandir ${neighborCount} nodo(s) conectado(s)` : 'Colapsar (junto con los demás nodos del mismo padre)'}
                             onClick={() => toggleNodeCollapsed(node.id)}
                           >
                             {isCollapsed ? `▸ ${neighborCount}` : '▾'}
