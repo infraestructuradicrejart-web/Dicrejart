@@ -40,19 +40,35 @@ export const isOperarioAusenteEnFecha = (estado, targetDateStr = getTodayLocalDa
   return targetDateStr >= desde;
 };
 
+/** Tope de horas extra acumuladas por semana (jueves a miércoles, ver getOvertimeWeekRange) por colaborador. */
+export const WEEKLY_OVERTIME_CAP_HOURS = 10;
+
 /**
  * Evalúa si un colaborador es elegible para solicitar o realizar horas extras en la fecha solicitada.
  * Regla de Inasistencia: Si el colaborador registró una 'falta' dentro de los 7 días naturales
  * anteriores a targetDateStr, queda BLOQUEADO AUTOMÁTICAMENTE para horas extras durante esos 7 días.
  * Si la falta fue corregida o eliminada (colaborador en estado 'activo'), se desbloquea de inmediato.
+ * Regla de Tope Semanal: si ya acumula {@link WEEKLY_OVERTIME_CAP_HOURS} horas extra autorizadas
+ * (no canceladas) en la misma semana de tiempo extra de `targetDateStr`, no se le puede autorizar
+ * más — `weeklyAccumulatedHours` lo calcula quien llama (consulta a `horas_extra`, no cuenta la
+ * propia autorización que se está regrabando ese mismo día).
  *
  * @param {Object} operario - Objeto completo del colaborador
  * @param {string} targetDateStr - Fecha para la cual se piden horas extras (YYYY-MM-DD)
+ * @param {number} [weeklyAccumulatedHours] - Horas extra ya autorizadas esta semana (sin contar la fecha que se está guardando)
  * @returns {{ isEligible: boolean, reason: string, blockedUntil: string|null }}
  */
-export const checkOvertimeEligibility = (operario, targetDateStr = getTodayLocalDateStr()) => {
+export const checkOvertimeEligibility = (operario, targetDateStr = getTodayLocalDateStr(), weeklyAccumulatedHours = 0) => {
   if (!operario) {
     return { isEligible: false, reason: 'Colaborador no encontrado.', blockedUntil: null };
+  }
+
+  if (weeklyAccumulatedHours >= WEEKLY_OVERTIME_CAP_HOURS) {
+    return {
+      isEligible: false,
+      reason: `⛔ Tope semanal alcanzado: el colaborador ya acumula ${weeklyAccumulatedHours}h de tiempo extra autorizadas esta semana (máximo ${WEEKLY_OVERTIME_CAP_HOURS}h).`,
+      blockedUntil: null,
+    };
   }
 
   const targetDateObj = new Date(`${targetDateStr}T00:00:00`);

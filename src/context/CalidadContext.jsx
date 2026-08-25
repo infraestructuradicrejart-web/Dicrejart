@@ -36,13 +36,27 @@ export const CalidadContext = createContext(null);
 
 /**
  * Genera el siguiente ID de pieza (PZ-0001, PZ-0002...), contando cuántas piezas
- * distintas (pieceTrackingId únicos) ya existen en el historial.
- * @param {Array} inspecciones
- * @returns {string}
+ * distintas (pieceTrackingId únicos) ya existen en el historial — consulta la colección
+ * COMPLETA (getDocs, sin `limit`), no el arreglo local `inspecciones` (limitado a las
+ * últimas `inspeccionesLimit`, por defecto solo 5). Contar sobre el arreglo recortado
+ * generaba IDs de pieza duplicados/colisionados en cuanto había más inspecciones que ese
+ * límite — dos piezas físicas distintas terminaban con el mismo "PZ-XXXX".
+ * @returns {Promise<string>}
  */
-const nextPieceTrackingId = (inspecciones) => {
-  const existingIds = new Set(inspecciones.map((i) => i.pieceTrackingId).filter(Boolean));
-  return `PZ-${String(existingIds.size + 1).padStart(4, '0')}`;
+const nextPieceTrackingId = async () => {
+  if (!db) return 'PZ-0001';
+  try {
+    const snap = await getDocs(collection(db, 'inspecciones'));
+    const existingIds = new Set();
+    snap.forEach((docSnap) => {
+      const trackingId = docSnap.data().pieceTrackingId;
+      if (trackingId) existingIds.add(trackingId);
+    });
+    return `PZ-${String(existingIds.size + 1).padStart(4, '0')}`;
+  } catch (error) {
+    console.error('Error al calcular el siguiente ID de pieza:', error);
+    return `PZ-${Date.now()}`;
+  }
 };
 
 export const CalidadProvider = ({ children }) => {
@@ -130,7 +144,7 @@ export const CalidadProvider = ({ children }) => {
     const parent = data.previousInspeccionId
       ? inspecciones.find((i) => i.id === data.previousInspeccionId)
       : null;
-    const pieceTrackingId = parent ? (parent.pieceTrackingId || parent.id) : nextPieceTrackingId(inspecciones);
+    const pieceTrackingId = parent ? (parent.pieceTrackingId || parent.id) : await nextPieceTrackingId();
 
     const { photos, ...restData } = data;
 

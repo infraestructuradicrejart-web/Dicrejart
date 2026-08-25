@@ -81,6 +81,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     updateOperarioSchedule,
     authorizeOvertimeTasks,
     cancelPendingHorasExtra,
+    findHorasExtraForDate,
     verifyHorasExtra,
     correctHorasExtraSchedule,
   } = useOperarios();
@@ -286,45 +287,53 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     }
   };
 
-  const handleOpenScheduleModal = (op) => {
+  const handleOpenScheduleModal = async (op) => {
     // La fecha SIEMPRE arranca en hoy, nunca en op.schedule.authorizedDate (la última
     // fecha ya autorizada, que puede ser de días atrás) — si se dejara ese valor por
     // default, el supervisor podía guardar sin darse cuenta de que seguía apuntando a una
-    // fecha vieja: authorizeOvertimeTasks sí crearía el registro (pero en esa fecha vieja,
-    // invisible en "Tiempo Extra" de hoy) y updateOperarioSchedule se negaría a tocar el
-    // horario visible (exige que la fecha sea exactamente hoy) — el guardado "funcionaba"
-    // (toast de éxito) pero nada cambiaba en la tabla. Mismo criterio que overtimeTasks,
-    // que también arranca vacío en vez de heredar el valor de la autorización anterior.
+    // fecha vieja.
     //
-    // EXCEPCIÓN: si ya existe una autorización VIGENTE (no cancelada) de HOY para este
-    // colaborador, sí se recupera su texto de tareas para no perderlo al redefinir el
-    // horario del día — ej. se autorizó tiempo extra matutino en la mañana con su
-    // descripción, y en la tarde surge la necesidad de extender también el bloque
-    // vespertino: guardar (handleSaveSchedule) cancela esa autorización previa y crea una
-    // nueva combinada, así que sin esto el texto de la mañana desaparecía en automático.
-    const existingTodayHE = horasExtra.find(
-      (h) => h.operarioId === op.id && h.authorizedDate === todayStr && h.verificationStatus !== 'cancelado'
-    );
-    const inheritedTasks = existingTodayHE?.overtimeTasks || '';
+    // Se abre primero con valores por defecto (respuesta inmediata) y se corrige en
+    // cuanto responde findHorasExtraForDate — consulta directo a Firestore por
+    // operario+fecha, no el arreglo local `horasExtra` (limitado a las últimas
+    // `horasExtraLimit` de TODA la empresa). Con horas extra programándose casi a diario
+    // ese recorte se agotaba rápido: la autorización real de HOY dejaba de "verse" en el
+    // formulario (aunque seguía intacta en Firestore) y guardar así la pisaba con datos
+    // vacíos o por defecto.
     if (esFechaDomingo(todayStr)) {
       setScheduleModal({
         isOpen: true, collaborator: op, startHour: '8', endHour: '18',
-        overtimeHours: '10', authorizedDate: todayStr, overtimeTasks: inheritedTasks,
+        overtimeHours: '10', authorizedDate: todayStr, overtimeTasks: '',
       });
-      return;
+    } else {
+      const prefilledStart = Number(op.schedule?.startHour || 8);
+      const prefilledEnd = Number(op.schedule?.endHour || (isSat ? 13 : 18));
+      const { earlyHours, lateHours } = getOvertimeBlocks(prefilledStart, prefilledEnd, todayStr);
+      setScheduleModal({
+        isOpen: true,
+        collaborator: op,
+        startHour: String(prefilledStart),
+        endHour: String(prefilledEnd),
+        overtimeHours: String(earlyHours + lateHours),
+        authorizedDate: todayStr,
+        overtimeTasks: '',
+      });
     }
-    const prefilledStart = Number(op.schedule?.startHour || 8);
-    const prefilledEnd = Number(op.schedule?.endHour || (isSat ? 13 : 18));
-    const { earlyHours, lateHours } = getOvertimeBlocks(prefilledStart, prefilledEnd, todayStr);
-    setScheduleModal({
-      isOpen: true,
-      collaborator: op,
-      startHour: String(prefilledStart),
-      endHour: String(prefilledEnd),
-      overtimeHours: String(earlyHours + lateHours),
-      authorizedDate: todayStr,
-      overtimeTasks: inheritedTasks,
-    });
+
+    const existingTodayHE = await findHorasExtraForDate(op.id, todayStr);
+    if (existingTodayHE) {
+      setScheduleModal((prev) => (
+        prev.isOpen && prev.collaborator?.id === op.id && prev.authorizedDate === todayStr
+          ? {
+              ...prev,
+              startHour: String(existingTodayHE.startHour),
+              endHour: String(existingTodayHE.endHour),
+              overtimeHours: String(existingTodayHE.overtimeHours),
+              overtimeTasks: existingTodayHE.overtimeTasks || '',
+            }
+          : prev
+      ));
+    }
   };
 
   const handleCloseScheduleModal = () => {
@@ -334,35 +343,38 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     });
   };
 
-  const handleDateChange = (e) => {
+  const handleDateChange = async (e) => {
     const dateStr = e.target.value;
+    const collaboratorId = scheduleModal.collaborator?.id;
     // Cambiar la fecha DENTRO del modal (para reprogramar otro día sin cerrarlo) antes
     // dejaba pegados el horario y las tareas de la fecha con la que se había abierto el
-    // modal — solo se recalculaba `overtimeHours`, pero startHour/endHour/overtimeTasks
-    // seguían siendo los de la fecha anterior, así que la fecha nueva se podía guardar con
-    // el horario de la fecha vieja si no se tocaban a mano. Ahora, si ya existe una
-    // autorización vigente para la fecha nueva, se recupera tal cual (para poder editarla);
-    // si no existe, se reinicia a "sin tiempo extra" para forzar una elección deliberada.
-    const existingHE = horasExtra.find(
-      (h) => h.operarioId === scheduleModal.collaborator?.id && h.authorizedDate === dateStr && h.verificationStatus !== 'cancelado'
-    );
-    if (existingHE) {
-      setScheduleModal((prev) => ({
-        ...prev,
-        authorizedDate: dateStr,
-        startHour: String(existingHE.startHour),
-        endHour: String(existingHE.endHour),
-        overtimeHours: String(existingHE.overtimeHours),
-        overtimeTasks: existingHE.overtimeTasks || '',
-      }));
-      return;
-    }
+    // modal. Se reinicia primero a "sin tiempo extra" (elección deliberada) y se corrige
+    // en cuanto responde findHorasExtraForDate (consulta directa a Firestore, no el
+    // arreglo local `horasExtra` recortado por `horasExtraLimit`) — con el recorte, una
+    // autorización real de un día ya programado podía no "verse" al volver a esa fecha, y
+    // guardar así CANCELABA la autorización real de ese día para reemplazarla por una
+    // vacía/nueva.
     if (esFechaDomingo(dateStr)) {
       setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: '18', overtimeHours: '10', overtimeTasks: '' }));
-      return;
+    } else {
+      const newDefaultEnd = new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 13 : 18;
+      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: String(newDefaultEnd), overtimeHours: '0', overtimeTasks: '' }));
     }
-    const newDefaultEnd = new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 13 : 18;
-    setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: String(newDefaultEnd), overtimeHours: '0', overtimeTasks: '' }));
+
+    const existingHE = await findHorasExtraForDate(collaboratorId, dateStr);
+    if (existingHE) {
+      setScheduleModal((prev) => (
+        prev.collaborator?.id === collaboratorId && prev.authorizedDate === dateStr
+          ? {
+              ...prev,
+              startHour: String(existingHE.startHour),
+              endHour: String(existingHE.endHour),
+              overtimeHours: String(existingHE.overtimeHours),
+              overtimeTasks: existingHE.overtimeTasks || '',
+            }
+          : prev
+      ));
+    }
   };
 
   const handleStartHourChange = (e) => {

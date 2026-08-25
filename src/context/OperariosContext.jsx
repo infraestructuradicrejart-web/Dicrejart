@@ -29,7 +29,7 @@ import useAreas from '../hooks/useAreas';
 import { AuthContext } from './AuthContext';
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { logAudit } from '../utils/auditLog';
-import { getTodayLocalDateStr } from '../utils/dateUtils';
+import { getTodayLocalDateStr, getOvertimeWeekRange } from '../utils/dateUtils';
 import { checkOvertimeEligibility, calculateScheduleFromOvertime } from '../utils/overtimeRules';
 import {
   triggerDailyRHNotification,
@@ -429,7 +429,30 @@ export const OperariosProvider = ({ children }) => {
     if (!op) return { ok: false, error: 'Colaborador no encontrado.' };
 
     if (Number(overtimeHours) > 0) {
-      const eligibility = checkOvertimeEligibility(op, authorizedDate);
+      // Tope semanal: se consulta directo a Firestore (no el arreglo local `horasExtra`,
+      // limitado a las últimas `horasExtraLimit` de TODA la empresa vía onSnapshot) para
+      // que el acumulado sea siempre correcto sin importar cuánto historial exista. Si ya
+      // se llamó cancelPendingHorasExtra para esta misma fecha (flujo normal de
+      // handleSaveSchedule), esa autorización previa del mismo día ya quedó "cancelado" y
+      // no se cuenta dos veces.
+      const { start: weekStart, end: weekEnd } = getOvertimeWeekRange(authorizedDate);
+      let weeklyAccumulatedHours = 0;
+      try {
+        const weekSnap = await getDocs(query(
+          collection(db, 'horas_extra'),
+          where('operarioId', '==', operarioId),
+          where('authorizedDate', '>=', weekStart),
+          where('authorizedDate', '<=', weekEnd)
+        ));
+        weeklyAccumulatedHours = weekSnap.docs
+          .map((d) => d.data())
+          .filter((h) => h.verificationStatus !== 'cancelado')
+          .reduce((sum, h) => sum + Number(h.overtimeHours || 0), 0);
+      } catch (error) {
+        console.error('Error al calcular horas extra acumuladas de la semana:', error);
+      }
+
+      const eligibility = checkOvertimeEligibility(op, authorizedDate, weeklyAccumulatedHours);
       if (!eligibility.isEligible) {
         return { ok: false, error: eligibility.reason };
       }
@@ -553,6 +576,31 @@ export const OperariosProvider = ({ children }) => {
       console.error('Error al cancelar autorizaciones de horas extra previas:', error);
     }
   }, [user]);
+
+  /**
+   * Busca la autorización de horas extra VIGENTE (no cancelada) de un colaborador para una
+   * fecha exacta — consulta directo a Firestore en vez del arreglo local `horasExtra`
+   * (limitado a las últimas `horasExtraLimit` autorizaciones de TODA la empresa, ver el
+   * onSnapshot de arriba). Con horas extra programándose casi a diario, ese recorte se
+   * agota rápido y una autorización real de días atrás dejaba de "verse" en el formulario
+   * — el supervisor la creía perdida y, al reprogramar, terminaba pisándola por accidente.
+   * Devuelve el registro completo (para precargar el formulario) o `null` si no existe.
+   */
+  const findHorasExtraForDate = useCallback(async (operarioId, authorizedDate) => {
+    if (!db || !operarioId || !authorizedDate) return null;
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'horas_extra'),
+        where('operarioId', '==', operarioId),
+        where('authorizedDate', '==', authorizedDate)
+      ));
+      const active = snap.docs.map((d) => d.data()).find((h) => h.verificationStatus !== 'cancelado');
+      return active || null;
+    } catch (error) {
+      console.error('Error al buscar autorización de horas extra por fecha:', error);
+      return null;
+    }
+  }, []);
 
   /**
    * Modifica la duración global de los bloques de tiempo de evaluación
@@ -1192,8 +1240,30 @@ export const OperariosProvider = ({ children }) => {
       const op = operarios.find((o) => o.id === sol.operarioId);
       if (!op) return { ok: false, error: 'Colaborador asociado no encontrado.' };
 
-      // Revalidar que el colaborador no haya incurrido en falta (penalización de 7 días) o ausencia
-      const eligibility = checkOvertimeEligibility(op, sol.fecha);
+      // Revalidar que el colaborador no haya incurrido en falta (penalización de 7 días),
+      // ausencia, o ya haya llegado al tope semanal de horas extra — misma consulta directa
+      // a Firestore (no el arreglo local `horasExtra`, limitado a las últimas
+      // `horasExtraLimit`) que usa authorizeOvertimeTasks, para que el candado semanal
+      // aplique igual sin importar si la autorización se aprobó directa o vino de una
+      // solicitud.
+      const { start: weekStart, end: weekEnd } = getOvertimeWeekRange(sol.fecha);
+      let weeklyAccumulatedHours = 0;
+      try {
+        const weekSnap = await getDocs(query(
+          collection(db, 'horas_extra'),
+          where('operarioId', '==', op.id),
+          where('authorizedDate', '>=', weekStart),
+          where('authorizedDate', '<=', weekEnd)
+        ));
+        weeklyAccumulatedHours = weekSnap.docs
+          .map((d) => d.data())
+          .filter((h) => h.verificationStatus !== 'cancelado')
+          .reduce((sum, h) => sum + Number(h.overtimeHours || 0), 0);
+      } catch (error) {
+        console.error('Error al calcular horas extra acumuladas de la semana:', error);
+      }
+
+      const eligibility = checkOvertimeEligibility(op, sol.fecha, weeklyAccumulatedHours);
       if (!eligibility.isEligible) {
         return { ok: false, error: eligibility.reason };
       }
@@ -1375,7 +1445,23 @@ export const OperariosProvider = ({ children }) => {
       const newMotivo = motivo || sol.motivo;
 
       if (op && newFecha !== sol.fecha) {
-        const eligibility = checkOvertimeEligibility(op, newFecha);
+        const { start: weekStart, end: weekEnd } = getOvertimeWeekRange(newFecha);
+        let weeklyAccumulatedHours = 0;
+        try {
+          const weekSnap = await getDocs(query(
+            collection(db, 'horas_extra'),
+            where('operarioId', '==', op.id),
+            where('authorizedDate', '>=', weekStart),
+            where('authorizedDate', '<=', weekEnd)
+          ));
+          weeklyAccumulatedHours = weekSnap.docs
+            .map((d) => d.data())
+            .filter((h) => h.verificationStatus !== 'cancelado' && h.solicitudId !== sol.id)
+            .reduce((sum, h) => sum + Number(h.overtimeHours || 0), 0);
+        } catch (error) {
+          console.error('Error al calcular horas extra acumuladas de la semana:', error);
+        }
+        const eligibility = checkOvertimeEligibility(op, newFecha, weeklyAccumulatedHours);
         if (!eligibility.isEligible) {
           return { ok: false, error: eligibility.reason };
         }
@@ -1413,9 +1499,19 @@ export const OperariosProvider = ({ children }) => {
           // era hoy, el horario "vigente" del operario, pero NUNCA el registro de
           // horas_extra ya creado al autorizar, así que se quedaba con los datos viejos
           // (fecha/horas/horario) sin importar cuánto se editara la solicitud después.
-          const linkedHE = horasExtra.find((h) => h.solicitudId === sol.id && h.verificationStatus !== 'cancelado');
+          // Se busca con una consulta directa a Firestore por solicitudId, no en el
+          // arreglo local `horasExtra` (limitado a las últimas `horasExtraLimit` de TODA
+          // la empresa) — si el registro vinculado ya había quedado fuera de ese recorte,
+          // este bloque se saltaba en silencio y la desincronización pasaba inadvertida.
+          const linkedHESnap = await getDocs(query(
+            collection(db, 'horas_extra'),
+            where('solicitudId', '==', sol.id)
+          ));
+          const linkedHE = linkedHESnap.docs
+            .map((d) => ({ ...d.data(), _ref: d.ref }))
+            .find((h) => h.verificationStatus !== 'cancelado');
           if (linkedHE) {
-            await updateDoc(doc(db, 'horas_extra', linkedHE.id), {
+            await updateDoc(linkedHE._ref, {
               authorizedDate: newFecha,
               startHour: scheduleCalc.startHour,
               endHour: scheduleCalc.endHour,
@@ -1459,7 +1555,7 @@ export const OperariosProvider = ({ children }) => {
         return { ok: false, error: error.message };
       }
     },
-    [solicitudesHorasExtra, operarios, user, horasExtra]
+    [solicitudesHorasExtra, operarios, user]
   );
 
   // ============================================
@@ -1491,6 +1587,7 @@ export const OperariosProvider = ({ children }) => {
       verifyHorasExtra,
       correctHorasExtraSchedule,
       cancelPendingHorasExtra,
+      findHorasExtraForDate,
       solicitudesHorasExtra,
       solicitarHorasExtra,
       autorizarSolicitudHoraExtra,
@@ -1523,6 +1620,7 @@ export const OperariosProvider = ({ children }) => {
       verifyHorasExtra,
       correctHorasExtraSchedule,
       cancelPendingHorasExtra,
+      findHorasExtraForDate,
       solicitudesHorasExtra,
       solicitarHorasExtra,
       autorizarSolicitudHoraExtra,
