@@ -784,6 +784,7 @@ export const ProduccionProvider = ({ children }) => {
         // error, así que no hace falta ningún manejo adicional aquí.
         return {
           ok: true,
+          id: logId,
           photoWarning: 'El registro se guardó. La evidencia fotográfica está tardando en subir (posible falla de conexión) y sigue intentándose en segundo plano; si no aparece, agrégala después editando el registro.',
         };
       }
@@ -791,12 +792,13 @@ export const ProduccionProvider = ({ children }) => {
       if (!result.ok) {
         return {
           ok: true,
+          id: logId,
           photoWarning: 'El registro se guardó, pero la evidencia fotográfica no se pudo subir (revisa tu conexión). Puedes agregarla después editando el registro.',
         };
       }
     }
 
-    return { ok: true };
+    return { ok: true, id: logId };
   }, [juegos, proyectos, user]);
 
   /**

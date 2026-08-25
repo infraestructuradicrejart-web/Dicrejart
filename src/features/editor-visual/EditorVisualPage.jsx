@@ -458,7 +458,7 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
 const EditorVisualPage = ({ standalone = false }) => {
   const navigate = useNavigate();
   const { proyectos, juegos, addProject, addGame, updateProject } = useProduccion();
-  const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
+  const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus, addEvidenceToActividad, removeEvidenceFromActividad } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
   const allBlockAreas = useMemo(() => [...dynamicAreas, ...NON_PRODUCTION_AREAS], [dynamicAreas]);
@@ -566,6 +566,11 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   // Modal para marcar una actividad como completada con notas de entrega
   const [completeModal, setCompleteModal] = useState({ isOpen: false, activityId: null, title: '', notes: '' });
+
+  // Modal dedicado solo a subir/quitar evidencia fotográfica de una actividad —
+  // independiente de iniciar/pausar/terminar, se puede usar en cualquier momento.
+  const [evidenceModal, setEvidenceModal] = useState({ isOpen: false, activityId: null, title: '' });
+  const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
 
   // Modal para ver y ampliar Ayudas Visuales (Imágenes en alta resolución, PDFs, Modelos 3D y Enlaces)
   const [previewResourceModal, setPreviewResourceModal] = useState({
@@ -1450,6 +1455,29 @@ const EditorVisualPage = ({ standalone = false }) => {
       }
     });
 
+    // Si algún nodo arrastrado está colapsado, arrastrar también toda su cadena oculta
+    // (mismo criterio que hiddenNodeIds) para que conserve su posición relativa al
+    // expandir — si no, los nodos ocultos reaparecen donde siempre estuvieron, como si
+    // no se hubieran movido junto con el ancla colapsada.
+    activeSelected.forEach((id) => {
+      if (!collapsedNodeIds.has(id)) return;
+      const visited = new Set([id]);
+      const queue = [id];
+      while (queue.length) {
+        const current = queue.shift();
+        edges.forEach((e) => {
+          if (e.from === current && !visited.has(e.to) && hiddenNodeIds.has(e.to)) {
+            visited.add(e.to);
+            queue.push(e.to);
+            if (!nodesMap[e.to]) {
+              const hiddenNode = nodes.find((n) => n.id === e.to);
+              if (hiddenNode) nodesMap[e.to] = { startX: hiddenNode.x, startY: hiddenNode.y };
+            }
+          }
+        });
+      }
+    });
+
     dragStateRef.current = {
       leadId: nodeId,
       nodesMap,
@@ -1964,7 +1992,13 @@ const EditorVisualPage = ({ standalone = false }) => {
 
                 if (gameEntity && areaId) {
                   const currentAreas = gameEntity.areas || [];
-                  if (!currentAreas.includes(areaId)) {
+                  if (gameEntity.useManufacturingRoute) {
+                    // El orden de `areas` es el orden real de fabricación de este juego —
+                    // se protege igual que en el Inspector: no se toca desde un cable
+                    // suelto, se maneja con validación desde RutaFabricacionView. Como no
+                    // cambió nada de verdad, tampoco se notifica al supervisor.
+                    toast.info('🛤️ Este juego usa Ruta de Fabricación — agrega áreas nuevas desde "Ver Ruta de Fabricación", no conectando el cable.');
+                  } else if (!currentAreas.includes(areaId)) {
                     const nextAreas = [...currentAreas, areaId];
                     updateDoc(doc(db, 'juegos', gameEntity.id), {
                       areas: nextAreas,
@@ -1973,21 +2007,21 @@ const EditorVisualPage = ({ standalone = false }) => {
                     }).then(() => {
                       toast.success(`🏭 Área "${areaName}" agregada a la ruta del Juego.`);
                     });
+
+                    const alertText = `📢 [Modelo de Juego en Ruta de Fabricación] El área "${areaName}" ha sido incorporada para fabricar el modelo "${gameName}". Supervisado por ${supervisor.name}.`;
+
+                    sendSystemChatMessage({
+                      targetUserId: supervisor.id,
+                      targetUserName: supervisor.name,
+                      text: alertText,
+                      senderId: user?.id || 'admin',
+                      senderName: user?.name || 'Administración',
+                      isGlobal: true,
+                    });
+
+                    toast.success(`📢 Supervisor (${supervisor.name}) notificado sobre el modelo "${gameName}".`);
                   }
                 }
-
-                const alertText = `📢 [Modelo de Juego en Ruta de Fabricación] El área "${areaName}" ha sido incorporada para fabricar el modelo "${gameName}". Supervisado por ${supervisor.name}.`;
-
-                sendSystemChatMessage({
-                  targetUserId: supervisor.id,
-                  targetUserName: supervisor.name,
-                  text: alertText,
-                  senderId: user?.id || 'admin',
-                  senderName: user?.name || 'Administración',
-                  isGlobal: true,
-                });
-
-                toast.success(`📢 Supervisor (${supervisor.name}) notificado sobre el modelo "${gameName}".`);
               }
             }
           }
@@ -3029,24 +3063,53 @@ const EditorVisualPage = ({ standalone = false }) => {
   }, [actividades, canUserControlActivity, toast]);
 
   /**
-   * Confirma la finalización de la actividad y fija completedAt en Firestore
+   * Confirma la finalización de la actividad — pasa por advanceStatus (ActividadesContext)
+   * en vez de escribir directo a Firestore aquí, para que la actividad se complete por el
+   * único camino centralizado (mismo que usa ActividadesPage.jsx): así el registro
+   * automático de producción y cualquier otra lógica de negocio ligada a completar una
+   * actividad corre sin importar desde qué pantalla se haga.
    */
   const handleConfirmCompleteActivity = useCallback(async () => {
-    if (!completeModal.activityId || !db) return;
+    if (!completeModal.activityId) return;
     try {
-      await updateDoc(doc(db, 'actividades', completeModal.activityId), {
-        status: 'completado',
-        completedAt: new Date().toISOString(),
-        completionNotes: completeModal.notes.trim() || 'Actividad concluida satisfactoriamente.',
-        updatedAt: new Date().toISOString(),
-      });
+      await advanceStatus(completeModal.activityId, completeModal.notes.trim() || 'Actividad concluida satisfactoriamente.');
       toast.success(`✅ Actividad "${completeModal.title}" completada.`);
       setCompleteModal({ isOpen: false, activityId: null, title: '', notes: '' });
     } catch (err) {
       console.error('Error al completar actividad:', err);
       toast.danger('Error al marcar la actividad como completada.');
     }
-  }, [completeModal, toast]);
+  }, [completeModal, toast, advanceStatus]);
+
+  /** Abre el modal de evidencia fotográfica de una actividad */
+  const handleOpenEvidenceModal = (activityId, title) => {
+    setEvidenceModal({ isOpen: true, activityId, title });
+  };
+
+  const closeEvidenceModal = () => setEvidenceModal({ isOpen: false, activityId: null, title: '' });
+
+  /** Sube uno o más archivos de evidencia a la actividad abierta en el modal */
+  const handleUploadEvidence = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0 || !evidenceModal.activityId) return;
+    setIsUploadingEvidence(true);
+    const result = await addEvidenceToActividad(evidenceModal.activityId, files);
+    setIsUploadingEvidence(false);
+    e.target.value = '';
+    if (result.ok) {
+      toast.success(`📷 ${files.length} foto(s) de evidencia agregada(s).`);
+    } else {
+      toast.danger(result.error || 'No se pudo subir la evidencia.');
+    }
+  };
+
+  /** Quita una foto de evidencia de la actividad abierta en el modal */
+  const handleRemoveEvidence = async (photoPath) => {
+    const result = await removeEvidenceFromActividad(evidenceModal.activityId, photoPath);
+    if (!result.ok) {
+      toast.danger(result.error || 'No se pudo quitar la evidencia.');
+    }
+  };
 
   /**
    * Reabre o cambia de estado una actividad
@@ -4750,6 +4813,54 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   <strong>{entity.progress ?? 0}%</strong>
                                 </div>
 
+                                {/* Sub-listado de las actividades derivadas de este Juego — ligadas por
+                                    dato (gameId), no por cable, para que se vea igual sin importar si el
+                                    cable Juego→Actividad sigue conectado en este lienzo. */}
+                                {(() => {
+                                  const gameActivities = actividades.filter((a) => a.gameId === entity.id);
+                                  if (gameActivities.length === 0) return null;
+                                  const STATUS_META = {
+                                    completado: { icon: '✅', color: '#10b981' },
+                                    proceso: { icon: '⚡', color: '#2563eb' },
+                                    pendiente: { icon: '⏳', color: '#6b7280' },
+                                  };
+                                  const visible = gameActivities.slice(0, 5);
+                                  const extra = gameActivities.length - visible.length;
+                                  return (
+                                    <div style={{ marginTop: '5px', paddingTop: '4px', borderTop: '1px dashed rgba(0,0,0,0.08)' }}>
+                                      <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-gray-500)', marginBottom: '2px' }}>
+                                        📌 Actividades ({gameActivities.length})
+                                      </div>
+                                      {visible.map((act) => {
+                                        const meta2 = STATUS_META[act.status] || STATUS_META.pendiente;
+                                        return (
+                                          <div
+                                            key={act.id}
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '4px',
+                                              fontSize: '10.5px',
+                                              color: 'var(--color-gray-700)',
+                                              padding: '1px 0',
+                                              overflow: 'hidden',
+                                              textOverflow: 'ellipsis',
+                                              whiteSpace: 'nowrap',
+                                            }}
+                                            title={act.title}
+                                          >
+                                            <span style={{ color: meta2.color }}>{meta2.icon}</span>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{act.title}</span>
+                                          </div>
+                                        );
+                                      })}
+                                      {extra > 0 && (
+                                        <div style={{ fontSize: '10px', color: 'var(--color-gray-400)' }}>… y {extra} más.</div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+
                                 {/* Colaborador responsable si está conectado */}
                                 {(() => {
                                   const connectedColabEdge = edges.find(
@@ -5034,6 +5145,36 @@ const EditorVisualPage = ({ standalone = false }) => {
                                       </>
                                     );
                                   })()}
+                                </div>
+
+                                {/* Evidencia fotográfica de avance — botón propio, disponible en cualquier
+                                    estatus (no solo al terminar), independiente de Iniciar/Pausar/Terminar */}
+                                <div style={{ marginTop: '6px', paddingTop: '4px', borderTop: '1px dotted rgba(0,0,0,0.1)' }}>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOpenEvidenceModal(entity.id, entity.title);
+                                    }}
+                                    style={{
+                                      width: '100%',
+                                      padding: '4px 8px',
+                                      fontSize: '10.5px',
+                                      fontWeight: 700,
+                                      background: entity.evidencePhotos?.length ? 'rgba(16, 185, 129, 0.1)' : 'rgba(0,0,0,0.05)',
+                                      color: entity.evidencePhotos?.length ? '#059669' : 'var(--color-gray-600)',
+                                      border: `1px solid ${entity.evidencePhotos?.length ? 'rgba(16, 185, 129, 0.25)' : 'rgba(0,0,0,0.1)'}`,
+                                      borderRadius: '5px',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: '4px',
+                                    }}
+                                    title="Agregar o revisar evidencia fotográfica de esta actividad"
+                                  >
+                                    📷 Evidencia {entity.evidencePhotos?.length ? `(${entity.evidencePhotos.length})` : ''}
+                                  </button>
                                 </div>
 
                                 {/* Recursos adjuntos (enlaces / imágenes) y botón para colocarlos en el lienzo */}
@@ -6662,6 +6803,86 @@ const EditorVisualPage = ({ standalone = false }) => {
           </Button>
         </div>
       </Modal>
+
+      {/* ---------- MODAL: EVIDENCIA FOTOGRÁFICA DE ACTIVIDAD ---------- */}
+      <Modal
+        isOpen={evidenceModal.isOpen}
+        onClose={closeEvidenceModal}
+        title={`📷 Evidencia: ${evidenceModal.title || 'Actividad'}`}
+      >
+        {(() => {
+          const act = actividades.find((a) => a.id === evidenceModal.activityId);
+          const photos = act?.evidencePhotos || [];
+          return (
+            <>
+              {photos.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '8px', marginBottom: '14px' }}>
+                  {photos.map((photo) => (
+                    <div key={photo.path || photo.url} style={{ position: 'relative' }}>
+                      <img
+                        src={photo.url}
+                        alt="Evidencia"
+                        style={{ width: '100%', height: '90px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--color-gray-200)' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveEvidence(photo.path)}
+                        title="Quitar esta foto"
+                        style={{
+                          position: 'absolute',
+                          top: '3px',
+                          right: '3px',
+                          width: '20px',
+                          height: '20px',
+                          borderRadius: '50%',
+                          border: 'none',
+                          background: 'rgba(0,0,0,0.65)',
+                          color: '#fff',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          lineHeight: 1,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ fontSize: '12.5px', color: 'var(--color-gray-500)', marginBottom: '14px' }}>
+                  Todavía no hay evidencia fotográfica para esta actividad.
+                </p>
+              )}
+
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '10px',
+                  borderRadius: '6px',
+                  border: '1.5px dashed var(--color-gray-300)',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: 'var(--color-gray-600)',
+                  cursor: 'pointer',
+                }}
+              >
+                {isUploadingEvidence ? '⏳ Subiendo...' : '📤 Subir foto(s) de evidencia'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleUploadEvidence}
+                  disabled={isUploadingEvidence}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </>
+          );
+        })()}
+      </Modal>
     </motion.div>
   );
 };
@@ -6752,6 +6973,7 @@ const NodeInspector = ({
   const [editProjDesc, setEditProjDesc] = useState('');
   const [editProjItems, setEditProjItems] = useState('');
   const [editProjAreas, setEditProjAreas] = useState([]);
+  const [editProjNasUrl, setEditProjNasUrl] = useState('');
   const [isSavingProj, setIsSavingProj] = useState(false);
 
   // 🎮 Estados para editar Juego Existente
@@ -6759,6 +6981,7 @@ const NodeInspector = ({
   const [editGameProjectId, setEditGameProjectId] = useState('');
   const [editGameAreas, setEditGameAreas] = useState([]);
   const [editGameTargets, setEditGameTargets] = useState({});
+  const [editGameNasUrl, setEditGameNasUrl] = useState('');
   const [isSavingGame, setIsSavingGame] = useState(false);
 
   // 📌 Estados para editar Actividad Existente
@@ -6766,6 +6989,7 @@ const NodeInspector = ({
   const [editActDesc, setEditActDesc] = useState('');
   const [editActAreaId, setEditActAreaId] = useState('herreria');
   const [editActOperarioId, setEditActOperarioId] = useState('');
+  const [editActQuantity, setEditActQuantity] = useState(1);
   const [editActPriority, setEditActPriority] = useState('media');
   const [editActDueDate, setEditActDueDate] = useState('');
   const [editActLinks, setEditActLinks] = useState([]);
@@ -6789,18 +7013,21 @@ const NodeInspector = ({
       setEditProjDesc(entity.description || '');
       setEditProjItems(entity.itemsToManufacture || '');
       setEditProjAreas(entity.areas || ['arquitectura', 'diseno', 'herreria', 'corte-laser']);
+      setEditProjNasUrl(entity.nasFolderUrl || '');
     }
     if (entity && node.type === 'juego') {
       setEditGameName(entity.name || '');
       setEditGameProjectId(entity.projectId || '');
       setEditGameAreas(entity.areas || ['herreria', 'corte-laser']);
       setEditGameTargets(entity.targetPieces || {});
+      setEditGameNasUrl(entity.nasFolderUrl || '');
     }
     if (entity && node.type === 'actividad') {
       setEditActTitle(entity.title || '');
       setEditActDesc(entity.description || '');
       setEditActAreaId(entity.areaId || 'herreria');
       setEditActOperarioId(entity.operarioId || '');
+      setEditActQuantity(entity.quantity || 1);
       setEditActPriority(entity.priority || 'media');
       setEditActDueDate(entity.dueDate || '');
       setEditActLinks(entity.links || []);
@@ -6929,6 +7156,7 @@ const NodeInspector = ({
         description: editProjDesc.trim() || 'Sin descripción',
         itemsToManufacture: editProjItems.trim() || '',
         areas: editProjAreas || [],
+        nasFolderUrl: editProjNasUrl.trim() || '',
       });
       if (res?.ok !== false) {
         toast.success(`✅ Proyecto "${editProjName.trim()}" actualizado.`);
@@ -6955,6 +7183,7 @@ const NodeInspector = ({
           description: editActDesc.trim() || 'Sin descripción',
           areaId: editActAreaId,
           operarioId: editActOperarioId || null,
+          quantity: Number(editActQuantity) > 0 ? Number(editActQuantity) : 1,
           priority: editActPriority,
           dueDate: editActDueDate || null,
           links: editActLinks,
@@ -7312,8 +7541,13 @@ const NodeInspector = ({
         name: editGameName.trim(),
         projectId: editGameProjectId || null,
         projectName: matchingProj?.name || entity.projectName || 'General',
-        areas: editGameAreas,
+        // Con Ruta de Fabricación activa, el orden de `areas` es el orden real de
+        // fabricación y solo se edita (con validación) desde RutaFabricacionView — se
+        // reenvía tal cual está en Firestore, nunca lo que haya quedado en el estado
+        // local de este formulario, sin importar si los pills de arriba están ocultos.
+        areas: entity.useManufacturingRoute ? entity.areas : editGameAreas,
         targetPieces: editGameTargets,
+        nasFolderUrl: editGameNasUrl.trim() || '',
         updatedAt: new Date().toISOString(),
       });
       toast.success(`✅ Juego "${editGameName.trim()}" actualizado.`);
@@ -7635,6 +7869,29 @@ const NodeInspector = ({
             <label>Progreso General</label>
             <input type="text" value={`${entity.progress ?? 0}%`} disabled />
           </div>
+          <div className={styles.field}>
+            <label>🗄️ Carpeta NAS (evidencia del proyecto)</label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <input
+                type="text"
+                value={editProjNasUrl}
+                disabled={!canEditDiagram}
+                placeholder="Enlace a la carpeta NAS (cuando esté listo)"
+                onChange={(e) => setEditProjNasUrl(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              {entity.nasFolderUrl && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => window.open(entity.nasFolderUrl, '_blank', 'noopener,noreferrer')}
+                >
+                  Abrir
+                </Button>
+              )}
+            </div>
+          </div>
           {canEditDiagram && (
             <Button
               variant="primary"
@@ -7676,22 +7933,29 @@ const NodeInspector = ({
 
           <div className={styles.field}>
             <label>Áreas Requeridas para este Juego</label>
-            <div className={styles.areasGridPills} style={{ marginTop: '4px' }}>
-              {dynamicAreas.map((a) => {
-                const isSelected = editGameAreas.includes(a.id);
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
-                    onClick={() => canEditDiagram && handleToggleEditGameArea(a.id)}
-                    style={{ cursor: canEditDiagram ? 'pointer' : 'default' }}
-                  >
-                    {isSelected ? '✓ ' : '+ '} {a.name}
-                  </button>
-                );
-              })}
-            </div>
+            {entity.useManufacturingRoute ? (
+              <div className={styles.calloutBox} style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', marginTop: '4px' }}>
+                🛤️ Este juego usa Ruta de Fabricación — el orden de sus áreas se protege y se edita solo desde
+                "Ver Ruta de Fabricación" abajo, no aquí.
+              </div>
+            ) : (
+              <div className={styles.areasGridPills} style={{ marginTop: '4px' }}>
+                {dynamicAreas.map((a) => {
+                  const isSelected = editGameAreas.includes(a.id);
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className={`${styles.areaPill} ${isSelected ? styles.areaPillActive : ''}`}
+                      onClick={() => canEditDiagram && handleToggleEditGameArea(a.id)}
+                      style={{ cursor: canEditDiagram ? 'pointer' : 'default' }}
+                    >
+                      {isSelected ? '✓ ' : '+ '} {a.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className={styles.field}>
@@ -7713,6 +7977,30 @@ const NodeInspector = ({
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          <div className={styles.field}>
+            <label>🗄️ Carpeta NAS (evidencia del modelo)</label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <input
+                type="text"
+                value={editGameNasUrl}
+                disabled={!canEditDiagram}
+                placeholder="Enlace a la carpeta NAS (cuando esté listo)"
+                onChange={(e) => setEditGameNasUrl(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              {entity.nasFolderUrl && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => window.open(entity.nasFolderUrl, '_blank', 'noopener,noreferrer')}
+                >
+                  Abrir
+                </Button>
+              )}
             </div>
           </div>
 
@@ -7972,6 +8260,22 @@ const NodeInspector = ({
                 })()}
               </select>
             </div>
+
+            {entity?.gameId && (
+              <div className={styles.field} style={{ marginBottom: '8px' }}>
+                <label>🎮 Piezas que representa esta actividad para el Juego</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={editActQuantity}
+                  disabled={!canEditDiagram}
+                  onChange={(e) => setEditActQuantity(e.target.value)}
+                />
+                <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', margin: '4px 0 0' }}>
+                  Al completar esta actividad, se suma automáticamente esta cantidad al avance de fabricación del área.
+                </p>
+              </div>
+            )}
 
             {canEditDiagram && (
               <Button

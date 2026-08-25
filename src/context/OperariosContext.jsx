@@ -712,6 +712,8 @@ export const OperariosProvider = ({ children }) => {
    * Elimina un operario de Firestore junto con sus evaluaciones de desempeño
    * ("calificaciones"), para no dejar registros huérfanos apuntando a un operarioId
    * que ya no existe en el padrón (colección "evaluaciones", ligada por operarioId).
+   * También desasigna (no borra) sus actividades pendientes/en proceso — pasan a "Sin
+   * asignar" en vez de quedar apuntando para siempre a un colaborador que ya no existe.
    */
   const deleteOperario = useCallback(async (operarioId) => {
     if (!db) return;
@@ -721,12 +723,17 @@ export const OperariosProvider = ({ children }) => {
       );
       await Promise.all(evalSnapshot.docs.map((docSnap) => deleteDoc(docSnap.ref)));
 
+      const actSnapshot = await getDocs(
+        query(collection(db, 'actividades'), where('operarioId', '==', operarioId))
+      );
+      await Promise.all(actSnapshot.docs.map((docSnap) => updateDoc(docSnap.ref, { operarioId: null })));
+
       await deleteDoc(doc(db, 'operarios', operarioId));
       logAudit({
         user,
         module: 'operarios',
         action: 'Eliminó un operario',
-        details: `${operarioId} (+ ${evalSnapshot.size} evaluación(es) asociada(s))`,
+        details: `${operarioId} (+ ${evalSnapshot.size} evaluación(es) y ${actSnapshot.size} actividad(es) desasignada(s))`,
       });
     } catch (error) {
       console.error('Error al eliminar operario de Firestore:', error);

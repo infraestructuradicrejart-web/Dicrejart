@@ -19,6 +19,7 @@ import Switch from '../../components/ui/Switch';
 import useToast from '../../hooks/useToast';
 import useOperarios from '../../hooks/useOperarios';
 import useCalidad from '../../hooks/useCalidad';
+import useActividades from '../../hooks/useActividades';
 import useAuth from '../../hooks/useAuth';
 import useConfig from '../../hooks/useConfig';
 import { ROLE_TYPES, ROLE_TYPE_LABELS } from '../../data/usersData';
@@ -131,6 +132,7 @@ const AdminPage = () => {
   // ============================================
   const { operarios, horasExtra, blockDuration, updateBlockDuration } = useOperarios();
   const { findOrphanedEvaluaciones, deleteOrphanedEvaluaciones } = useCalidad();
+  const { findOrphanedAssignments, unassignOrphanedActivities } = useActividades();
   const { user, users, addUser, updateUser, deleteUser, resetUserPassword, updateUserPermission, resetUserPermission } = useAuth();
   const currentOvertimeWeek = getOvertimeWeekRange();
   const { limits, updateLimit, generalConfig, updateGeneralConfig, auditLog } = useConfig();
@@ -141,6 +143,11 @@ const AdminPage = () => {
   // calificaciones de desempeño quedaron en Firestore antes de que deleteOperario
   // empezara a limpiarlas). status: 'idle' | 'loading' | 'done'
   const [orphanCheck, setOrphanCheck] = useState({ status: 'idle', orphaned: [] });
+
+  // Auditoría manual de actividades con colaborador asignado que ya no existe en el
+  // padrón (deleteOperario no las desasignaba antes de este fix). status: 'idle' |
+  // 'loading' | 'done'
+  const [orphanActCheck, setOrphanActCheck] = useState({ status: 'idle', orphaned: [] });
 
   /** Etiquetas legibles para cada límite dinámico de historial (colecciones tipo bitácora) */
   const LIMIT_FIELDS = [
@@ -268,6 +275,36 @@ const AdminPage = () => {
     if (result.ok) {
       toast.success(`🧹 ${ids.length} calificación(es) huérfana(s) eliminada(s).`);
       setOrphanCheck({ status: 'done', orphaned: [] });
+    } else {
+      toast.danger(result.error || 'No se pudo completar la limpieza.');
+    }
+  };
+
+  const handleCheckOrphanedActividades = async () => {
+    setOrphanActCheck({ status: 'loading', orphaned: [] });
+    const validIds = operarios.map((op) => op.id);
+    const result = await findOrphanedAssignments(validIds);
+
+    if (!result.ok) {
+      toast.danger(result.error || 'No se pudo revisar las actividades.');
+      setOrphanActCheck({ status: 'idle', orphaned: [] });
+      return;
+    }
+
+    setOrphanActCheck({ status: 'done', orphaned: result.orphaned });
+    if (result.orphaned.length === 0) {
+      toast.success('✅ No se encontró ninguna actividad asignada a un colaborador que ya no existe en el padrón.');
+    } else {
+      toast.warning(`⚠️ Se encontraron ${result.orphaned.length} actividad(es) asignadas a un operarioId que no existe en el padrón actual.`);
+    }
+  };
+
+  const handleCleanOrphanedActividades = async () => {
+    const ids = orphanActCheck.orphaned.map((o) => o.id);
+    const result = await unassignOrphanedActivities(ids);
+    if (result.ok) {
+      toast.success(`🧹 ${ids.length} actividad(es) pasaron a "Sin asignar".`);
+      setOrphanActCheck({ status: 'done', orphaned: [] });
     } else {
       toast.danger(result.error || 'No se pudo completar la limpieza.');
     }
@@ -1098,6 +1135,47 @@ const AdminPage = () => {
                 </ul>
                 <Button variant="danger" size="sm" onClick={handleCleanOrphanedEvaluaciones}>
                   🗑️ Eliminar {orphanCheck.orphaned.length} Calificación(es) Huérfana(s)
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          {/* AUDITORÍA DE ACTIVIDADES CON COLABORADOR ELIMINADO */}
+          <Card variant="default" style={{ marginTop: 'var(--space-5)' }}>
+            <h3 className={styles.sectionTitle}>🧹 Actividades con Colaborador Eliminado</h3>
+            <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', margin: 'var(--space-2) 0 var(--space-3)' }}>
+              Revisa que no queden actividades apuntando a un operarioId que ya no existe en el padrón de
+              Operarios (se veían en "Por Operario" con un ID en vez de un nombre). Solo les quita esa asignación
+              rota — pasan a "Sin asignar", la actividad en sí no se toca ni se elimina.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleCheckOrphanedActividades}
+              isLoading={orphanActCheck.status === 'loading'}
+            >
+              🔍 Buscar Actividades con Colaborador Eliminado
+            </Button>
+
+            {orphanActCheck.status === 'done' && orphanActCheck.orphaned.length === 0 && (
+              <p style={{ marginTop: 'var(--space-3)', fontSize: '13px', color: 'var(--color-success)' }}>
+                ✅ No se encontró ninguna actividad asignada a un colaborador que ya no existe.
+              </p>
+            )}
+
+            {orphanActCheck.status === 'done' && orphanActCheck.orphaned.length > 0 && (
+              <div style={{ marginTop: 'var(--space-3)' }}>
+                <p style={{ fontSize: '13px', color: 'var(--color-alert)', marginBottom: 'var(--space-2)' }}>
+                  ⚠️ {orphanActCheck.orphaned.length} actividad(es) apuntan a un operarioId que ya no existe:
+                </p>
+                <ul style={{ fontSize: '12px', color: 'var(--color-gray-600)', marginBottom: 'var(--space-3)', paddingLeft: 'var(--space-4)' }}>
+                  {orphanActCheck.orphaned.slice(0, 10).map((a) => (
+                    <li key={a.id}>"{a.title}" — área {a.areaId} — estado {a.status} — operarioId roto: {a.operarioId}</li>
+                  ))}
+                  {orphanActCheck.orphaned.length > 10 && <li>… y {orphanActCheck.orphaned.length - 10} más.</li>}
+                </ul>
+                <Button variant="danger" size="sm" onClick={handleCleanOrphanedActividades}>
+                  🗑️ Pasar {orphanActCheck.orphaned.length} Actividad(es) a "Sin Asignar"
                 </Button>
               </div>
             )}

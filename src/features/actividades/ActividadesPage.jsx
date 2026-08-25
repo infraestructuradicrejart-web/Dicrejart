@@ -364,13 +364,20 @@ const ActividadesPage = () => {
       const isUnassigned = key === SIN_ASIGNAR_KEY;
       const operario = isUnassigned ? null : operarios.find((op) => op.id === key);
       const pendientes = acts.filter((a) => a.status !== 'completado').length;
+      // Si operarioId no coincide con nadie del padrón actual (colaborador eliminado
+      // antes de que deleteOperario empezara a desasignar sus actividades), no mostrar
+      // el ID interno crudo — un texto que explique la situación en su lugar.
+      const isOrphaned = !isUnassigned && !operario;
       return {
         key,
-        name: isUnassigned ? 'Sin asignar a alguien específico' : (operario?.name || key),
+        name: isUnassigned
+          ? 'Sin asignar a alguien específico'
+          : (operario?.name || `⚠️ Excolaborador eliminado (${key})`),
         areaName: operario ? getAreaName(operario.currentArea) : null,
         activities: acts,
         pendientes,
         isUnassigned,
+        isOrphaned,
       };
     });
 
