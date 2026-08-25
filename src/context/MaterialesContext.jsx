@@ -16,7 +16,7 @@
 
 import React, { createContext, useState, useEffect, useCallback, useMemo, useContext } from 'react';
 import PropTypes from 'prop-types';
-import { collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, runTransaction } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, limit, runTransaction } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
 import { AuthContext } from './AuthContext';
@@ -51,32 +51,60 @@ export const MaterialesProvider = ({ children }) => {
   // ============================================
   // ESCUCHA EN TIEMPO REAL DESDE FIRESTORE
   // ============================================
+  // Dos suscripciones combinadas en vez de una sola capada por cantidad: las no
+  // resueltas (pendiente/lista) se cargan SIN límite — una solicitud que todavía
+  // necesita acción de Almacén o del área nunca debe "desaparecer" de la vista por
+  // acumularse solicitudes nuevas de otras áreas — y solo lo ya resuelto
+  // (recibida/rechazada/cancelada) respeta `materialesLimit`.
   useEffect(() => {
     if (!db || !auth) return;
 
-    let unsubSolicitudesMateriales = null;
+    let unsubActive = null;
+    let unsubHistorical = null;
+    let activeList = [];
+    let historicalList = [];
+
+    const combineAndSet = () => {
+      const activeIds = new Set(activeList.map((s) => s.id));
+      const merged = [...activeList, ...historicalList.filter((s) => !activeIds.has(s.id))];
+      merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setSolicitudesMateriales(merged);
+    };
 
     const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
-      if (unsubSolicitudesMateriales) unsubSolicitudesMateriales();
+      if (unsubActive) unsubActive();
+      if (unsubHistorical) unsubHistorical();
 
       if (!firebaseUser) {
         setSolicitudesMateriales([]);
         return;
       }
 
-      unsubSolicitudesMateriales = onSnapshot(
-        query(collection(db, 'solicitudes_materiales'), orderBy('createdAt', 'desc'), limit(materialesLimit)),
+      unsubActive = onSnapshot(
+        query(collection(db, 'solicitudes_materiales'), where('status', 'in', ['pendiente', 'lista'])),
         (snapshot) => {
-          const list = [];
-          snapshot.forEach((docSnap) => list.push(docSnap.data()));
-          setSolicitudesMateriales(list);
-        }
+          activeList = [];
+          snapshot.forEach((docSnap) => activeList.push(docSnap.data()));
+          combineAndSet();
+        },
+        (err) => console.warn('Aviso leyendo solicitudes de materiales activas:', err)
+      );
+
+      unsubHistorical = onSnapshot(
+        query(collection(db, 'solicitudes_materiales'), where('status', 'in', ['recibida', 'rechazada', 'cancelada']), orderBy('createdAt', 'desc'), limit(materialesLimit)),
+        (snapshot) => {
+          historicalList = [];
+          snapshot.forEach((docSnap) => historicalList.push(docSnap.data()));
+          combineAndSet();
+        },
+        (err) => console.warn('Aviso leyendo solicitudes de materiales resueltas:', err)
       );
     });
 
     return () => {
       unsubAuth();
-      if (unsubSolicitudesMateriales) unsubSolicitudesMateriales();
+      if (unsubActive) unsubActive();
+      if (unsubHistorical) unsubHistorical();
     };
   }, [materialesLimit]);
 

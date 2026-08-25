@@ -16,6 +16,7 @@ import {
   updateDoc,
   deleteDoc,
   query,
+  where,
   orderBy,
   limit,
   onSnapshot
@@ -60,33 +61,60 @@ export const ComprasProvider = ({ children }) => {
   // Provider envuelve toda la app (incluida /login), así que suscribirse de inmediato
   // fallaría por falta de permisos antes del login, sin volver a intentarlo después.
   // También se vuelve a suscribir si cambia el límite dinámico configurado por el Admin.
+  // Dos suscripciones combinadas en vez de una sola capada por cantidad: las no
+  // recibidas (pendiente/autorizada/regresada/comprada) se cargan SIN límite — una
+  // requisición que todavía necesita acción nunca debe "desaparecer" de la vista por
+  // acumularse requisiciones nuevas de otras áreas — y solo lo ya recibido respeta
+  // `requisicionesLimit`, para consulta casual de historial sin cargar memoria de más.
   useEffect(() => {
     if (!db || !auth) return;
 
-    let unsubSnapshot = null;
+    let unsubActive = null;
+    let unsubHistorical = null;
+    let activeList = [];
+    let historicalList = [];
+
+    const combineAndSet = () => {
+      const activeIds = new Set(activeList.map((r) => r.id));
+      const merged = [...activeList, ...historicalList.filter((r) => !activeIds.has(r.id))];
+      merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setRequisiciones(merged);
+    };
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
-      if (unsubSnapshot) unsubSnapshot();
+      if (unsubActive) unsubActive();
+      if (unsubHistorical) unsubHistorical();
 
       if (!user) {
         setRequisiciones([]);
         return;
       }
 
-      unsubSnapshot = onSnapshot(
-        query(collection(db, 'requisiciones'), orderBy('createdAt', 'desc'), limit(requisicionesLimit)),
+      unsubActive = onSnapshot(
+        query(collection(db, 'requisiciones'), where('status', 'in', ['pendiente', 'autorizada', 'regresada', 'comprada'])),
         (snap) => {
-          const list = [];
-          snap.forEach((doc) => list.push(doc.data()));
-          list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); // Más recientes primero
-          setRequisiciones(list);
-        }
+          activeList = [];
+          snap.forEach((doc) => activeList.push(doc.data()));
+          combineAndSet();
+        },
+        (err) => console.warn('Aviso leyendo requisiciones activas:', err)
+      );
+
+      unsubHistorical = onSnapshot(
+        query(collection(db, 'requisiciones'), where('status', '==', 'recibida'), orderBy('createdAt', 'desc'), limit(requisicionesLimit)),
+        (snap) => {
+          historicalList = [];
+          snap.forEach((doc) => historicalList.push(doc.data()));
+          combineAndSet();
+        },
+        (err) => console.warn('Aviso leyendo requisiciones recibidas:', err)
       );
     });
 
     return () => {
       unsubAuth();
-      if (unsubSnapshot) unsubSnapshot();
+      if (unsubActive) unsubActive();
+      if (unsubHistorical) unsubHistorical();
     };
   }, [requisicionesLimit]);
 

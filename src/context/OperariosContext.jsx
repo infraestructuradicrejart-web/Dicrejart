@@ -267,15 +267,47 @@ export const OperariosProvider = ({ children }) => {
     if (!db || !auth) return;
 
     let unsubOperarios = null;
-    let unsubMovimientos = null;
-    let unsubHorasExtra = null;
-    let unsubSolicitudesHorasExtra = null;
+    let unsubMovimientosActive = null;
+    let unsubMovimientosHistorical = null;
+    let unsubHorasExtraActive = null;
+    let unsubHorasExtraHistorical = null;
+    let unsubSolicitudesHorasExtraActive = null;
+    let unsubSolicitudesHorasExtraHistorical = null;
+
+    let movimientosActiveList = [];
+    let movimientosHistoricalList = [];
+    let horasExtraActiveList = [];
+    let horasExtraHistoricalList = [];
+    let solicitudesHorasExtraActiveList = [];
+    let solicitudesHorasExtraHistoricalList = [];
+
+    const combineMovimientos = () => {
+      const activeIds = new Set(movimientosActiveList.map((m) => m.id));
+      const merged = [...movimientosActiveList, ...movimientosHistoricalList.filter((m) => !activeIds.has(m.id))];
+      merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setMovimientos(merged);
+    };
+    const combineHorasExtra = () => {
+      const activeIds = new Set(horasExtraActiveList.map((h) => h.id));
+      const merged = [...horasExtraActiveList, ...horasExtraHistoricalList.filter((h) => !activeIds.has(h.id))];
+      merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setHorasExtra(merged);
+    };
+    const combineSolicitudesHorasExtra = () => {
+      const activeIds = new Set(solicitudesHorasExtraActiveList.map((s) => s.id));
+      const merged = [...solicitudesHorasExtraActiveList, ...solicitudesHorasExtraHistoricalList.filter((s) => !activeIds.has(s.id))];
+      merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setSolicitudesHorasExtra(merged);
+    };
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       if (unsubOperarios) unsubOperarios();
-      if (unsubMovimientos) unsubMovimientos();
-      if (unsubHorasExtra) unsubHorasExtra();
-      if (unsubSolicitudesHorasExtra) unsubSolicitudesHorasExtra();
+      if (unsubMovimientosActive) unsubMovimientosActive();
+      if (unsubMovimientosHistorical) unsubMovimientosHistorical();
+      if (unsubHorasExtraActive) unsubHorasExtraActive();
+      if (unsubHorasExtraHistorical) unsubHorasExtraHistorical();
+      if (unsubSolicitudesHorasExtraActive) unsubSolicitudesHorasExtraActive();
+      if (unsubSolicitudesHorasExtraHistorical) unsubSolicitudesHorasExtraHistorical();
 
       if (!user) {
         setOperarios([]);
@@ -302,43 +334,80 @@ export const OperariosProvider = ({ children }) => {
         setOperarios(list);
       });
 
-      unsubMovimientos = onSnapshot(
-        query(collection(db, 'movimientos_personal'), orderBy('createdAt', 'desc'), limit(movimientosPersonalLimit)),
+      // Cada una de las tres colecciones de abajo se carga con dos suscripciones
+      // combinadas en vez de una sola capada por cantidad: lo que todavía necesita
+      // acción (pendiente, sin importar cuántos registros nuevos se acumulen en otra
+      // parte de la empresa) se carga SIN límite, y solo lo ya resuelto respeta el
+      // límite configurado en Admin — para consulta casual de historial sin cargar
+      // memoria de más. Mismo patrón usado en ActividadesContext.jsx,
+      // ComprasContext.jsx y MaterialesContext.jsx.
+      unsubMovimientosActive = onSnapshot(
+        query(collection(db, 'movimientos_personal'), where('status', 'in', ['pendiente_origen', 'pendiente_destino'])),
         (snapshot) => {
-          const list = [];
-          snapshot.forEach((doc) => list.push(doc.data()));
-          list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-          setMovimientos(list);
-        }
+          movimientosActiveList = [];
+          snapshot.forEach((doc) => movimientosActiveList.push(doc.data()));
+          combineMovimientos();
+        },
+        (err) => console.warn('Aviso leyendo movimientos de personal activos:', err)
+      );
+      unsubMovimientosHistorical = onSnapshot(
+        query(collection(db, 'movimientos_personal'), where('status', 'in', ['autorizado', 'rechazado']), orderBy('createdAt', 'desc'), limit(movimientosPersonalLimit)),
+        (snapshot) => {
+          movimientosHistoricalList = [];
+          snapshot.forEach((doc) => movimientosHistoricalList.push(doc.data()));
+          combineMovimientos();
+        },
+        (err) => console.warn('Aviso leyendo movimientos de personal resueltos:', err)
       );
 
-      unsubHorasExtra = onSnapshot(
-        query(collection(db, 'horas_extra'), orderBy('createdAt', 'desc'), limit(horasExtraLimit)),
+      unsubHorasExtraActive = onSnapshot(
+        query(collection(db, 'horas_extra'), where('verificationStatus', '==', 'pendiente')),
         (snapshot) => {
-          const list = [];
-          snapshot.forEach((doc) => list.push(doc.data()));
-          list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-          setHorasExtra(list);
-        }
+          horasExtraActiveList = [];
+          snapshot.forEach((doc) => horasExtraActiveList.push(doc.data()));
+          combineHorasExtra();
+        },
+        (err) => console.warn('Aviso leyendo horas extra pendientes de verificar:', err)
+      );
+      unsubHorasExtraHistorical = onSnapshot(
+        query(collection(db, 'horas_extra'), where('verificationStatus', 'in', ['cumplido', 'no_cumplido', 'cancelado']), orderBy('createdAt', 'desc'), limit(horasExtraLimit)),
+        (snapshot) => {
+          horasExtraHistoricalList = [];
+          snapshot.forEach((doc) => horasExtraHistoricalList.push(doc.data()));
+          combineHorasExtra();
+        },
+        (err) => console.warn('Aviso leyendo horas extra ya verificadas:', err)
       );
 
-      unsubSolicitudesHorasExtra = onSnapshot(
-        query(collection(db, 'solicitudes_horas_extra'), orderBy('createdAt', 'desc'), limit(horasExtraLimit)),
+      unsubSolicitudesHorasExtraActive = onSnapshot(
+        query(collection(db, 'solicitudes_horas_extra'), where('status', '==', 'pendiente')),
         (snapshot) => {
-          const list = [];
-          snapshot.forEach((doc) => list.push(doc.data()));
-          list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-          setSolicitudesHorasExtra(list);
-        }
+          solicitudesHorasExtraActiveList = [];
+          snapshot.forEach((doc) => solicitudesHorasExtraActiveList.push(doc.data()));
+          combineSolicitudesHorasExtra();
+        },
+        (err) => console.warn('Aviso leyendo solicitudes de horas extra pendientes:', err)
+      );
+      unsubSolicitudesHorasExtraHistorical = onSnapshot(
+        query(collection(db, 'solicitudes_horas_extra'), where('status', 'in', ['autorizada', 'rechazada', 'cancelada']), orderBy('createdAt', 'desc'), limit(horasExtraLimit)),
+        (snapshot) => {
+          solicitudesHorasExtraHistoricalList = [];
+          snapshot.forEach((doc) => solicitudesHorasExtraHistoricalList.push(doc.data()));
+          combineSolicitudesHorasExtra();
+        },
+        (err) => console.warn('Aviso leyendo solicitudes de horas extra resueltas:', err)
       );
     });
 
     return () => {
       unsubAuth();
       if (unsubOperarios) unsubOperarios();
-      if (unsubMovimientos) unsubMovimientos();
-      if (unsubHorasExtra) unsubHorasExtra();
-      if (unsubSolicitudesHorasExtra) unsubSolicitudesHorasExtra();
+      if (unsubMovimientosActive) unsubMovimientosActive();
+      if (unsubMovimientosHistorical) unsubMovimientosHistorical();
+      if (unsubHorasExtraActive) unsubHorasExtraActive();
+      if (unsubHorasExtraHistorical) unsubHorasExtraHistorical();
+      if (unsubSolicitudesHorasExtraActive) unsubSolicitudesHorasExtraActive();
+      if (unsubSolicitudesHorasExtraHistorical) unsubSolicitudesHorasExtraHistorical();
     };
   }, [movimientosPersonalLimit, horasExtraLimit]);
 

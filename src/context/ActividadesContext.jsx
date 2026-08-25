@@ -16,6 +16,7 @@ import {
   updateDoc,
   deleteDoc,
   query,
+  where,
   orderBy,
   limit,
   onSnapshot,
@@ -50,35 +51,61 @@ export const ActividadesProvider = ({ children }) => {
   // Provider envuelve toda la app (incluida /login), así que suscribirse de inmediato
   // fallaría por falta de permisos antes del login, sin volver a intentarlo después.
   // También se vuelve a suscribir si cambia el límite dinámico configurado por el Admin.
+  // Dos suscripciones combinadas en vez de una sola capada por cantidad: las activas
+  // (pendiente/proceso) se cargan SIN límite — una actividad que todavía necesita
+  // acción nunca debe "desaparecer" de la vista por acumularse más actividades nuevas
+  // en otra parte de la empresa — y solo lo ya resuelto (completado) respeta
+  // `actividadesLimit`, para consulta casual de historial sin cargar memoria de más.
   useEffect(() => {
     if (!db || !auth) return;
 
-    let unsubSnapshot = null;
+    let unsubActive = null;
+    let unsubHistorical = null;
+    let activeList = [];
+    let historicalList = [];
+
+    const combineAndSet = () => {
+      const activeIds = new Set(activeList.map((a) => a.id));
+      setActividades([...activeList, ...historicalList.filter((a) => !activeIds.has(a.id))]);
+    };
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
-      if (unsubSnapshot) unsubSnapshot();
+      if (unsubActive) unsubActive();
+      if (unsubHistorical) unsubHistorical();
 
       if (!user) {
         setActividades([]);
         return;
       }
 
+      unsubActive = onSnapshot(
+        query(collection(db, 'actividades'), where('status', 'in', ['pendiente', 'proceso'])),
+        (snap) => {
+          activeList = [];
+          snap.forEach((doc) => activeList.push(doc.data()));
+          combineAndSet();
+        },
+        (err) => console.warn('Aviso leyendo actividades activas:', err)
+      );
+
       // Se ordena por "id" (formato ACT-<timestamp>, presente desde siempre en cada
       // documento) en vez de agregar un campo de fecha nuevo, para no dejar invisibles
       // las actividades ya guardadas antes de este cambio.
-      unsubSnapshot = onSnapshot(
-        query(collection(db, 'actividades'), orderBy('id', 'desc'), limit(actividadesLimit)),
+      unsubHistorical = onSnapshot(
+        query(collection(db, 'actividades'), where('status', '==', 'completado'), orderBy('id', 'desc'), limit(actividadesLimit)),
         (snap) => {
-          const list = [];
-          snap.forEach((doc) => list.push(doc.data()));
-          setActividades(list);
-        }
+          historicalList = [];
+          snap.forEach((doc) => historicalList.push(doc.data()));
+          combineAndSet();
+        },
+        (err) => console.warn('Aviso leyendo actividades completadas:', err)
       );
     });
 
     return () => {
       unsubAuth();
-      if (unsubSnapshot) unsubSnapshot();
+      if (unsubActive) unsubActive();
+      if (unsubHistorical) unsubHistorical();
     };
   }, [actividadesLimit]);
 
