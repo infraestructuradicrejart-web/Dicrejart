@@ -33,6 +33,8 @@ import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { compressImage } from '../../utils/imageCompressor';
+import { isReadOnlySection } from '../../utils/roleAccess';
+import RegisterDeliveryModal from './RegisterDeliveryModal';
 import styles from './EditorVisualPage.module.css';
 
 /** Dimensiones del Gran Espacio de Trabajo CAD (Inventor / SolidWorks style) */
@@ -571,6 +573,13 @@ const EditorVisualPage = ({ standalone = false }) => {
   // independiente de iniciar/pausar/terminar, se puede usar en cualquier momento.
   const [evidenceModal, setEvidenceModal] = useState({ isOpen: false, activityId: null, title: '' });
   const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
+
+  // Modal de "Registrar Entrega" abierto directo desde una insignia de área en el nodo
+  // Juego del lienzo libre — mismo componente que ya usa RutaFabricacionView.jsx, para no
+  // duplicar esa lógica en dos lugares. Se guarda solo el gameId (no el objeto juego
+  // completo) para que el juego pasado al modal siempre sea el más reciente de `juegos`,
+  // igual que hace RutaFabricacionView.jsx, y no una copia congelada del momento del clic.
+  const [deliveryModal, setDeliveryModal] = useState({ isOpen: false, gameId: null, areaId: null, areaLabel: '' });
 
   // Modal para ver y ampliar Ayudas Visuales (Imágenes en alta resolución, PDFs, Modelos 3D y Enlaces)
   const [previewResourceModal, setPreviewResourceModal] = useState({
@@ -4790,15 +4799,42 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   );
                                 })()}
 
-                                {/* Áreas requeridas en ruta de fabricación */}
+                                {/* Áreas requeridas en ruta de fabricación — cada una es un botón que
+                                    abre "Registrar Entrega" directo para esa área, sin salir del
+                                    lienzo, si el usuario puede registrar producción ahí. */}
                                 {entity.areas && entity.areas.length > 0 && (
                                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '4px 0' }}>
                                     {entity.areas.map((arId) => {
                                       const aName = dynamicAreas.find((a) => a.id === arId)?.name || arId;
+                                      const canRegister = !isReadOnlySection(user, 'produccion', arId);
+                                      const badgeStyle = {
+                                        fontSize: '10px',
+                                        background: 'rgba(13, 148, 136, 0.12)',
+                                        color: nodeThemeColor,
+                                        padding: '2px 5px',
+                                        borderRadius: '4px',
+                                        fontWeight: 700,
+                                        border: 'none',
+                                        cursor: canRegister ? 'pointer' : 'default',
+                                      };
+                                      if (!canRegister) {
+                                        return (
+                                          <span key={arId} style={badgeStyle}>🏭 {aName}</span>
+                                        );
+                                      }
                                       return (
-                                        <span key={arId} style={{ fontSize: '10px', background: 'rgba(13, 148, 136, 0.12)', color: nodeThemeColor, padding: '2px 5px', borderRadius: '4px', fontWeight: 700 }}>
-                                          🏭 {aName}
-                                        </span>
+                                        <button
+                                          key={arId}
+                                          type="button"
+                                          style={badgeStyle}
+                                          title={`📦 Registrar Entrega — ${aName}`}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setDeliveryModal({ isOpen: true, gameId: entity.id, areaId: arId, areaLabel: aName });
+                                          }}
+                                        >
+                                          🏭 {aName} 📦
+                                        </button>
                                       );
                                     })}
                                   </div>
@@ -6883,6 +6919,22 @@ const EditorVisualPage = ({ standalone = false }) => {
           );
         })()}
       </Modal>
+
+      {/* ---------- MODAL: REGISTRAR ENTREGA (desde el nodo Juego del lienzo libre) ---------- */}
+      {(() => {
+        const deliveryGame = deliveryModal.gameId ? juegos.find((j) => j.id === deliveryModal.gameId) : null;
+        if (!deliveryModal.isOpen || !deliveryGame) return null;
+        return (
+          <RegisterDeliveryModal
+            isOpen={deliveryModal.isOpen}
+            onClose={() => setDeliveryModal({ isOpen: false, gameId: null, areaId: null, areaLabel: '' })}
+            game={deliveryGame}
+            areaId={deliveryModal.areaId}
+            areaLabel={deliveryModal.areaLabel}
+            toast={toast}
+          />
+        );
+      })()}
     </motion.div>
   );
 };
