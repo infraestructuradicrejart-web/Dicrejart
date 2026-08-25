@@ -313,18 +313,27 @@ export const CalidadProvider = ({ children }) => {
       if (!db) return { ok: false, error: 'Firestore no inicializado' };
 
       const evalDate = targetDate || getTodayLocalDateStr();
-      const existing = evaluaciones.find((ev) => {
-        if (ev.operarioId !== operarioId || ev.blockId !== blockId) return false;
-        const evDate = ev.date || (ev.createdAt ? ev.createdAt.split('T')[0] : null);
-        return evDate ? evDate === evalDate : true;
-      });
-
-      const timestamp = new Date().toISOString();
       const editorName = user?.name || 'Usuario';
       const editorRole = user?.roleType || 'operador';
 
+      // Id determinístico (operario+bloque+fecha) en vez de un id aleatorio (`EV-<timestamp>`):
+      // así "¿ya existe esta evaluación?" se responde leyendo el documento exacto por su id,
+      // no buscando en el arreglo local `evaluaciones` (que solo trae las más recientes según
+      // `evaluacionesLimit`) — antes, si la evaluación real ya había quedado fuera de ese
+      // recorte, no se encontraba como "existente" y se creaba un registro duplicado en vez de
+      // actualizar el que ya había. Con esto, guardar dos veces el mismo bloque del mismo día
+      // siempre toca el mismo documento, sin importar cuántas evaluaciones existan ya.
+      const safeOperarioId = String(operarioId).replace(/\//g, '_');
+      const safeBlockId = String(blockId).replace(/\//g, '_');
+      const id = `EV-${safeOperarioId}-${safeBlockId}-${evalDate}`;
+      const evalRef = doc(db, 'evaluaciones', id);
+      const timestamp = new Date().toISOString();
+
       try {
-        if (existing) {
+        const snap = await getDoc(evalRef);
+
+        if (snap.exists()) {
+          const existing = snap.data();
           const modRecord = {
             modifiedBy: editorName,
             modifiedByRole: editorRole,
@@ -337,7 +346,7 @@ export const CalidadProvider = ({ children }) => {
           };
           const updatedHistory = [...(existing.history || []), modRecord];
 
-          await updateDoc(doc(db, 'evaluaciones', existing.id), {
+          await updateDoc(evalRef, {
             score,
             notes,
             date: evalDate,
@@ -363,7 +372,6 @@ export const CalidadProvider = ({ children }) => {
           }
           return { ok: true, wasUpdate: true, isPastBlockEdit };
         } else {
-          const id = `EV-${Date.now()}`;
           const newDoc = {
             id,
             operarioId,
@@ -389,7 +397,7 @@ export const CalidadProvider = ({ children }) => {
                 ]
               : [],
           };
-          await setDoc(doc(db, 'evaluaciones', id), newDoc);
+          await setDoc(evalRef, newDoc);
 
           if (isPastBlockEdit) {
             logAudit({
@@ -413,8 +421,34 @@ export const CalidadProvider = ({ children }) => {
         return { ok: false, error: error.message };
       }
     },
-    [evaluaciones, user]
+    [user]
   );
+
+  /**
+   * Suscribe en vivo a las evaluaciones de UNA fecha específica (todas las áreas juntas),
+   * sin ningún límite artificial — un día completo de calificaciones de toda la empresa es
+   * naturalmente chico (nunca miles de documentos), así que no hace falta capar por
+   * cantidad como sí se hace con el arreglo global `evaluaciones` (limitado a las más
+   * recientes vía `evaluacionesLimit`, pensado para métricas generales, no para esta vista
+   * por día). Esta suscripción siempre es 100% correcta para la fecha pedida sin importar
+   * cuánto historial se haya acumulado, y usa memoria mínima porque solo carga ese día.
+   * Devuelve la función para cancelar la suscripción (llamarla en el cleanup del useEffect).
+   */
+  const subscribeEvaluacionesByDate = useCallback((date, onData) => {
+    if (!db || !date) {
+      onData([]);
+      return () => {};
+    }
+    return onSnapshot(
+      query(collection(db, 'evaluaciones'), where('date', '==', date)),
+      (snap) => {
+        const list = [];
+        snap.forEach((docSnap) => list.push({ ...docSnap.data(), id: docSnap.id }));
+        onData(list);
+      },
+      (err) => console.warn('Aviso leyendo evaluaciones del día:', err)
+    );
+  }, []);
 
   /**
    * Elimina una evaluación de desempeño específica (por ejemplo, si fue capturada por error
@@ -514,6 +548,7 @@ export const CalidadProvider = ({ children }) => {
       deleteInspeccion,
       saveEvaluacion,
       deleteEvaluacion,
+      subscribeEvaluacionesByDate,
       addEvidenceToInspeccion,
       removeEvidenceFromInspeccion,
       findOrphanedEvaluaciones,
@@ -527,6 +562,7 @@ export const CalidadProvider = ({ children }) => {
       deleteInspeccion,
       saveEvaluacion,
       deleteEvaluacion,
+      subscribeEvaluacionesByDate,
       addEvidenceToInspeccion,
       removeEvidenceFromInspeccion,
       findOrphanedEvaluaciones,

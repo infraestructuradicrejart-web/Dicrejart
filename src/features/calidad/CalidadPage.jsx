@@ -202,6 +202,7 @@ const CalidadPage = () => {
     deleteInspeccion,
     saveEvaluacion,
     deleteEvaluacion,
+    subscribeEvaluacionesByDate,
     addEvidenceToInspeccion,
     removeEvidenceFromInspeccion,
   } = useCalidad();
@@ -402,13 +403,16 @@ const CalidadPage = () => {
     return getLiveBlockId(activeBlocks);
   }, [activeBlocks, tick]);
 
-  // Evaluaciones correspondientes a la fecha seleccionada en el calendario
-  const dailyEvaluaciones = useMemo(() => {
-    return evaluaciones.filter((ev) => {
-      const evDate = ev.date || (ev.createdAt ? ev.createdAt.split('T')[0] : null);
-      return evDate ? evDate === selectedDate : selectedDate === todayStr;
-    });
-  }, [evaluaciones, selectedDate, todayStr]);
+  // Evaluaciones correspondientes a la fecha seleccionada en el calendario — suscripción
+  // en vivo acotada a ese día (subscribeEvaluacionesByDate, CalidadContext.jsx), no un
+  // filtro sobre el arreglo global `evaluaciones` (ese solo trae las más recientes según
+  // `evaluacionesLimit` y puede dejar fuera calificaciones ya guardadas de días con mucho
+  // movimiento en toda la empresa). Se vuelve a suscribir solo cuando cambia la fecha.
+  const [dailyEvaluaciones, setDailyEvaluaciones] = useState([]);
+  useEffect(() => {
+    const unsubscribe = subscribeEvaluacionesByDate(selectedDate, setDailyEvaluaciones);
+    return unsubscribe;
+  }, [selectedDate, subscribeEvaluacionesByDate]);
 
   // Auto-scroll dinámico hacia la columna del bloque actual (EN CURSO)
   useEffect(() => {
