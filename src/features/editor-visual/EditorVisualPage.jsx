@@ -4764,6 +4764,137 @@ const EditorVisualPage = ({ standalone = false }) => {
                   );
                 }
 
+                if (node.type === 'auditoria-calidad') {
+                  const isAuditExpanded = expandedAuditNodes.has(node.id);
+                  const areaName = entity ? (dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId) : null;
+                  const canEditAudit = entity && canUserEditRoute(user, entity.game);
+                  return (
+                    <div
+                      key={node.id}
+                      ref={(el) => {
+                        if (el) nodeSizesRef.current[node.id] = { width: el.offsetWidth, height: el.offsetHeight };
+                      }}
+                      data-type="auditoria-calidad"
+                      className={`${styles.framelessAuditNode} ${isNodeSelected ? styles.selected : ''} ${nodeIsolationClass}`}
+                      style={{ left: node.x, top: node.y }}
+                      onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+                    >
+                      {/* ETIQUETA FLOTANTE ARRIBA */}
+                      <div className={styles.framelessAuditBadge}>
+                        <span className={styles.framelessAuditBadgeSub}>🔍 Auditoría</span>
+                        <span className={styles.framelessAuditBadgeTitle}>{entity ? areaName : 'No encontrada'}</span>
+                      </div>
+
+                      {/* CUERPO: LA FORMA DEL SEMÁFORO EN SÍ */}
+                      <div
+                        className={styles.framelessAuditHousing}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (justDraggedRef.current) {
+                            justDraggedRef.current = false;
+                            return;
+                          }
+                          if (entity) toggleAuditExpanded(node.id);
+                        }}
+                        title="Clic para consultar / editar"
+                      >
+                        <span className={styles.framelessAuditLight} style={{
+                          background: entity?.status === 'no_cumple' ? '#ef4444' : 'rgba(239, 68, 68, 0.18)',
+                          boxShadow: entity?.status === 'no_cumple' ? '0 0 9px 3px rgba(239, 68, 68, 0.85)' : 'none',
+                        }} />
+                        <span className={styles.framelessAuditLight} style={{
+                          background: entity?.status === 'pendiente' ? '#eab308' : 'rgba(234, 179, 8, 0.18)',
+                          boxShadow: entity?.status === 'pendiente' ? '0 0 9px 3px rgba(234, 179, 8, 0.85)' : 'none',
+                        }} />
+                        <span className={styles.framelessAuditLight} style={{
+                          background: entity?.status === 'cumple' ? '#22c55e' : 'rgba(34, 197, 94, 0.18)',
+                          boxShadow: entity?.status === 'cumple' ? '0 0 9px 3px rgba(34, 197, 94, 0.85)' : 'none',
+                        }} />
+
+                        {canEditDiagram && (
+                          <button
+                            type="button"
+                            className={styles.framelessLinkEmblemClose}
+                            onClick={(e) => { e.stopPropagation(); handleCloseNode(node.id); }}
+                            title="Quitar del lienzo"
+                          >
+                            ✕
+                          </button>
+                        )}
+
+                        {canEditDiagram && (
+                          <>
+                            <span data-role="port" data-node-id={node.id} data-side="in" className={`${styles.port} ${styles.portIn}`} style={{ top: '46px', left: '-7px' }} title="Conectar (izquierda)" onMouseDown={(e) => handlePortMouseDown(e, node.id, 'in')} />
+                            <span data-role="port" data-node-id={node.id} data-side="out" className={`${styles.port} ${styles.portOut}`} style={{ top: '46px', right: '-7px' }} title="Conectar (derecha)" onMouseDown={(e) => handlePortMouseDown(e, node.id, 'out')} />
+                            <span data-role="port" data-node-id={node.id} data-side="top" className={`${styles.port} ${styles.portTop}`} style={{ top: '-7px', left: 'calc(50% - 7px)' }} title="Conectar (arriba)" onMouseDown={(e) => handlePortMouseDown(e, node.id, 'top')} />
+                            <span data-role="port" data-node-id={node.id} data-side="bottom" className={`${styles.port} ${styles.portBottom}`} style={{ bottom: '-7px', left: 'calc(50% - 7px)' }} title="Conectar (abajo)" onMouseDown={(e) => handlePortMouseDown(e, node.id, 'bottom')} />
+                          </>
+                        )}
+                      </div>
+
+                      {/* PANEL DESPLEGABLE — solo al consultar, no deforma el semáforo */}
+                      {isAuditExpanded && entity && (
+                        <div className={styles.framelessAuditPanel} onMouseDown={(e) => e.stopPropagation()}>
+                          <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '6px' }}>
+                            🎮 {entity.game?.name} · 🏭 {areaName}
+                          </div>
+                          <strong style={{ fontSize: '13px' }}>
+                            {entity.status === 'cumple' ? '🟢 Cumple' : entity.status === 'no_cumple' ? '🔴 No Cumple' : '🟡 Pendiente'}
+                          </strong>
+
+                          {entity.reviewedBy && (
+                            <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                              {entity.reviewedBy} · {new Date(entity.reviewedAt).toLocaleString('es-MX')}
+                              {entity.notes && <div style={{ fontStyle: 'italic', marginTop: '2px' }}>"{entity.notes}"</div>}
+                            </div>
+                          )}
+
+                          {canEditAudit ? (
+                            <div style={{ marginTop: '8px' }}>
+                              {entity.status !== 'pendiente' ? (
+                                <button type="button" onClick={() => handleReopenAudit(entity)} style={{ width: '100%', padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(255,255,255,0.1)', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', cursor: 'pointer' }}>
+                                  🔄 Reabrir para corregir
+                                </button>
+                              ) : auditReasonDrafts[node.id]?.showReasonBox ? (
+                                <>
+                                  <textarea
+                                    rows={2}
+                                    placeholder="Motivo por el que no cumple..."
+                                    value={auditReasonDrafts[node.id]?.text || ''}
+                                    onChange={(e) => setAuditReasonText(node.id, e.target.value)}
+                                    style={{ width: '100%', fontSize: '11px', padding: '5px 6px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.25)', marginBottom: '6px', background: 'rgba(255,255,255,0.06)', color: '#f1f5f9' }}
+                                  />
+                                  <div style={{ display: 'flex', gap: '5px' }}>
+                                    <button type="button" onClick={() => handleConfirmAuditNoCumple(node.id, entity)} style={{ flex: 1, padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'linear-gradient(135deg, #dc2626, #b91c1c)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                                      Confirmar
+                                    </button>
+                                    <button type="button" onClick={() => toggleAuditReasonBox(node.id, false)} style={{ padding: '5px 8px', fontSize: '11px', fontWeight: 600, background: 'rgba(255,255,255,0.1)', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', cursor: 'pointer' }}>
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </>
+                              ) : (
+                                <div style={{ display: 'flex', gap: '5px' }}>
+                                  <button type="button" onClick={() => handleMarkAuditCumple(entity)} style={{ flex: 1, padding: '6px 8px', fontSize: '11px', fontWeight: 700, background: 'linear-gradient(135deg, #10b981, #059669)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                                    ✅ Cumple
+                                  </button>
+                                  <button type="button" onClick={() => toggleAuditReasonBox(node.id, true)} style={{ flex: 1, padding: '6px 8px', fontSize: '11px', fontWeight: 700, background: 'linear-gradient(135deg, #dc2626, #b91c1c)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                                    ❌ No Cumple
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '6px', fontStyle: 'italic' }}>
+                              🔒 Solo Calidad o supervisor de esta área
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={node.id}
@@ -5390,136 +5521,6 @@ const EditorVisualPage = ({ standalone = false }) => {
                               </>
                             ) : (
                               node.draft ? '🆕 Borrador de Actividad' : 'Actividad del sistema'
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {node.type === 'auditoria-calidad' && (
-                        <div>
-                          <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>🔍 AUDITORÍA DE CALIDAD</span>
-                          <div className={styles.nodeTag} style={{ marginTop: '3px' }}>
-                            {entity ? (
-                              <>
-                                {/* Fila siempre visible: solo el semáforo + chevron para desplegar —
-                                    colapsado por defecto para no saturar el lienzo. */}
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); toggleAuditExpanded(node.id); }}
-                                  style={{
-                                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    gap: '8px', padding: '4px 0', background: 'none', border: 'none', cursor: 'pointer',
-                                  }}
-                                  title={dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
-                                >
-                                  {/* Semáforo real (caja + 3 luces apiladas), no solo un emoji — para
-                                      que se lea de inmediato como un filtro/gate, no como un ícono más. */}
-                                  <div style={{
-                                    display: 'flex', flexDirection: 'column', gap: '3px',
-                                    padding: '4px 6px', borderRadius: '7px',
-                                    background: 'linear-gradient(180deg, #1f2937, #111827)',
-                                    border: '1.5px solid #374151',
-                                  }}>
-                                    <span style={{
-                                      width: '11px', height: '11px', borderRadius: '50%',
-                                      background: entity.status === 'no_cumple' ? '#ef4444' : 'rgba(239, 68, 68, 0.18)',
-                                      boxShadow: entity.status === 'no_cumple' ? '0 0 7px 2px rgba(239, 68, 68, 0.85)' : 'none',
-                                    }} />
-                                    <span style={{
-                                      width: '11px', height: '11px', borderRadius: '50%',
-                                      background: entity.status === 'pendiente' ? '#eab308' : 'rgba(234, 179, 8, 0.18)',
-                                      boxShadow: entity.status === 'pendiente' ? '0 0 7px 2px rgba(234, 179, 8, 0.85)' : 'none',
-                                    }} />
-                                    <span style={{
-                                      width: '11px', height: '11px', borderRadius: '50%',
-                                      background: entity.status === 'cumple' ? '#22c55e' : 'rgba(34, 197, 94, 0.18)',
-                                      boxShadow: entity.status === 'cumple' ? '0 0 7px 2px rgba(34, 197, 94, 0.85)' : 'none',
-                                    }} />
-                                  </div>
-                                  <strong style={{ fontSize: '12.5px' }}>
-                                    {entity.status === 'cumple' ? 'Cumple' : entity.status === 'no_cumple' ? 'No Cumple' : 'Pendiente'}
-                                  </strong>
-                                  <span style={{ fontSize: '10px', color: 'var(--color-gray-500)' }}>
-                                    {expandedAuditNodes.has(node.id) ? '▾' : '▸'}
-                                  </span>
-                                </button>
-
-                                {expandedAuditNodes.has(node.id) && (
-                                  <>
-                                <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '4px', marginTop: '4px', paddingTop: '4px', borderTop: '1px dashed rgba(0,0,0,0.1)' }}>
-                                  🎮 {entity.game?.name} · 🏭 {dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
-                                </div>
-
-                                {entity.reviewedBy && (
-                                  <div style={{ fontSize: '10px', color: 'var(--color-gray-500)', textAlign: 'center', marginBottom: '4px' }}>
-                                    {entity.reviewedBy} · {new Date(entity.reviewedAt).toLocaleString('es-MX')}
-                                    {entity.notes && <div style={{ fontStyle: 'italic', marginTop: '2px' }}>"{entity.notes}"</div>}
-                                  </div>
-                                )}
-
-                                {canUserEditRoute(user, entity.game) ? (
-                                  entity.status !== 'pendiente' ? (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => { e.stopPropagation(); handleReopenAudit(entity); }}
-                                      style={{ width: '100%', padding: '4px 8px', fontSize: '10.5px', fontWeight: 700, background: 'rgba(0,0,0,0.06)', color: 'var(--color-gray-700)', border: '1px solid rgba(0,0,0,0.1)', borderRadius: '5px', cursor: 'pointer' }}
-                                    >
-                                      🔄 Reabrir para corregir
-                                    </button>
-                                  ) : auditReasonDrafts[node.id]?.showReasonBox ? (
-                                    <div onMouseDown={(e) => e.stopPropagation()}>
-                                      <textarea
-                                        rows={2}
-                                        placeholder="Motivo por el que no cumple..."
-                                        value={auditReasonDrafts[node.id]?.text || ''}
-                                        onChange={(e) => setAuditReasonText(node.id, e.target.value)}
-                                        style={{ width: '100%', fontSize: '11px', padding: '4px 6px', borderRadius: '5px', border: '1px solid var(--color-gray-300)', marginBottom: '4px' }}
-                                      />
-                                      <div style={{ display: 'flex', gap: '4px' }}>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleConfirmAuditNoCumple(node.id, entity)}
-                                          style={{ flex: 1, padding: '4px 8px', fontSize: '10.5px', fontWeight: 700, background: 'linear-gradient(135deg, #dc2626, #b91c1c)', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-                                        >
-                                          Confirmar
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleAuditReasonBox(node.id, false)}
-                                          style={{ padding: '4px 8px', fontSize: '10.5px', fontWeight: 600, background: 'rgba(0,0,0,0.06)', color: 'var(--color-gray-700)', border: '1px solid rgba(0,0,0,0.1)', borderRadius: '5px', cursor: 'pointer' }}
-                                        >
-                                          Cancelar
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div style={{ display: 'flex', gap: '4px' }}>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); handleMarkAuditCumple(entity); }}
-                                        style={{ flex: 1, padding: '4px 8px', fontSize: '10.5px', fontWeight: 700, background: 'linear-gradient(135deg, #10b981, #059669)', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-                                      >
-                                        ✅ Cumple
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); toggleAuditReasonBox(node.id, true); }}
-                                        style={{ flex: 1, padding: '4px 8px', fontSize: '10.5px', fontWeight: 700, background: 'linear-gradient(135deg, #dc2626, #b91c1c)', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-                                      >
-                                        ❌ No Cumple
-                                      </button>
-                                    </div>
-                                  )
-                                ) : (
-                                  <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', textAlign: 'center', fontStyle: 'italic' }}>
-                                    🔒 Solo Calidad o supervisor de esta área
-                                  </div>
-                                )}
-                                  </>
-                                )}
-                              </>
-                            ) : (
-                              'Auditoría no encontrada'
                             )}
                           </div>
                         </div>

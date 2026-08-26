@@ -1892,6 +1892,100 @@
   transform: translateY(-1px);
 }
 
+/* ---------- Nodo "Auditoría de Calidad" — forma de semáforo real, no tarjeta ---------- */
+.framelessAuditNode {
+  position: absolute;
+  width: 130px;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  user-select: none;
+  cursor: grab;
+  padding: 0 !important;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.framelessAuditBadge {
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  padding: 4px 10px;
+  max-width: 150px;
+  text-align: center;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.framelessAuditBadgeSub {
+  font-size: 9px;
+  font-weight: 800;
+  color: #f87171;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  display: block;
+}
+
+.framelessAuditBadgeTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.framelessAuditHousing {
+  position: relative;
+  width: 44px;
+  padding: 9px 7px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #1f2937, #0b0f19);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.framelessAuditNode.selected .framelessAuditHousing {
+  outline: 2.5px solid var(--color-primary, #ea580c);
+  outline-offset: 3px;
+}
+
+.framelessAuditLight {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  transition: box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.framelessAuditPanel {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 10px;
+  width: 230px;
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+  z-index: 30;
+  color: #f1f5f9;
+  cursor: default;
+}
+
 /* ---------- Inspector Flotante Derecho (Glassmorphic) ---------- */
 .inspector {
   position: absolute;
