@@ -31,7 +31,7 @@ import { uploadEvidencePhotos as uploadEvidencePhotosShared, deleteEvidencePhoto
 import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { AuthContext } from './AuthContext';
 import { logAudit } from '../utils/auditLog';
-import { notifyProjectDeleted } from '../services/chatNotificationService';
+import { notifyProjectDeleted, notifyGameDeleted } from '../services/chatNotificationService';
 
 /**
  * Comprime y sube a Firebase Storage la evidencia fotográfica de un registro de
@@ -978,6 +978,66 @@ export const ProduccionProvider = ({ children }) => {
   }, [user]);
 
   /**
+   * Elimina un juego si no tiene avance registrado. Antes de borrar el documento:
+   * - Limpia en Storage toda la evidencia fotográfica que hubiera quedado colgada de
+   *   `qualityReview.{areaId}.checklist[].photos[]` y `receptionEvidence.{areaId}[]` —
+   *   sin esto, esos archivos quedaban huérfanos en Storage para siempre.
+   * - Desasigna (no borra) las actividades que todavía apuntaran a este `gameId`, mismo
+   *   criterio que ya usa `deleteOperario`/`clearAllOperarios` con `operarioId`.
+   * `notify = false` se usa cuando `deleteProject` borra en cascada los juegos de un
+   * proyecto (ese caso ya avisa una sola vez a nivel proyecto, con notifyProjectDeleted
+   * — avisar también por cada juego sería ruido repetido del mismo borrado).
+   */
+  const deleteGame = useCallback(async (gameId, { notify = true } = {}) => {
+    if (!db) return { ok: false, error: 'Firebase no inicializado' };
+    const game = juegos.find((g) => g.id === gameId);
+    if (!game) return { ok: false, error: 'Juego no encontrado' };
+
+    if (game.progress > 0) {
+      return { ok: false, error: 'No se puede eliminar un juego con avance registrado.' };
+    }
+
+    try {
+      // 1. Recolectar y borrar evidencia fotográfica huérfana en Storage
+      const photosToDelete = [
+        ...Object.values(game.qualityReview || {}).flatMap((review) =>
+          (review.checklist || []).flatMap((item) => item.photos || [])
+        ),
+        ...Object.values(game.receptionEvidence || {}).flatMap((photos) => photos || []),
+      ];
+      if (photosToDelete.length > 0) {
+        await deleteEvidencePhotos(photosToDelete);
+      }
+
+      // 2. Desasignar actividades que seguían apuntando a este juego (no se borran, se
+      // quedan como actividades sueltas — mismo criterio que operarioId huérfano).
+      const actSnapshot = await getDocs(
+        query(collection(db, 'actividades'), where('gameId', '==', gameId))
+      );
+      const unassignPromises = actSnapshot.docs.map((docSnap) =>
+        updateDoc(docSnap.ref, { gameId: null })
+      );
+      await Promise.all(unassignPromises);
+
+      // 3. Avisar (si aplica) y borrar el documento del juego
+      if (notify) {
+        notifyGameDeleted({ game, user }).catch((err) => console.error('Error al notificar eliminación de juego al chat:', err));
+      }
+      await deleteDoc(doc(db, 'juegos', gameId));
+      logAudit({
+        user,
+        module: 'produccion',
+        action: 'Eliminó un juego',
+        details: `${game.name || gameId} (${photosToDelete.length} evidencia(s) y ${actSnapshot.size} actividad(es) desasignada(s))`,
+      });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al eliminar juego de Firestore:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
    * Elimina un proyecto si no tiene avance registrado y sus juegos tampoco tienen avance
    */
   const deleteProject = useCallback(async (projectId) => {
@@ -1002,9 +1062,15 @@ export const ProduccionProvider = ({ children }) => {
         user,
       }).catch((err) => console.error('Error al notificar eliminación de proyecto al chat:', err));
 
-      // 2. Eliminar juegos asociados (que tienen 0% avance)
-      const batchPromises = projectGames.map((g) => deleteDoc(doc(db, 'juegos', g.id)));
-      await Promise.all(batchPromises);
+      // 2. Eliminar juegos asociados (que tienen 0% avance) — vía deleteGame, no un
+      // deleteDoc duplicado aquí, para que su limpieza (evidencia en Storage,
+      // actividades huérfanas) siempre se aplique sin importar por dónde se borre el
+      // juego. notify:false porque el aviso de proyecto (arriba) ya cubre este borrado.
+      const results = await Promise.all(projectGames.map((g) => deleteGame(g.id, { notify: false })));
+      const failed = results.find((r) => !r.ok);
+      if (failed) {
+        return { ok: false, error: failed.error || 'No se pudo eliminar uno de los juegos del proyecto.' };
+      }
 
       // 3. Eliminar el proyecto y registrar auditoría
       await deleteDoc(doc(db, 'proyectos', projectId));
@@ -1014,29 +1080,7 @@ export const ProduccionProvider = ({ children }) => {
       console.error('Error al eliminar proyecto de Firestore:', error);
       return { ok: false, error: error.message };
     }
-  }, [proyectos, juegos, user]);
-
-  /**
-   * Elimina un juego si no tiene avance registrado
-   */
-  const deleteGame = useCallback(async (gameId) => {
-    if (!db) return { ok: false, error: 'Firebase no inicializado' };
-    const game = juegos.find((g) => g.id === gameId);
-    if (!game) return { ok: false, error: 'Juego no encontrado' };
-
-    if (game.progress > 0) {
-      return { ok: false, error: 'No se puede eliminar un juego con avance registrado.' };
-    }
-
-    try {
-      await deleteDoc(doc(db, 'juegos', gameId));
-      logAudit({ user, module: 'produccion', action: 'Eliminó un juego', details: game.name || gameId });
-      return { ok: true };
-    } catch (error) {
-      console.error('Error al eliminar juego de Firestore:', error);
-      return { ok: false, error: error.message };
-    }
-  }, [juegos, user]);
+  }, [proyectos, juegos, user, deleteGame]);
 
   /**
    * Recalcula el progreso y estado de un juego y su proyecto en base al historial de producción

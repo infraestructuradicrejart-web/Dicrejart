@@ -132,6 +132,27 @@ export const notifyActivityDeleted = async ({
 };
 
 /**
+ * Notifica en el Chat Global cuando un juego suelto (no como parte de borrar todo su
+ * proyecto, que ya avisa aparte con notifyProjectDeleted) es eliminado o cancelado.
+ */
+export const notifyGameDeleted = async ({ game, user }) => {
+  if (!game) return;
+
+  const authorName = user?.name || 'Administración';
+  const authorId = user?.id || 'admin';
+  const gameName = game.name || game.id || 'Juego';
+
+  const alertMessage = `🚨 [Aviso de Juego] El juego "${gameName}" ha sido eliminado/cancelado por ${authorName}. Las actividades que seguían pendientes de él quedan sin ese juego asignado.`;
+
+  await sendSystemChatMessage({
+    text: alertMessage,
+    senderId: authorId,
+    senderName: authorName,
+    isGlobal: true,
+  });
+};
+
+/**
  * Notifica en el Chat Global cuando un proyecto completo es eliminado o cancelado
  */
 export const notifyProjectDeleted = async ({ project, user }) => {
