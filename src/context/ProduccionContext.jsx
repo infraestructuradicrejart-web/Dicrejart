@@ -1903,6 +1903,27 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, user]);
 
   /**
+   * Guarda el enlace al NAS con la evidencia de esta auditoría por área — mismo patrón
+   * que el enlace de evidencia de Actividad (input + botón Abrir), pero por área en vez
+   * de por actividad, porque la entrega de cada área es un semáforo independiente.
+   */
+  const setQualityVerdictEvidenceLink = useCallback(async (gameId, areaId, evidenceLink) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    const current = j.qualityVerdict?.[areaId] || { status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' };
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`qualityVerdict.${areaId}`]: { ...current, evidenceLink: evidenceLink.trim() },
+      });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al guardar enlace de evidencia de auditoría:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos]);
+
+  /**
    * Asigna automáticamente a la persona de Calidad responsable de una auditoría (nodo
    * semáforo del lienzo) — se llama al conectar el semáforo por cable a una actividad
    * real (no al solo agregarlo al lienzo), y solo si nadie estaba ya asignado. El
@@ -2072,6 +2093,7 @@ export const ProduccionProvider = ({ children }) => {
       approveQualityReview,
       rejectQualityReview,
       setQualityVerdict,
+      setQualityVerdictEvidenceLink,
       assignQualityAudit,
       cancelQualityAudit,
       approveReceptionForPT,
@@ -2127,6 +2149,7 @@ export const ProduccionProvider = ({ children }) => {
       approveQualityReview,
       rejectQualityReview,
       setQualityVerdict,
+      setQualityVerdictEvidenceLink,
       assignQualityAudit,
       cancelQualityAudit,
       approveReceptionForPT,

@@ -1825,7 +1825,8 @@
   z-index: 10;
 }
 
-.framelessLinkNode:hover .framelessLinkEmblemClose {
+.framelessLinkNode:hover .framelessLinkEmblemClose,
+.framelessAuditNode:hover .framelessLinkEmblemClose {
   display: flex;
 }
 

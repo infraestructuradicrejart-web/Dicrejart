@@ -460,7 +460,7 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
  */
 const EditorVisualPage = ({ standalone = false }) => {
   const navigate = useNavigate();
-  const { proyectos, juegos, addProject, addGame, updateProject, setQualityVerdict, assignQualityAudit, cancelQualityAudit } = useProduccion();
+  const { proyectos, juegos, addProject, addGame, updateProject, setQualityVerdict, setQualityVerdictEvidenceLink, assignQualityAudit, cancelQualityAudit } = useProduccion();
   const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
@@ -587,6 +587,9 @@ const EditorVisualPage = ({ standalone = false }) => {
   // guardado por nodeId — no puede ser un useState suelto porque se usa dentro de
   // nodes.map(), donde no se pueden declarar hooks condicionalmente por iteración.
   const [auditReasonDrafts, setAuditReasonDrafts] = useState({});
+  // Borrador del enlace de evidencia (NAS) del semáforo, por nodeId — mismo motivo que
+  // auditReasonDrafts: no puede ser un useState suelto dentro de nodes.map().
+  const [auditEvidenceDrafts, setAuditEvidenceDrafts] = useState({});
   // Nodos de Auditoría de Calidad expandidos (mostrando área/juego, botones y notas) —
   // colapsados por defecto, solo el semáforo, para que el lienzo no se sature.
   const [expandedAuditNodes, setExpandedAuditNodes] = useState(() => new Set());
@@ -3304,6 +3307,20 @@ const EditorVisualPage = ({ standalone = false }) => {
     if (!res?.ok) toast.danger(res.error || 'No se pudo reabrir el semáforo de calidad.');
   };
 
+  const setAuditEvidenceText = (nodeId, text) => {
+    setAuditEvidenceDrafts((prev) => ({ ...prev, [nodeId]: text }));
+  };
+
+  const handleSaveAuditEvidenceLink = async (nodeId, entity) => {
+    const link = auditEvidenceDrafts[nodeId] ?? entity.evidenceLink ?? '';
+    const res = await setQualityVerdictEvidenceLink(entity.gameId, entity.areaId, link);
+    if (res?.ok) {
+      toast.success('🗄️ Enlace de evidencia guardado.');
+    } else {
+      toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
+    }
+  };
+
   /**
    * Reabre o cambia de estado una actividad
    */
@@ -4936,6 +4953,38 @@ const EditorVisualPage = ({ standalone = false }) => {
                               {entity.notes && <div style={{ fontStyle: 'italic', marginTop: '2px' }}>"{entity.notes}"</div>}
                             </div>
                           )}
+
+                          {/* Enlace de evidencia (NAS) — mismo patrón que Proyecto/Juego/Actividad */}
+                          <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed rgba(255,255,255,0.15)' }}>
+                            <label style={{ fontSize: '9.5px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                              🗄️ Evidencia (NAS)
+                            </label>
+                            {canEditAudit ? (
+                              <div style={{ display: 'flex', gap: '5px', marginTop: '3px' }}>
+                                <input
+                                  type="text"
+                                  placeholder="Enlace a la evidencia en el NAS"
+                                  value={auditEvidenceDrafts[node.id] ?? entity.evidenceLink ?? ''}
+                                  onChange={(e) => setAuditEvidenceText(node.id, e.target.value)}
+                                  style={{ flex: 1, fontSize: '11px', padding: '5px 6px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.06)', color: '#f1f5f9' }}
+                                />
+                                <button type="button" onClick={() => handleSaveAuditEvidenceLink(node.id, entity)} style={{ padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(255,255,255,0.1)', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', cursor: 'pointer' }}>
+                                  💾
+                                </button>
+                                {entity.evidenceLink && (
+                                  <button type="button" onClick={() => window.open(entity.evidenceLink, '_blank', 'noopener,noreferrer')} style={{ padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(8, 145, 178, 0.25)', color: '#67e8f9', border: '1px solid rgba(8, 145, 178, 0.4)', borderRadius: '6px', cursor: 'pointer' }}>
+                                    Abrir
+                                  </button>
+                                )}
+                              </div>
+                            ) : entity.evidenceLink ? (
+                              <button type="button" onClick={() => window.open(entity.evidenceLink, '_blank', 'noopener,noreferrer')} style={{ display: 'block', marginTop: '3px', width: '100%', padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(8, 145, 178, 0.25)', color: '#67e8f9', border: '1px solid rgba(8, 145, 178, 0.4)', borderRadius: '6px', cursor: 'pointer' }}>
+                                🗄️ Abrir Evidencia
+                              </button>
+                            ) : (
+                              <p style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>Sin evidencia capturada.</p>
+                            )}
+                          </div>
 
                           {canEditAudit ? (
                             <div style={{ marginTop: '8px' }}>
