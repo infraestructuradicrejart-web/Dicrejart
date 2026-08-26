@@ -867,6 +867,11 @@ export const OperariosProvider = ({ children }) => {
     try {
       const querySnapshot = await getDocs(collection(db, 'operarios'));
       const evalSnapshot = await getDocs(collection(db, 'evaluaciones'));
+      // Mismo saneamiento que ya hace deleteOperario para una sola persona — al vaciar
+      // TODO el padrón de golpe, cada actividad que tuviera un operarioId asignado se
+      // quedaba apuntando a un colaborador que ya no existe (mismo bug que ya se
+      // corrigió para el borrado individual, pero este camino alterno lo pasaba por
+      // alto). Se desasignan (no se borran) para que pasen a "Sin asignar".
       const promises = [];
       querySnapshot.forEach((docSnap) => {
         promises.push(deleteDoc(docSnap.ref));
@@ -874,12 +879,20 @@ export const OperariosProvider = ({ children }) => {
       evalSnapshot.forEach((docSnap) => {
         promises.push(deleteDoc(docSnap.ref));
       });
+      const allActSnapshot = await getDocs(collection(db, 'actividades'));
+      let unassignedCount = 0;
+      allActSnapshot.forEach((docSnap) => {
+        if (docSnap.data().operarioId) {
+          promises.push(updateDoc(docSnap.ref, { operarioId: null }));
+          unassignedCount += 1;
+        }
+      });
       await Promise.all(promises);
       logAudit({
         user,
         module: 'operarios',
         action: 'Vació todo el padrón de operarios',
-        details: `${querySnapshot.size} operario(s) y ${evalSnapshot.size} evaluación(es) eliminados`,
+        details: `${querySnapshot.size} operario(s), ${evalSnapshot.size} evaluación(es) eliminados y ${unassignedCount} actividad(es) desasignada(s)`,
       });
     } catch (error) {
       console.error('Error al vaciar operarios de Firestore:', error);
