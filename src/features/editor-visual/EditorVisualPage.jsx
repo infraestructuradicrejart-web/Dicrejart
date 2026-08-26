@@ -7000,6 +7000,7 @@ const NodeInspector = ({
   const [editActQuantity, setEditActQuantity] = useState(1);
   const [editActPriority, setEditActPriority] = useState('media');
   const [editActDueDate, setEditActDueDate] = useState('');
+  const [editActEvidenceLink, setEditActEvidenceLink] = useState('');
   const [editActLinks, setEditActLinks] = useState([]);
   const [newLinkInput, setNewLinkInput] = useState('');
   const [checklist, setChecklist] = useState([]);
@@ -7038,6 +7039,7 @@ const NodeInspector = ({
       setEditActQuantity(entity.quantity || 1);
       setEditActPriority(entity.priority || 'media');
       setEditActDueDate(entity.dueDate || '');
+      setEditActEvidenceLink(entity.evidenceLink || '');
       setEditActLinks(entity.links || []);
       setChecklist(Array.isArray(entity.checklist) ? entity.checklist : []);
     }
@@ -7194,6 +7196,7 @@ const NodeInspector = ({
           quantity: Number(editActQuantity) > 0 ? Number(editActQuantity) : 1,
           priority: editActPriority,
           dueDate: editActDueDate || null,
+          evidenceLink: editActEvidenceLink.trim(),
           links: editActLinks,
           checklist: checklist,
           updatedAt: new Date().toISOString(),
@@ -8399,6 +8402,40 @@ const NodeInspector = ({
                 </button>
               </div>
             )}
+          </div>
+
+          {/* SECCIÓN 3.5: 🗄️ EVIDENCIA (NAS) — la evidencia real vive en el NAS local del
+              taller; aquí solo se captura/edita el enlace que redirige a ella. Mismo campo
+              que el botón "🗄️ Evidencia" de la tarjeta del nodo (EditorVisualPage.jsx). */}
+          <div className={styles.inspectorSection}>
+            <div className={styles.inspectorSectionHeader}>
+              <h3 className={styles.inspectorSectionTitle}>
+                <span>🗄️ Evidencia (NAS)</span>
+              </h3>
+            </div>
+            <div className={styles.field}>
+              <label>Enlace a la evidencia en el NAS</label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input
+                  type="text"
+                  value={editActEvidenceLink}
+                  disabled={!canEditDiagram}
+                  placeholder="Enlace a la carpeta/archivo en el NAS"
+                  onChange={(e) => setEditActEvidenceLink(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                {entity.evidenceLink && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => window.open(entity.evidenceLink, '_blank', 'noopener,noreferrer')}
+                  >
+                    Abrir
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* SECCIÓN 4: 🖼️ AYUDA VISUAL / PLANOS / ADJUNTOS */}
