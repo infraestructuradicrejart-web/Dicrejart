@@ -5412,9 +5412,30 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   }}
                                   title={dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
                                 >
-                                  <span style={{ fontSize: '26px', lineHeight: 1 }}>
-                                    {entity.status === 'cumple' ? '🟢' : entity.status === 'no_cumple' ? '🔴' : '🟡'}
-                                  </span>
+                                  {/* Semáforo real (caja + 3 luces apiladas), no solo un emoji — para
+                                      que se lea de inmediato como un filtro/gate, no como un ícono más. */}
+                                  <div style={{
+                                    display: 'flex', flexDirection: 'column', gap: '3px',
+                                    padding: '4px 6px', borderRadius: '7px',
+                                    background: 'linear-gradient(180deg, #1f2937, #111827)',
+                                    border: '1.5px solid #374151',
+                                  }}>
+                                    <span style={{
+                                      width: '11px', height: '11px', borderRadius: '50%',
+                                      background: entity.status === 'no_cumple' ? '#ef4444' : 'rgba(239, 68, 68, 0.18)',
+                                      boxShadow: entity.status === 'no_cumple' ? '0 0 7px 2px rgba(239, 68, 68, 0.85)' : 'none',
+                                    }} />
+                                    <span style={{
+                                      width: '11px', height: '11px', borderRadius: '50%',
+                                      background: entity.status === 'pendiente' ? '#eab308' : 'rgba(234, 179, 8, 0.18)',
+                                      boxShadow: entity.status === 'pendiente' ? '0 0 7px 2px rgba(234, 179, 8, 0.85)' : 'none',
+                                    }} />
+                                    <span style={{
+                                      width: '11px', height: '11px', borderRadius: '50%',
+                                      background: entity.status === 'cumple' ? '#22c55e' : 'rgba(34, 197, 94, 0.18)',
+                                      boxShadow: entity.status === 'cumple' ? '0 0 7px 2px rgba(34, 197, 94, 0.85)' : 'none',
+                                    }} />
+                                  </div>
                                   <strong style={{ fontSize: '12.5px' }}>
                                     {entity.status === 'cumple' ? 'Cumple' : entity.status === 'no_cumple' ? 'No Cumple' : 'Pendiente'}
                                   </strong>
