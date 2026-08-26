@@ -28,6 +28,7 @@ import useActividades from '../../hooks/useActividades';
 import useOperarios from '../../hooks/useOperarios';
 import useAuth from '../../hooks/useAuth';
 import { sendSystemChatMessage } from '../../services/chatNotificationService';
+import { uploadEvidenceFile, uploadDesignFile, deleteNasFile } from '../../services/nasUploadService';
 import { isAreaBlockedByRoute, getBlockingAreaForRoute } from '../../context/ProduccionContext';
 import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
@@ -385,10 +386,12 @@ const getSmartWirePath = (fromNode, toNode, edge = null, nodeSizes = {}) => {
 };
 
 /**
- * Sube un archivo a Firebase Storage con compresión automática para imágenes,
- * incluyendo fallback ligero transparente (< 30KB) si la red o Storage presentaran intermitencia.
+ * Sube un archivo de Ayuda Visual (imagen/PDF/modelo 3D) — intenta el NAS primero
+ * (organizado por Proyecto vía `routeCtx`, ver nasUploadService.js), y si no responde
+ * cae a Firebase Storage con compresión automática para imágenes, incluyendo fallback
+ * ligero transparente (< 30KB) si la red o Storage presentaran intermitencia.
  */
-const uploadResourceFile = async (file, lienzoId = 'general') => {
+const uploadResourceFile = async (file, lienzoId = 'general', routeCtx = {}) => {
   if (!file) return null;
   const isImage = file.type?.startsWith('image/');
   let toUpload = file;
@@ -410,6 +413,17 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
     }
   }
 
+  // Prioridad 1: NAS. Se reconstruye como File (compressImage regresa un Blob sin
+  // `.name`) conservando el nombre/tipo originales.
+  const nasResult = await uploadDesignFile(
+    new File([toUpload], file.name, { type: toUpload.type || file.type }),
+    routeCtx
+  );
+  if (nasResult) {
+    return { name: file.name, size: file.size, type: file.type, url: nasResult.url, nasPath: nasResult.nasPath, isUploading: false };
+  }
+
+  // Prioridad 2 (respaldo si el NAS no respondió): Firebase Storage
   const safeName = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
   const path = `lienzos_recursos/${lienzoId}/${Date.now()}_${safeName}`;
 
@@ -579,6 +593,7 @@ const EditorVisualPage = ({ standalone = false }) => {
   // redirige a ella, mismo patrón que el campo de enlace NAS de Proyecto/Juego.
   // Independiente de iniciar/pausar/terminar, se puede usar en cualquier momento.
   const [evidenceModal, setEvidenceModal] = useState({ isOpen: false, activityId: null, title: '', linkInput: '' });
+  const [evidenceUploading, setEvidenceUploading] = useState(false);
 
   // Modal de "Registrar Entrega" abierto directo desde una insignia de área en el nodo
   // Juego del lienzo libre — mismo componente que ya usa RutaFabricacionView.jsx, para no
@@ -594,6 +609,8 @@ const EditorVisualPage = ({ standalone = false }) => {
   // Borrador del enlace de evidencia (NAS) del semáforo, por nodeId — mismo motivo que
   // auditReasonDrafts: no puede ser un useState suelto dentro de nodes.map().
   const [auditEvidenceDrafts, setAuditEvidenceDrafts] = useState({});
+  // Sube-en-curso del archivo de evidencia del semáforo, por nodeId — mismo motivo que auditEvidenceDrafts.
+  const [auditEvidenceUploading, setAuditEvidenceUploading] = useState({});
   // Nodos de Auditoría de Calidad expandidos (mostrando área/juego, botones y notas) —
   // colapsados por defecto, solo el semáforo, para que el lienzo no se sature.
   const [expandedAuditNodes, setExpandedAuditNodes] = useState(() => new Set());
@@ -2933,7 +2950,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     if (pendingFile) {
       toast.info(`⏳ Subiendo archivo adjunto "${pendingFile.name}" a la nube...`);
       try {
-        uploadedFile = await uploadResourceFile(pendingFile, lienzoActivoId);
+        uploadedFile = await uploadResourceFile(pendingFile, lienzoActivoId, { projectId: currentProject?.id, projectName: currentProject?.name });
       } catch (err) {
         console.error('Error al subir archivo de actividad:', err);
       }
@@ -3195,7 +3212,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     if (pendingFile) {
       toast.info(`⏳ Guardando "${pendingFile.name}" en la nube...`);
       try {
-        const uploaded = await uploadResourceFile(pendingFile, lienzoActivoId);
+        const uploaded = await uploadResourceFile(pendingFile, lienzoActivoId, { projectId: currentProject?.id, projectName: currentProject?.name });
         if (uploaded) {
           updateDraftField(tempId, 'fileData', uploaded);
           toast.success(`☁️ "${pendingFile.name}" guardado permanentemente.`);
@@ -3351,6 +3368,53 @@ const EditorVisualPage = ({ standalone = false }) => {
     }
   }, [completeModal, toast, advanceStatus]);
 
+  /**
+   * Resuelve Área/Juego/Proyecto de una actividad para saber en qué carpeta del NAS
+   * debe quedar su evidencia — si la actividad no trae gameId/areaId propios, busca en
+   * todo su subgrafo de cables (mismo patrón que la resolución del semáforo de
+   * Auditoría de Calidad, ver bloque 13 de handleWindowMouseUp).
+   */
+  const resolveRouteContextForActivity = useCallback(
+    (act) => {
+      let areaId = act?.areaId || null;
+      let gameId = act?.gameId || null;
+      let projectId = act?.projectId || null;
+
+      if (!gameId) {
+        const actNode = nodes.find((n) => n.type === 'actividad' && n.refId === act?.id);
+        if (actNode) {
+          const clusterIds = getConnectedClusterNodeIds(actNode.id);
+          for (const id of clusterIds) {
+            if (gameId) break;
+            const n = findNode(id);
+            if (!n) continue;
+            if (!gameId && n.type === 'juego') gameId = n.refId || (n.draft ? null : n.id);
+            if (!areaId && n.type === 'area') areaId = n.refId;
+            if (!projectId && n.type === 'proyecto') projectId = n.refId || (n.draft ? null : n.id);
+          }
+        }
+      }
+
+      const game = gameId ? juegos.find((j) => j.id === gameId) : null;
+      const project = projectId
+        ? proyectos.find((p) => p.id === projectId)
+        : game?.projectId
+        ? proyectos.find((p) => p.id === game.projectId)
+        : null;
+      const area = areaId ? dynamicAreas.find((a) => a.id === areaId) : null;
+
+      return {
+        areaId,
+        areaName: area?.name || areaId,
+        gameId,
+        gameName: game?.name,
+        projectId: project?.id || projectId,
+        projectName: project?.name || act?.projectName,
+      };
+    },
+    [nodes, juegos, proyectos, dynamicAreas, getConnectedClusterNodeIds, findNode]
+  );
+
   /** Abre el modal de link de evidencia (NAS) de una actividad, precargado con su valor actual */
   const handleOpenEvidenceModal = (activityId, title) => {
     const act = actividades.find((a) => a.id === activityId);
@@ -3358,6 +3422,39 @@ const EditorVisualPage = ({ standalone = false }) => {
   };
 
   const closeEvidenceModal = () => setEvidenceModal({ isOpen: false, activityId: null, title: '', linkInput: '' });
+
+  /** Sube el archivo de evidencia de la actividad abierta en el modal directo al NAS (con respaldo/migración automática) */
+  const handleUploadActivityEvidence = async (file) => {
+    if (!file || !evidenceModal.activityId) return;
+    setEvidenceUploading(true);
+    try {
+      const act = actividades.find((a) => a.id === evidenceModal.activityId);
+      const ctx = resolveRouteContextForActivity(act);
+      const result = await uploadEvidenceFile(file, {
+        category: 'fabricacion',
+        areaId: ctx.areaId,
+        areaName: ctx.areaName,
+        gameId: ctx.gameId,
+        gameName: ctx.gameName,
+        projectId: ctx.projectId,
+        projectName: ctx.projectName,
+        targetType: 'actividad',
+        targetRef: { activityId: evidenceModal.activityId },
+      });
+      setEvidenceModal((prev) => ({ ...prev, linkInput: result.url }));
+      const res = await updateActividad(evidenceModal.activityId, { evidenceLink: result.url, evidenceNasPath: result.nasPath || null });
+      if (res?.ok === false) {
+        toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
+      } else {
+        toast.success(result.pendingMigration ? '📤 Evidencia guardada (se sincronizará con el NAS automáticamente).' : '🗄️ Evidencia subida al NAS.');
+      }
+    } catch (err) {
+      console.error('Error al subir evidencia de actividad:', err);
+      toast.danger('No se pudo subir el archivo de evidencia.');
+    } finally {
+      setEvidenceUploading(false);
+    }
+  };
 
   /** Guarda el link de evidencia (carpeta/archivo en el NAS local) de la actividad abierta en el modal */
   const handleSaveEvidenceLink = async () => {
@@ -3426,6 +3523,39 @@ const EditorVisualPage = ({ standalone = false }) => {
       toast.success('🗄️ Enlace de evidencia guardado.');
     } else {
       toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
+    }
+  };
+
+  /** Sube el archivo de evidencia de una Auditoría de Calidad directo al NAS (con respaldo/migración automática) */
+  const handleUploadAuditEvidence = async (nodeId, entity, file) => {
+    if (!file) return;
+    setAuditEvidenceUploading((prev) => ({ ...prev, [nodeId]: true }));
+    try {
+      const result = await uploadEvidenceFile(file, {
+        category: 'calidad',
+        areaId: entity.areaId,
+        areaName: entity.areaId ? (dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId) : null,
+        gameId: entity.gameId,
+        gameName: entity.game?.name,
+        projectId: entity.mode === 'project' ? entity.projectId : entity.game?.projectId,
+        projectName: entity.mode === 'project' ? entity.project?.name : undefined,
+        targetType: entity.mode === 'project' ? 'auditVerdictProject' : 'auditVerdict',
+        targetRef: entity.mode === 'project' ? { projectId: entity.projectId } : { gameId: entity.gameId, areaId: entity.areaId },
+      });
+      setAuditEvidenceDrafts((prev) => ({ ...prev, [nodeId]: result.url }));
+      const res = entity.mode === 'project'
+        ? await setQualityVerdictEvidenceLinkProject(entity.projectId, result.url, result.nasPath)
+        : await setQualityVerdictEvidenceLink(entity.gameId, entity.areaId, result.url, result.nasPath);
+      if (res?.ok) {
+        toast.success(result.pendingMigration ? '📤 Evidencia guardada (se sincronizará con el NAS automáticamente).' : '🗄️ Evidencia subida al NAS.');
+      } else {
+        toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
+      }
+    } catch (err) {
+      console.error('Error al subir evidencia de auditoría:', err);
+      toast.danger('No se pudo subir el archivo de evidencia.');
+    } finally {
+      setAuditEvidenceUploading((prev) => ({ ...prev, [nodeId]: false }));
     }
   };
 
@@ -5075,23 +5205,38 @@ const EditorVisualPage = ({ standalone = false }) => {
                               🗄️ Evidencia (NAS)
                             </label>
                             {canEditAudit ? (
-                              <div style={{ display: 'flex', gap: '5px', marginTop: '3px' }}>
+                              <>
                                 <input
-                                  type="text"
-                                  placeholder="Enlace a la evidencia en el NAS"
-                                  value={auditEvidenceDrafts[node.id] ?? entity.evidenceLink ?? ''}
-                                  onChange={(e) => setAuditEvidenceText(node.id, e.target.value)}
-                                  style={{ flex: 1, fontSize: '11px', padding: '5px 6px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.06)', color: '#f1f5f9' }}
+                                  type="file"
+                                  disabled={Boolean(auditEvidenceUploading[node.id])}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleUploadAuditEvidence(node.id, entity, file);
+                                    e.target.value = '';
+                                  }}
+                                  style={{ fontSize: '10.5px', marginTop: '3px', width: '100%' }}
                                 />
-                                <button type="button" onClick={() => handleSaveAuditEvidenceLink(node.id, entity)} style={{ padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(255,255,255,0.1)', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', cursor: 'pointer' }}>
-                                  💾
-                                </button>
-                                {entity.evidenceLink && (
-                                  <button type="button" onClick={() => window.open(entity.evidenceLink, '_blank', 'noopener,noreferrer')} style={{ padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(8, 145, 178, 0.25)', color: '#67e8f9', border: '1px solid rgba(8, 145, 178, 0.4)', borderRadius: '6px', cursor: 'pointer' }}>
-                                    Abrir
-                                  </button>
+                                {auditEvidenceUploading[node.id] && (
+                                  <p style={{ fontSize: '10px', color: '#67e8f9', fontWeight: 700, margin: '3px 0 0' }}>⏳ Subiendo...</p>
                                 )}
-                              </div>
+                                <div style={{ display: 'flex', gap: '5px', marginTop: '4px' }}>
+                                  <input
+                                    type="text"
+                                    placeholder="O pega un link manual"
+                                    value={auditEvidenceDrafts[node.id] ?? entity.evidenceLink ?? ''}
+                                    onChange={(e) => setAuditEvidenceText(node.id, e.target.value)}
+                                    style={{ flex: 1, fontSize: '11px', padding: '5px 6px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.06)', color: '#f1f5f9' }}
+                                  />
+                                  <button type="button" onClick={() => handleSaveAuditEvidenceLink(node.id, entity)} style={{ padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(255,255,255,0.1)', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', cursor: 'pointer' }}>
+                                    💾
+                                  </button>
+                                  {entity.evidenceLink && (
+                                    <button type="button" onClick={() => window.open(entity.evidenceLink, '_blank', 'noopener,noreferrer')} style={{ padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(8, 145, 178, 0.25)', color: '#67e8f9', border: '1px solid rgba(8, 145, 178, 0.4)', borderRadius: '6px', cursor: 'pointer' }}>
+                                      Abrir
+                                    </button>
+                                  )}
+                                </div>
+                              </>
                             ) : entity.evidenceLink ? (
                               <button type="button" onClick={() => window.open(entity.evidenceLink, '_blank', 'noopener,noreferrer')} style={{ display: 'block', marginTop: '3px', width: '100%', padding: '5px 8px', fontSize: '11px', fontWeight: 700, background: 'rgba(8, 145, 178, 0.25)', color: '#67e8f9', border: '1px solid rgba(8, 145, 178, 0.4)', borderRadius: '6px', cursor: 'pointer' }}>
                                 🗄️ Abrir Evidencia
@@ -7378,11 +7523,26 @@ const EditorVisualPage = ({ standalone = false }) => {
         title={`🗄️ Evidencia: ${evidenceModal.title || 'Actividad'}`}
       >
         <p style={{ fontSize: '12.5px', color: 'var(--color-gray-500)', marginBottom: '12px' }}>
-          La evidencia (fotos, videos, archivos) se guarda en el NAS local del taller —
-          aquí solo se captura el enlace que redirige a ella.
+          La evidencia se sube directo al NAS del taller, organizada sola por Área y
+          Juego — no hace falta subirla a mano ni copiar el link.
         </p>
+        <div className={styles.field} style={{ marginBottom: '10px' }}>
+          <label>📤 Subir archivo (automático al NAS)</label>
+          <input
+            type="file"
+            disabled={evidenceUploading}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleUploadActivityEvidence(file);
+              e.target.value = '';
+            }}
+          />
+          {evidenceUploading && (
+            <p style={{ fontSize: '11.5px', color: '#0284c7', fontWeight: 600, marginTop: '4px' }}>⏳ Subiendo...</p>
+          )}
+        </div>
         <div className={styles.field} style={{ marginBottom: '14px' }}>
-          <label>Enlace a la evidencia en el NAS</label>
+          <label>O pega un link manual (respaldo)</label>
           <div style={{ display: 'flex', gap: '6px' }}>
             <input
               type="text"
@@ -7496,6 +7656,9 @@ const NodeInspector = ({
   const meta = NODE_TYPES[node.type] || DEFAULT_NODE_META;
   const toast = useToast();
   const { user } = useAuth();
+  // Proyecto del lienzo actual — para saber en qué carpeta del NAS debe quedar un
+  // archivo subido desde este panel (mismo criterio que EditorVisualPage principal).
+  const currentProject = proyectos.find((p) => p.id === lienzoActivoId) || null;
 
   const [isCreatingProj, setIsCreatingProj] = useState(false);
   const [newProjName, setNewProjName] = useState('');
@@ -7758,7 +7921,7 @@ const NodeInspector = ({
     setIsUploadingActFile(true);
     toast.info(`⏳ Subiendo "${file.name}" a la nube...`);
     try {
-      const uploaded = await uploadResourceFile(file, lienzoActivoId);
+      const uploaded = await uploadResourceFile(file, lienzoActivoId, { projectId: currentProject?.id, projectName: currentProject?.name });
       if (uploaded) {
         const currentAttachments = entity.attachments || [];
         const nextAttachments = [...currentAttachments, uploaded];
@@ -7788,6 +7951,9 @@ const NodeInspector = ({
     const attToRemove = currentAttachments[indexToRemove];
     if (attToRemove?.storagePath && storage) {
       deleteObject(ref(storage, attToRemove.storagePath)).catch(() => {});
+    }
+    if (attToRemove?.nasPath) {
+      deleteNasFile(attToRemove.nasPath);
     }
     const nextAttachments = currentAttachments.filter((_, i) => i !== indexToRemove);
     await updateDoc(doc(db, 'actividades', entity.id), {
@@ -9523,7 +9689,7 @@ const NodeInspector = ({
                       toast.info(`⏳ Guardando "${file.name}" en la nube...`);
 
                       try {
-                        const uploaded = await uploadResourceFile(file, lienzoActivoId);
+                        const uploaded = await uploadResourceFile(file, lienzoActivoId, { projectId: currentProject?.id, projectName: currentProject?.name });
                         if (uploaded) {
                           updateDraftField('fileData', uploaded);
                           toast.success(`✅ Archivo "${file.name}" guardado permanentemente.`);
@@ -9538,7 +9704,7 @@ const NodeInspector = ({
 
                 {isUploading && (
                   <div style={{ marginTop: '5px', fontSize: '11.5px', color: '#0284c7', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <span>⏳</span> Subiendo a la nube de Firebase...
+                    <span>⏳</span> Subiendo al NAS...
                   </div>
                 )}
 
@@ -9550,9 +9716,11 @@ const NodeInspector = ({
                       style={{ background: 'none', border: 'none', color: 'var(--color-alert, #ef4444)', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
                       onClick={() => {
                         const storagePath = node.draftFields?.fileData?.storagePath;
+                        const nasPath = node.draftFields?.fileData?.nasPath;
                         if (storagePath && storage) {
                           deleteObject(ref(storage, storagePath)).catch((e) => console.warn('No se pudo borrar archivo de Storage:', e));
                         }
+                        if (nasPath) deleteNasFile(nasPath);
                         updateDraftField('fileData', null);
                       }}
                       title="Quitar archivo adjunto"

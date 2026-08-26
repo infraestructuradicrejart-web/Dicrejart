@@ -27,6 +27,7 @@ import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { getOvertimeBlocks, formatHourLabel } from '../../utils/overtimeUtils';
 import { getEstadoOnDate } from '../../utils/estadoUtils';
 import useProgressiveList from '../../hooks/useProgressiveList';
+import { uploadEvidenceFile } from '../../services/nasUploadService';
 import styles from './CalidadPage.module.css';
 
 /**
@@ -583,6 +584,7 @@ const CalidadPage = () => {
   );
   const [auditReasonDraft, setAuditReasonDraft] = useState({ show: false, text: '' });
   const [auditEvidenceDraft, setAuditEvidenceDraft] = useState('');
+  const [auditEvidenceUploading, setAuditEvidenceUploading] = useState(false);
 
   const canEditSelectedAudit = selectedAudit
     ? (selectedAudit.mode === 'project' ? canUserEditProjectAudit(user) : canUserEditRoute(user, selectedAudit.game))
@@ -626,6 +628,39 @@ const CalidadPage = () => {
       toast.success('🗄️ Enlace de evidencia guardado.');
     } else {
       toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
+    }
+  };
+
+  /** Sube el archivo de evidencia de la auditoría seleccionada directo al NAS (con respaldo/migración automática) */
+  const handleUploadSemaforoEvidence = async (file) => {
+    if (!file || !selectedAudit) return;
+    setAuditEvidenceUploading(true);
+    try {
+      const result = await uploadEvidenceFile(file, {
+        category: 'calidad',
+        areaId: selectedAudit.areaId,
+        areaName: selectedAudit.areaId ? (AREAS.find((a) => a.id === selectedAudit.areaId)?.name || selectedAudit.areaId) : null,
+        gameId: selectedAudit.gameId,
+        gameName: selectedAudit.game?.name,
+        projectId: selectedAudit.mode === 'project' ? selectedAudit.projectId : selectedAudit.game?.projectId,
+        projectName: selectedAudit.mode === 'project' ? selectedAudit.project?.name : undefined,
+        targetType: selectedAudit.mode === 'project' ? 'auditVerdictProject' : 'auditVerdict',
+        targetRef: selectedAudit.mode === 'project' ? { projectId: selectedAudit.projectId } : { gameId: selectedAudit.gameId, areaId: selectedAudit.areaId },
+      });
+      setAuditEvidenceDraft(result.url);
+      const res = selectedAudit.mode === 'project'
+        ? await setQualityVerdictEvidenceLinkProject(selectedAudit.projectId, result.url, result.nasPath)
+        : await setQualityVerdictEvidenceLink(selectedAudit.gameId, selectedAudit.areaId, result.url, result.nasPath);
+      if (res?.ok) {
+        toast.success(result.pendingMigration ? '📤 Evidencia guardada (se sincronizará con el NAS automáticamente).' : '🗄️ Evidencia subida al NAS.');
+      } else {
+        toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
+      }
+    } catch (err) {
+      console.error('Error al subir evidencia de auditoría:', err);
+      toast.danger('No se pudo subir el archivo de evidencia.');
+    } finally {
+      setAuditEvidenceUploading(false);
     }
   };
 
@@ -2034,7 +2069,22 @@ const CalidadPage = () => {
                       🗄️ Evidencia (NAS)
                     </label>
                     {canEditSelectedAudit ? (
-                      <div style={{ display: 'flex', gap: '6px', marginTop: '4px', alignItems: 'flex-end' }}>
+                      <>
+                        <input
+                          type="file"
+                          disabled={auditEvidenceUploading}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleUploadSemaforoEvidence(file);
+                            e.target.value = '';
+                          }}
+                          style={{ marginTop: '4px', fontSize: '12px' }}
+                        />
+                        {auditEvidenceUploading && (
+                          <p style={{ fontSize: '11px', color: 'var(--color-secondary)', fontWeight: 600, margin: '4px 0 0' }}>⏳ Subiendo...</p>
+                        )}
+                        <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', margin: '6px 0 2px' }}>O pega un link manual:</p>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
                         <div style={{ flex: 1 }}>
                           <Input
                             value={auditEvidenceDraft || selectedAudit.evidenceLink || ''}
@@ -2049,6 +2099,7 @@ const CalidadPage = () => {
                           </Button>
                         )}
                       </div>
+                      </>
                     ) : selectedAudit.evidenceLink ? (
                       <Button type="button" variant="secondary" size="sm" onClick={() => window.open(selectedAudit.evidenceLink, '_blank', 'noopener,noreferrer')} style={{ marginTop: '4px' }}>
                         🗄️ Abrir Evidencia

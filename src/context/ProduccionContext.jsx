@@ -1907,14 +1907,14 @@ export const ProduccionProvider = ({ children }) => {
    * que el enlace de evidencia de Actividad (input + botón Abrir), pero por área en vez
    * de por actividad, porque la entrega de cada área es un semáforo independiente.
    */
-  const setQualityVerdictEvidenceLink = useCallback(async (gameId, areaId, evidenceLink) => {
+  const setQualityVerdictEvidenceLink = useCallback(async (gameId, areaId, evidenceLink, nasPath = null) => {
     if (!db) return { ok: false, error: 'Firestore no está inicializado' };
     const j = juegos.find((jg) => jg.id === gameId);
     if (!j) return { ok: false, error: 'Juego no encontrado' };
     const current = j.qualityVerdict?.[areaId] || { status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' };
     try {
       await updateDoc(doc(db, 'juegos', gameId), {
-        [`qualityVerdict.${areaId}`]: { ...current, evidenceLink: evidenceLink.trim() },
+        [`qualityVerdict.${areaId}`]: { ...current, evidenceLink: evidenceLink.trim(), evidenceNasPath: nasPath },
       });
       return { ok: true };
     } catch (error) {
@@ -2009,14 +2009,14 @@ export const ProduccionProvider = ({ children }) => {
   }, [proyectos, user]);
 
   /** Variante de `setQualityVerdictEvidenceLink` para auditoría a nivel Proyecto. */
-  const setQualityVerdictEvidenceLinkProject = useCallback(async (projectId, evidenceLink) => {
+  const setQualityVerdictEvidenceLinkProject = useCallback(async (projectId, evidenceLink, nasPath = null) => {
     if (!db) return { ok: false, error: 'Firestore no está inicializado' };
     const p = proyectos.find((pr) => pr.id === projectId);
     if (!p) return { ok: false, error: 'Proyecto no encontrado' };
     const current = p.qualityAuditProject || { status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' };
     try {
       await updateDoc(doc(db, 'proyectos', projectId), {
-        qualityAuditProject: { ...current, evidenceLink: evidenceLink.trim() },
+        qualityAuditProject: { ...current, evidenceLink: evidenceLink.trim(), evidenceNasPath: nasPath },
       });
       return { ok: true };
     } catch (error) {

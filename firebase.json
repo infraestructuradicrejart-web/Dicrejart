@@ -52,6 +52,13 @@
         }
       },
       {
+        "source": "/api/nasfile",
+        "function": {
+          "functionId": "nasFileProxy",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
