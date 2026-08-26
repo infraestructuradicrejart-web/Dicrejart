@@ -2134,15 +2134,39 @@ const EditorVisualPage = ({ standalone = false }) => {
               // Recepción río abajo), no se vuelve a resolver — conserva el área original.
               if (actNode && auditNode) {
                 const actEntity = getLinkedEntity(actNode);
-                let resolvedGameId = null;
-                let resolvedAreaId = null;
+                let resolvedGameId = actEntity?.gameId || null;
+                let resolvedAreaId = actEntity?.areaId || null;
+
+                // Si la actividad no trae gameId/areaId propios (nunca se conectó
+                // directo a un nodo Juego/Área), se busca en todo su subgrafo — el
+                // usuario puede unir la auditoría a cualquier actividad de la cadena
+                // y por las líneas sabemos de qué Juego/Área proviene.
+                if (!auditNode.refId && (!resolvedGameId || !resolvedAreaId)) {
+                  const clusterIds = getConnectedClusterNodeIds(actNode.id);
+                  for (const id of clusterIds) {
+                    if (resolvedGameId && resolvedAreaId) break;
+                    const n = findNode(id);
+                    if (!n) continue;
+                    if (!resolvedGameId && n.type === 'juego') {
+                      resolvedGameId = n.refId || (n.draft ? null : n.id);
+                    }
+                    if (!resolvedAreaId && n.type === 'area') {
+                      resolvedAreaId = n.refId;
+                    }
+                    if (n.type === 'actividad' && n.id !== actNode.id) {
+                      const otherEntity = getLinkedEntity(n);
+                      if (!resolvedGameId && otherEntity?.gameId) resolvedGameId = otherEntity.gameId;
+                      if (!resolvedAreaId && otherEntity?.areaId) resolvedAreaId = otherEntity.areaId;
+                    }
+                  }
+                }
 
                 if (!auditNode.refId) {
-                  if (!actEntity?.gameId || !actEntity?.areaId) {
-                    toast.warning('🔍 Esta actividad no está ligada a un Juego/Área — la auditoría no se pudo vincular. Conéctala a una actividad de un Juego con Ruta de Fabricación.');
+                  if (!resolvedGameId || !resolvedAreaId) {
+                    toast.warning('🔍 No se encontró un Juego/Área conectado (por cable, directo o en cadena) a esta actividad — la auditoría no se pudo vincular.');
+                    resolvedGameId = null;
+                    resolvedAreaId = null;
                   } else {
-                    resolvedGameId = actEntity.gameId;
-                    resolvedAreaId = actEntity.areaId;
                     const resolvedRefId = `${resolvedGameId}::${resolvedAreaId}`;
                     const nextNodesWithLink = nodes.map((n) => (n.id === auditNode.id ? { ...n, refId: resolvedRefId } : n));
                     setNodes(nextNodesWithLink);
