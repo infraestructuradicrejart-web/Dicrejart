@@ -3022,6 +3022,30 @@ const EditorVisualPage = ({ standalone = false }) => {
   );
 
   /**
+   * Solo "¿esta actividad es mía?" — a diferencia de canUserControlActivity (que también
+   * da permiso a Admin/Calidad/Dirección y a cualquier supervisor del área), esto es
+   * estrictamente "¿estoy yo asignado como responsable?", para resaltar en el lienzo lo
+   * que le toca a CADA quien (Diseño, Arquitectura, Supervisores de área, etc.) al entrar
+   * con su propio usuario — no una marca de permiso, una marca de pertenencia.
+   */
+  const isActivityAssignedToMe = useCallback(
+    (act) => {
+      if (!user || !act?.operarioId) return false;
+      const assignedOperario = operarios.find((o) => o.id === act.operarioId);
+      return Boolean(
+        (user.operarioId && user.operarioId === act.operarioId) ||
+        (user.id && (user.id === act.operarioId || user.id === assignedOperario?.id)) ||
+        (user.uid && (user.uid === act.operarioId || user.uid === assignedOperario?.id)) ||
+        (assignedOperario && (
+          (assignedOperario.email && user.email && assignedOperario.email.toLowerCase() === user.email.toLowerCase()) ||
+          (assignedOperario.name && user.name && assignedOperario.name.trim().toLowerCase() === user.name.trim().toLowerCase())
+        ))
+      );
+    },
+    [user, operarios]
+  );
+
+  /**
    * Inicia una actividad pasando su estatus a 'proceso' y fijando startedAt en Firestore
    */
   const handleStartActivity = useCallback(
@@ -4303,6 +4327,10 @@ const EditorVisualPage = ({ standalone = false }) => {
                   return false;
                 })();
 
+                // Actividad asignada al usuario con sesión iniciada — marca de pertenencia,
+                // no de estatus (independiente del brillo RGB de "en proceso" de arriba).
+                const isNodeMine = node.type === 'actividad' && isActivityAssignedToMe(entity);
+
                 // 1. DISTINCIÓN CLARA: ENLACE vs ARCHIVO DE IMAGEN
                 const isLinkResource = node.type === 'recurso' && Boolean(
                   info?.isLink ||
@@ -4646,6 +4674,30 @@ const EditorVisualPage = ({ standalone = false }) => {
                     style={{ left: node.x, top: node.y, width: NODE_WIDTH, '--node-color': nodeThemeColor }}
                     onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                   >
+                    {isNodeMine && (
+                      <div
+                        title="Asignada a ti"
+                        style={{
+                          position: 'absolute',
+                          top: '-10px',
+                          left: '-10px',
+                          width: '22px',
+                          height: '22px',
+                          borderRadius: '50%',
+                          background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)',
+                          border: '2px solid #ffffff',
+                          boxShadow: '0 2px 6px rgba(109, 40, 217, 0.5)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '11px',
+                          zIndex: 20,
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        👤
+                      </div>
+                    )}
                     <div className={styles.nodeHead}>
                       <span className={styles.nodeIcon}>{meta.icon}</span>
                       <span className={styles.nodeTitle}>{nodeTitle(node)}</span>
