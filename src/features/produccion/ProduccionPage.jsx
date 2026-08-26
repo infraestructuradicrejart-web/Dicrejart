@@ -1240,16 +1240,24 @@ const ProduccionPage = () => {
 
   /**
    * Exporta a PDF las horas extra autorizadas de ESTA área en la semana de horas extra en
-   * curso (jueves a miércoles, ver getOvertimeWeekRange) — con fines de control para el
-   * supervisor/encargado del área. Solo incluye horario autorizado y total de horas (no
-   * correcciones de horario real ni verificación de cumplimiento).
+   * curso (jueves a miércoles, ver getOvertimeWeekRange), más el día siguiente al de hoy
+   * aunque caiga fuera de esa semana — igual que el reporte que se manda a RH (hoy +
+   * próximas), para que un supervisor consultando esto un miércoles (último día de la
+   * semana) no se quede sin ver las horas ya autorizadas para el jueves siguiente. Con
+   * fines de control para el supervisor/encargado del área. Solo incluye horario
+   * autorizado y total de horas (no correcciones de horario real ni verificación de
+   * cumplimiento).
    */
   const handleExportHorasExtraAreaPdf = async () => {
     setIsExportingHorasExtraPdf(true);
     try {
       const { start, end } = getOvertimeWeekRange();
+      const tomorrowStr = getTodayLocalDateStr(new Date(Date.now() + 24 * 60 * 60 * 1000));
+      const rangeEnd = tomorrowStr > end ? tomorrowStr : end;
       const areaRecords = horasExtra
-        .filter((h) => h.areaId === areaId && h.authorizedDate >= start && h.authorizedDate <= end && h.verificationStatus !== 'cancelado')
+        .filter((h) => h.areaId === areaId
+          && h.verificationStatus !== 'cancelado'
+          && ((h.authorizedDate >= start && h.authorizedDate <= end) || h.authorizedDate === tomorrowStr))
         .sort((a, b) => (a.authorizedDate === b.authorizedDate
           ? String(a.operarioName).localeCompare(String(b.operarioName))
           : a.authorizedDate.localeCompare(b.authorizedDate)));
@@ -1286,7 +1294,7 @@ const ProduccionPage = () => {
         doc.setFontSize(9);
         doc.setTextColor(...DARK);
         doc.text(`Área: ${areaName}`, boxX + 35, 21, { align: 'center' });
-        doc.text(`Semana: ${start} al ${end}`, boxX + 35, 26, { align: 'center' });
+        doc.text(`Semana: ${start} al ${rangeEnd}`, boxX + 35, 26, { align: 'center' });
 
         doc.setDrawColor(...PRIMARY);
         doc.setLineWidth(1);
@@ -1401,7 +1409,7 @@ const ProduccionPage = () => {
       doc.setTextColor(150, 150, 150);
       doc.text(`Generado el ${new Date().toLocaleString('es-MX')} por ${user?.name || 'Usuario'} — Sistema Dicrejart`, MARGIN, 290);
 
-      doc.save(`HorasExtra_${areaName.replace(/\s+/g, '-')}_${start}_a_${end}.pdf`);
+      doc.save(`HorasExtra_${areaName.replace(/\s+/g, '-')}_${start}_a_${rangeEnd}.pdf`);
     } catch (error) {
       console.error('Error al generar el PDF de horas extra del área:', error);
       toast.danger('No se pudo generar el PDF. Intenta de nuevo.');
