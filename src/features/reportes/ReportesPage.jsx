@@ -75,6 +75,14 @@ const ReportesPage = () => {
   // semana en curso, negativo = semanas anteriores, positivo = futuras (si ya se
   // programaron horas extra por adelantado)
   const [overtimeWeekOffset, setOvertimeWeekOffset] = useState(0);
+  // Filtro propio del resumen semanal de horas extra — independiente de `areaFilter`
+  // (ese filtra las gráficas de producción/calidad/actividades de más abajo; si se
+  // reusara aquí, cambiar de área en este resumen también les afectaría a ellas sin
+  // que el usuario lo esperara). El acordeón por área arranca todo colapsado para que
+  // el resumen sea compacto — cada área se expande solo si el usuario la abre.
+  const [overtimeAreaFilter, setOvertimeAreaFilter] = useState('todos');
+  const [overtimeSearchQuery, setOvertimeSearchQuery] = useState('');
+  const [expandedOvertimeAreas, setExpandedOvertimeAreas] = useState(() => new Set());
 
   const toast = useToast();
   const { historialProduccion, juegos } = useProduccion();
@@ -129,6 +137,32 @@ const ReportesPage = () => {
   const overtimeWeekTotalHoras = weeklyOvertimeList.reduce((sum, he) => sum + (Number(he.overtimeHours) || 0), 0);
   const overtimeWeekTotalColaboradores = new Set(weeklyOvertimeList.map((he) => he.operarioId)).size;
   const getAreaLabel = (areaId) => AREAS.find((a) => a.id === areaId)?.name || areaId;
+
+  // Filtro de área + búsqueda por nombre sobre overtimeByArea, con el subtotal de horas
+  // de cada área ya calculado — así el encabezado colapsado de cada área alcanza a
+  // mostrar el total sin tener que expandirla.
+  const filteredOvertimeByArea = React.useMemo(() => {
+    const query = overtimeSearchQuery.trim().toLowerCase();
+    return overtimeByArea
+      .filter(([areaId]) => overtimeAreaFilter === 'todos' || areaId === overtimeAreaFilter)
+      .map(([areaId, entries]) => {
+        const filteredEntries = query
+          ? entries.filter((e) => e.operarioName?.toLowerCase().includes(query))
+          : entries;
+        const areaTotalHours = filteredEntries.reduce((sum, e) => sum + e.totalHours, 0);
+        return { areaId, entries: filteredEntries, areaTotalHours };
+      })
+      .filter((group) => group.entries.length > 0);
+  }, [overtimeByArea, overtimeAreaFilter, overtimeSearchQuery]);
+
+  const toggleOvertimeAreaExpanded = (areaId) => {
+    setExpandedOvertimeAreas((prev) => {
+      const next = new Set(prev);
+      if (next.has(areaId)) next.delete(areaId);
+      else next.add(areaId);
+      return next;
+    });
+  };
 
   // ============================================
   // PROCESAMIENTO DE DATOS PARA GRÁFICAS
@@ -675,49 +709,101 @@ const ReportesPage = () => {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
             <span style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', backgroundColor: '#fef3c7', color: '#92400e', fontWeight: 'bold' }}>
               Total: {overtimeWeekTotalHoras}h
             </span>
             <span style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', backgroundColor: 'var(--color-gray-100)', color: 'var(--color-gray-600)', fontWeight: 'bold' }}>
               {overtimeWeekTotalColaboradores} colaborador(es)
             </span>
+
+            {/* Filtros propios de este resumen — no afectan las gráficas de más abajo */}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                placeholder="🔎 Buscar colaborador..."
+                value={overtimeSearchQuery}
+                onChange={(e) => setOvertimeSearchQuery(e.target.value)}
+                style={{
+                  fontSize: '12.5px', padding: '5px 10px', borderRadius: '6px',
+                  border: '1px solid var(--color-gray-300)', backgroundColor: 'var(--input-bg, var(--color-white))',
+                  color: 'var(--color-dark)', minWidth: '160px',
+                }}
+              />
+              <select
+                value={overtimeAreaFilter}
+                onChange={(e) => setOvertimeAreaFilter(e.target.value)}
+                style={{
+                  fontSize: '12.5px', padding: '5px 8px', borderRadius: '6px',
+                  border: '1px solid var(--color-gray-300)', backgroundColor: 'var(--input-bg, var(--color-white))',
+                  color: 'var(--color-dark)',
+                }}
+              >
+                {AREAS.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          {overtimeByArea.length === 0 ? (
+          {filteredOvertimeByArea.length === 0 ? (
             <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: 'var(--space-4) 0' }}>
-              No se registraron horas extra en esta semana.
+              {overtimeByArea.length === 0 ? 'No se registraron horas extra en esta semana.' : 'Ningún colaborador coincide con ese filtro.'}
             </p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-              {overtimeByArea.map(([areaId, entries]) => (
-                <div key={areaId}>
-                  <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: 'var(--color-gray-700)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-                    {getAreaLabel(areaId)}
-                  </h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {entries.map((e) => (
-                      <div
-                        key={e.operarioId}
-                        style={{
-                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                          padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--color-gray-200)',
-                          backgroundColor: 'var(--color-gray-50)', fontSize: '13px',
-                        }}
-                      >
-                        <span>
-                          <strong>{e.operarioName}</strong>
-                          <span style={{ color: 'var(--color-gray-500)', marginLeft: '6px' }}>({e.operarioPuesto})</span>
-                        </span>
-                        <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                          <span style={{ color: 'var(--color-gray-500)', fontSize: '12px' }}>{e.authCount} autorización(es)</span>
-                          <strong style={{ color: '#92400e' }}>{e.totalHours}h</strong>
-                        </span>
+            // Acordeón colapsado por defecto — cada área es un renglón compacto (nombre +
+            // colaboradores + total) que se expande solo si se necesita ver el detalle
+            // por persona, en vez de listar siempre las 30+ filas individuales.
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {filteredOvertimeByArea.map(({ areaId, entries, areaTotalHours }) => {
+                const isExpanded = expandedOvertimeAreas.has(areaId);
+                return (
+                  <div key={areaId} style={{ border: '1px solid var(--color-gray-200)', borderRadius: '8px', overflow: 'hidden' }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleOvertimeAreaExpanded(areaId)}
+                      style={{
+                        width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '8px 12px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                        backgroundColor: 'var(--color-gray-50)', fontSize: '13px',
+                      }}
+                    >
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '10px', color: 'var(--color-gray-500)' }}>{isExpanded ? '▾' : '▸'}</span>
+                        <strong style={{ color: 'var(--color-gray-700)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                          {getAreaLabel(areaId)}
+                        </strong>
+                        <span style={{ color: 'var(--color-gray-500)', fontSize: '12px' }}>({entries.length} colaborador{entries.length !== 1 ? 'es' : ''})</span>
+                      </span>
+                      <strong style={{ color: '#92400e' }}>{areaTotalHours}h</strong>
+                    </button>
+
+                    {isExpanded && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '5px', padding: '8px' }}>
+                        {entries.map((e) => (
+                          <div
+                            key={e.operarioId}
+                            style={{
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              padding: '5px 10px', borderRadius: '5px', border: '1px solid var(--color-gray-200)',
+                              backgroundColor: 'var(--color-gray-50)', fontSize: '12.5px',
+                            }}
+                          >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <strong>{e.operarioName}</strong>
+                              <span style={{ color: 'var(--color-gray-500)', marginLeft: '4px' }}>({e.operarioPuesto})</span>
+                            </span>
+                            <span style={{ display: 'flex', gap: '6px', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                              <span style={{ color: 'var(--color-gray-500)', fontSize: '11px' }}>{e.authCount}×</span>
+                              <strong style={{ color: '#92400e' }}>{e.totalHours}h</strong>
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>
