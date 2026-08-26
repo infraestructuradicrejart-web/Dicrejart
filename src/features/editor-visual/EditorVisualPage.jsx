@@ -460,7 +460,7 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
  */
 const EditorVisualPage = ({ standalone = false }) => {
   const navigate = useNavigate();
-  const { proyectos, juegos, addProject, addGame, updateProject, setQualityVerdict, assignQualityAudit } = useProduccion();
+  const { proyectos, juegos, addProject, addGame, updateProject, setQualityVerdict, assignQualityAudit, cancelQualityAudit } = useProduccion();
   const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
@@ -619,6 +619,32 @@ const EditorVisualPage = ({ standalone = false }) => {
   // Limpia / vacía todos los nodos del lienzo actual
   const handleClearCurrentCanvasNodes = () => {
     if (!canEditDiagram) return;
+    // Antes de vaciar, cancelar (y avisar) cualquier semáforo de Auditoría de Calidad
+    // que siga pendiente — "Vaciar Lienzo" no pasa por performDeleteNode/handleCloseNode
+    // (borra todo de golpe), así que sin esto una auditoría asignada se quedaba
+    // "huérfana" en Firestore sin que la persona asignada se enterara de que ya no
+    // aplica.
+    nodes
+      .filter((n) => n.type === 'auditoria-calidad' && n.refId)
+      .forEach((n) => {
+        const [gameId, areaId] = n.refId.split('::');
+        const game = juegos.find((j) => j.id === gameId);
+        if (!game) return;
+        cancelQualityAudit(gameId, areaId).then((res) => {
+          if (res?.ok && res.canceledAssignee?.id) {
+            const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+            sendSystemChatMessage({
+              targetUserId: res.canceledAssignee.id,
+              targetUserName: res.canceledAssignee.name,
+              text: `🚫 [Auditoría de Calidad Cancelada] Se vació el lienzo y se quitó la auditoría de la entrega de ${areaName} en "${game.name}" — ya no es necesario que la revises.`,
+              senderId: user?.id || 'sistema',
+              senderName: user?.name || 'Sistema Dicrejart',
+              isGlobal: false,
+            });
+          }
+        });
+      });
+
     setNodes([]);
     setEdges([]);
     saveToFirestore([], []);
@@ -1540,6 +1566,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   /** Quita un nodo del lienzo (y sus cables) — solo retira la representación visual del lienzo, conservando los datos en la actividad */
   const performDeleteNode = (nodeId) => {
+    const deletedNode = findNode(nodeId);
     const nextNodes = nodes.filter((n) => n.id !== nodeId);
     const nextEdges = edges.filter((ed) => ed.from !== nodeId && ed.to !== nodeId);
     setNodes(nextNodes);
@@ -1552,6 +1579,30 @@ const EditorVisualPage = ({ standalone = false }) => {
     });
     setSelectedEdgeId(null);
     saveToFirestore(nextNodes, nextEdges);
+
+    // Al borrar un semáforo de Auditoría de Calidad, se cancela la asignación (solo si
+    // seguía pendiente sin resolver — ver cancelQualityAudit) y se avisa a quien estaba
+    // asignado que ya no tiene que auditar esa entrega.
+    if (deletedNode?.type === 'auditoria-calidad') {
+      const [gameId, areaId] = (deletedNode.refId || '').split('::');
+      const game = juegos.find((j) => j.id === gameId);
+      if (game) {
+        cancelQualityAudit(gameId, areaId).then((res) => {
+          if (res?.ok && res.canceledAssignee?.id) {
+            const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+            sendSystemChatMessage({
+              targetUserId: res.canceledAssignee.id,
+              targetUserName: res.canceledAssignee.name,
+              text: `🚫 [Auditoría de Calidad Cancelada] Se quitó del lienzo la auditoría de la entrega de ${areaName} en "${game.name}" — ya no es necesario que la revises.`,
+              senderId: user?.id || 'sistema',
+              senderName: user?.name || 'Sistema Dicrejart',
+              isGlobal: false,
+            });
+            toast.info(`🚫 Auditoría cancelada — se avisó a ${res.canceledAssignee.name}.`);
+          }
+        });
+      }
+    }
   };
 
   const handleCloseNode = (nodeId) => {
@@ -1827,6 +1878,7 @@ const EditorVisualPage = ({ standalone = false }) => {
               const areaNode = fromNode.type === 'area' ? fromNode : toNode.type === 'area' ? toNode : null;
               const blockNode = fromNode.type === 'bloque' ? fromNode : toNode.type === 'bloque' ? toNode : null;
               const recursoNode = fromNode.type === 'recurso' ? fromNode : toNode.type === 'recurso' ? toNode : null;
+              const auditNode = fromNode.type === 'auditoria-calidad' ? fromNode : toNode.type === 'auditoria-calidad' ? toNode : null;
 
               // 1. Proyecto ↔ Juego: Vincular el juego al proyecto inmediatamente
               if (projNode && gameNode) {
@@ -2068,6 +2120,35 @@ const EditorVisualPage = ({ standalone = false }) => {
                     });
 
                     toast.success(`📢 Supervisor (${supervisor.name}) notificado sobre el modelo "${gameName}".`);
+                  }
+                }
+              }
+
+              // 13. Actividad ↔ Auditoría de Calidad: la asignación automática a Calidad
+              // pasa AQUÍ (al conectarse de verdad a la cadena), no al solo agregar el
+              // nodo al lienzo — así un semáforo suelto sin conectar no genera avisos.
+              if (actNode && auditNode) {
+                const [gameId, areaId] = (auditNode.refId || '').split('::');
+                const game = juegos.find((j) => j.id === gameId);
+                const calidadUser = users.find((u) => u.roleType === 'calidad');
+                if (game && !game.qualityVerdict?.[areaId]?.assignedTo) {
+                  if (!calidadUser) {
+                    toast.warning('⚠️ No hay ningún usuario con rol Calidad registrado — no se pudo asignar esta auditoría automáticamente. Créalo en Admin → Usuarios del Sistema.');
+                  } else {
+                    assignQualityAudit(gameId, areaId, calidadUser.id, calidadUser.name).then((res) => {
+                      if (res?.ok) {
+                        const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+                        sendSystemChatMessage({
+                          targetUserId: calidadUser.id,
+                          targetUserName: calidadUser.name,
+                          text: `🔍 [Auditoría de Calidad] Se te asignó la auditoría de la entrega de ${areaName} en "${game.name}". Revisa el semáforo en el lienzo cuando esa área termine.`,
+                          senderId: user?.id || 'sistema',
+                          senderName: user?.name || 'Sistema Dicrejart',
+                          isGlobal: false,
+                        });
+                        toast.success(`🔍 Auditoría de "${areaName}" asignada a ${calidadUser.name}.`);
+                      }
+                    });
                   }
                 }
               }
@@ -2658,31 +2739,10 @@ const EditorVisualPage = ({ standalone = false }) => {
     closeNodeModal();
     const meta = NODE_TYPES[type];
     toast.success(`✅ Nodo de ${meta?.label || type} agregado al lienzo.`);
-
-    // Asignación automática de Auditoría de Calidad — solo la primera vez que se agrega
-    // este semáforo (assignQualityAudit no reasigna si ya tiene alguien). Se elige al
-    // primer usuario con rol Calidad y se le avisa por mensaje DIRECTO (isGlobal: false),
-    // no al chat general — así solo se entera quien de verdad debe auditar.
-    if (type === 'auditoria-calidad') {
-      const [gameId, areaId] = (entityId || '').split('::');
-      const game = juegos.find((j) => j.id === gameId);
-      const calidadUser = users.find((u) => u.roleType === 'calidad');
-      if (game && calidadUser && !game.qualityVerdict?.[areaId]?.assignedTo) {
-        assignQualityAudit(gameId, areaId, calidadUser.id, calidadUser.name).then((res) => {
-          if (res?.ok) {
-            const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
-            sendSystemChatMessage({
-              targetUserId: calidadUser.id,
-              targetUserName: calidadUser.name,
-              text: `🔍 [Auditoría de Calidad] Se te asignó la auditoría de la entrega de ${areaName} en "${game.name}". Revisa el semáforo en el lienzo cuando esa área termine.`,
-              senderId: user?.id || 'sistema',
-              senderName: user?.name || 'Sistema Dicrejart',
-              isGlobal: false,
-            });
-          }
-        });
-      }
-    }
+    // Nota: la asignación automática de Auditoría de Calidad NO ocurre aquí — pasa al
+    // conectar el nodo por cable a una Actividad (ver bloque "13." en el handler de
+    // conexión de cables), para que un semáforo agregado pero sin conectar no dispare
+    // avisos de algo que todavía no forma parte de ningún flujo real.
   };
 
   const handleCreateNewProjectNode = async () => {

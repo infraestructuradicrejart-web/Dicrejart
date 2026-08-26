@@ -1860,10 +1860,11 @@ export const ProduccionProvider = ({ children }) => {
 
   /**
    * Asigna automáticamente a la persona de Calidad responsable de una auditoría (nodo
-   * semáforo del lienzo) — solo la primera vez que se agrega ese nodo al lienzo (si ya
-   * tiene alguien asignado, no lo cambia). El nombre/uid a asignar lo resuelve quien
-   * llama (EditorVisualPage.jsx, que ya tiene acceso a `users`); esta función solo
-   * escribe, sin acoplar ProduccionContext al padrón de usuarios.
+   * semáforo del lienzo) — se llama al conectar el semáforo por cable a una actividad
+   * real (no al solo agregarlo al lienzo), y solo si nadie estaba ya asignado. El
+   * nombre/uid a asignar lo resuelve quien llama (EditorVisualPage.jsx, que ya tiene
+   * acceso a `users`); esta función solo escribe, sin acoplar ProduccionContext al
+   * padrón de usuarios.
    */
   const assignQualityAudit = useCallback(async (gameId, areaId, assignedTo, assignedToName) => {
     if (!db) return { ok: false, error: 'Firestore no está inicializado' };
@@ -1879,6 +1880,34 @@ export const ProduccionProvider = ({ children }) => {
       return { ok: true };
     } catch (error) {
       console.error('Error al asignar auditoría de calidad:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
+   * Cancela la asignación de una auditoría de calidad (al borrar el nodo semáforo del
+   * lienzo) — SOLO si sigue 'pendiente' sin resolver todavía. Si Calidad ya marcó
+   * Cumple/No Cumple, ese veredicto real no se toca: otros nodos conectados río abajo
+   * (la Actividad de Recepción) pueden depender de él, y borrar un nodo del lienzo no
+   * debe deshacer una decisión de calidad ya tomada. Devuelve a quién había que avisar
+   * (si a alguien) para que quien llama mande la notificación de cancelación.
+   */
+  const cancelQualityAudit = useCallback(async (gameId, areaId) => {
+    if (!db) return { ok: false };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false };
+    const current = j.qualityVerdict?.[areaId];
+    if (!current || current.status !== 'pendiente' || !current.assignedTo) {
+      return { ok: false, skipped: true };
+    }
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`qualityVerdict.${areaId}`]: { status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' },
+      });
+      logAudit({ user, module: 'produccion', action: 'Canceló asignación de auditoría de calidad', details: `${j.name} (${areaId}) — ${current.assignedToName}` });
+      return { ok: true, canceledAssignee: { id: current.assignedTo, name: current.assignedToName } };
+    } catch (error) {
+      console.error('Error al cancelar auditoría de calidad:', error);
       return { ok: false, error: error.message };
     }
   }, [juegos, user]);
@@ -2000,6 +2029,7 @@ export const ProduccionProvider = ({ children }) => {
       rejectQualityReview,
       setQualityVerdict,
       assignQualityAudit,
+      cancelQualityAudit,
       approveReceptionForPT,
       returnDeliveryForReview,
     }),
@@ -2054,6 +2084,7 @@ export const ProduccionProvider = ({ children }) => {
       rejectQualityReview,
       setQualityVerdict,
       assignQualityAudit,
+      cancelQualityAudit,
       approveReceptionForPT,
       returnDeliveryForReview,
     ]
