@@ -1239,28 +1239,33 @@ const ProduccionPage = () => {
   };
 
   /**
-   * Exporta a PDF las horas extra autorizadas de ESTA área en la semana de horas extra en
-   * curso (jueves a miércoles, ver getOvertimeWeekRange), más el día siguiente al de hoy
-   * aunque caiga fuera de esa semana — igual que el reporte que se manda a RH (hoy +
-   * próximas), para que un supervisor consultando esto un miércoles (último día de la
-   * semana) no se quede sin ver las horas ya autorizadas para el jueves siguiente. Con
-   * fines de control para el supervisor/encargado del área. Solo incluye horario
-   * autorizado y total de horas (no correcciones de horario real ni verificación de
-   * cumplimiento).
+   * Exporta a PDF las horas extra autorizadas de ESTA área — con fines de control para el
+   * supervisor/encargado del área. Tres secciones: (1) tabla de la semana de horas extra
+   * en curso (jueves a miércoles, ver getOvertimeWeekRange), (2) resumen de horas
+   * acumuladas por colaborador esa misma semana "al corte", y (3) una sección aparte con
+   * las horas ya autorizadas para MAÑANA, aunque caigan fuera de la semana en curso
+   * (mismo criterio que el reporte que se manda a RH: hoy/semana + próximas) — así un
+   * supervisor que consulta esto un miércoles (último día de la semana) sí ve lo ya
+   * autorizado para el jueves siguiente. Solo incluye horario autorizado y total de horas
+   * (no correcciones de horario real ni verificación de cumplimiento).
    */
   const handleExportHorasExtraAreaPdf = async () => {
     setIsExportingHorasExtraPdf(true);
     try {
       const { start, end } = getOvertimeWeekRange();
       const tomorrowStr = getTodayLocalDateStr(new Date(Date.now() + 24 * 60 * 60 * 1000));
-      const rangeEnd = tomorrowStr > end ? tomorrowStr : end;
-      const areaRecords = horasExtra
-        .filter((h) => h.areaId === areaId
-          && h.verificationStatus !== 'cancelado'
-          && ((h.authorizedDate >= start && h.authorizedDate <= end) || h.authorizedDate === tomorrowStr))
-        .sort((a, b) => (a.authorizedDate === b.authorizedDate
-          ? String(a.operarioName).localeCompare(String(b.operarioName))
-          : a.authorizedDate.localeCompare(b.authorizedDate)));
+
+      const belongsToArea = (h) => h.areaId === areaId && h.verificationStatus !== 'cancelado';
+      const sortByDateThenName = (a, b) => (a.authorizedDate === b.authorizedDate
+        ? String(a.operarioName).localeCompare(String(b.operarioName))
+        : a.authorizedDate.localeCompare(b.authorizedDate));
+
+      const weekRecords = horasExtra
+        .filter((h) => belongsToArea(h) && h.authorizedDate >= start && h.authorizedDate <= end)
+        .sort(sortByDateThenName);
+      const tomorrowRecords = horasExtra
+        .filter((h) => belongsToArea(h) && h.authorizedDate === tomorrowStr)
+        .sort(sortByDateThenName);
 
       const { default: jsPDF } = await import('jspdf');
       const { rasterizeImage, logoUrl } = await import('../../utils/pdfBranding');
@@ -1294,12 +1299,30 @@ const ProduccionPage = () => {
         doc.setFontSize(9);
         doc.setTextColor(...DARK);
         doc.text(`Área: ${areaName}`, boxX + 35, 21, { align: 'center' });
-        doc.text(`Semana: ${start} al ${rangeEnd}`, boxX + 35, 26, { align: 'center' });
+        doc.text(`Semana: ${start} al ${end}`, boxX + 35, 26, { align: 'center' });
 
         doc.setDrawColor(...PRIMARY);
         doc.setLineWidth(1);
         doc.line(MARGIN, 33, MARGIN + WIDTH, 33);
         doc.setLineWidth(0.2);
+      };
+
+      /** Reinicia en una página nueva (con encabezado) si no cabe `neededH` mm antes del pie de página. */
+      const ensurePageForY = (yPos, neededH) => {
+        if (yPos + neededH <= 280) return yPos;
+        doc.addPage();
+        drawHeader();
+        return 40;
+      };
+
+      /** Subtítulo de sección, con salto de página si hace falta. */
+      const drawSectionTitle = (yStart, title) => {
+        const y = ensurePageForY(yStart + 6, 10);
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(...SECONDARY);
+        doc.text(title, MARGIN, y);
+        return y + 4;
       };
 
       // Colaborador y Autorizó son las únicas columnas con texto de largo variable (nombres
@@ -1337,79 +1360,134 @@ const ProduccionPage = () => {
         return '—';
       };
 
-      drawHeader();
-      let y = drawTableHeader(42);
+      /** Dibuja una tabla de registros de horas extra (misma forma para semana y mañana). Regresa {y, totalHoras}. */
+      const drawRecordsTable = (records, yStart, emptyMessage) => {
+        let y = yStart;
+        let totalHoras = 0;
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(FONT_SIZE);
 
-      doc.setFont(undefined, 'normal');
-      doc.setFontSize(FONT_SIZE);
-      let totalHoras = 0;
-
-      if (areaRecords.length === 0) {
-        doc.setDrawColor(...BORDER);
-        doc.rect(MARGIN, y, WIDTH, MIN_ROW_H);
-        doc.setTextColor(...DARK);
-        doc.text('No se autorizaron horas extra en esta área durante la semana en curso.', MARGIN + 2, y + TOP_PAD);
-        y += MIN_ROW_H;
-      }
-
-      areaRecords.forEach((h, idx) => {
-        const nameLines = doc.splitTextToSize(String(h.operarioName || '—'), colWidths[1] - 4);
-        const authLines = doc.splitTextToSize(String(h.authorizedBy || '—'), colWidths[5] - 4);
-        const linesNeeded = Math.max(nameLines.length, authLines.length, 1);
-        const currentRowH = Math.max(MIN_ROW_H, TOP_PAD + (linesNeeded - 1) * LINE_H + 3);
-
-        if (y + currentRowH > 280) {
-          doc.addPage();
-          drawHeader();
-          y = drawTableHeader(42);
-          doc.setFont(undefined, 'normal');
-          doc.setFontSize(FONT_SIZE);
+        if (records.length === 0) {
+          doc.setDrawColor(...BORDER);
+          doc.rect(MARGIN, y, WIDTH, MIN_ROW_H);
+          doc.setTextColor(...DARK);
+          doc.text(emptyMessage, MARGIN + 2, y + TOP_PAD);
+          y += MIN_ROW_H;
+          return { y, totalHoras };
         }
-        if (idx % 2 === 1) {
-          doc.setFillColor(...STRIPE);
-          doc.rect(MARGIN, y, WIDTH, currentRowH, 'F');
-        }
-        doc.setDrawColor(...BORDER);
-        doc.rect(MARGIN, y, WIDTH, currentRowH);
-        let cx = MARGIN;
-        colWidths.forEach((w) => {
-          cx += w;
-          doc.line(cx, y, cx, y + currentRowH);
+
+        records.forEach((h, idx) => {
+          const nameLines = doc.splitTextToSize(String(h.operarioName || '—'), colWidths[1] - 4);
+          const authLines = doc.splitTextToSize(String(h.authorizedBy || '—'), colWidths[5] - 4);
+          const linesNeeded = Math.max(nameLines.length, authLines.length, 1);
+          const currentRowH = Math.max(MIN_ROW_H, TOP_PAD + (linesNeeded - 1) * LINE_H + 3);
+
+          if (y + currentRowH > 280) {
+            doc.addPage();
+            drawHeader();
+            y = drawTableHeader(42);
+            doc.setFont(undefined, 'normal');
+            doc.setFontSize(FONT_SIZE);
+          }
+          if (idx % 2 === 1) {
+            doc.setFillColor(...STRIPE);
+            doc.rect(MARGIN, y, WIDTH, currentRowH, 'F');
+          }
+          doc.setDrawColor(...BORDER);
+          doc.rect(MARGIN, y, WIDTH, currentRowH);
+          let cx = MARGIN;
+          colWidths.forEach((w) => {
+            cx += w;
+            doc.line(cx, y, cx, y + currentRowH);
+          });
+
+          doc.setTextColor(...DARK);
+          cx = MARGIN;
+          doc.text(h.authorizedDate || '—', cx + 2, y + TOP_PAD); cx += colWidths[0];
+          doc.text(nameLines, cx + 2, y + TOP_PAD); cx += colWidths[1];
+          doc.text(describeBloque(h), cx + 2, y + TOP_PAD); cx += colWidths[2];
+          doc.text(`${formatHourLabel(h.startHour)}-${formatHourLabel(h.endHour)}`, cx + 2, y + TOP_PAD); cx += colWidths[3];
+          doc.text(String(h.overtimeHours ?? '—'), cx + 2, y + TOP_PAD); cx += colWidths[4];
+          doc.text(authLines, cx + 2, y + TOP_PAD);
+          y += currentRowH;
+          totalHoras += Number(h.overtimeHours) || 0;
         });
 
-        doc.setTextColor(...DARK);
-        cx = MARGIN;
-        doc.text(h.authorizedDate || '—', cx + 2, y + TOP_PAD); cx += colWidths[0];
-        doc.text(nameLines, cx + 2, y + TOP_PAD); cx += colWidths[1];
-        doc.text(describeBloque(h), cx + 2, y + TOP_PAD); cx += colWidths[2];
-        doc.text(`${formatHourLabel(h.startHour)}-${formatHourLabel(h.endHour)}`, cx + 2, y + TOP_PAD); cx += colWidths[3];
-        doc.text(String(h.overtimeHours ?? '—'), cx + 2, y + TOP_PAD); cx += colWidths[4];
-        doc.text(authLines, cx + 2, y + TOP_PAD);
-        y += currentRowH;
-        totalHoras += Number(h.overtimeHours) || 0;
-      });
+        return { y, totalHoras };
+      };
 
-      if (y + MIN_ROW_H > 280) {
-        doc.addPage();
-        drawHeader();
-        y = 42;
+      /** Fila de total (misma franja destacada que ya se usaba). */
+      const drawTotalRow = (yStart, label) => {
+        const y = ensurePageForY(yStart, MIN_ROW_H);
+        doc.setFillColor(...STRIPE);
+        doc.rect(MARGIN, y, WIDTH, MIN_ROW_H, 'F');
+        doc.setDrawColor(...BORDER);
+        doc.rect(MARGIN, y, WIDTH, MIN_ROW_H);
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(8.5);
+        doc.setTextColor(...SECONDARY);
+        doc.text(label, MARGIN + 2, y + TOP_PAD);
+        return y + MIN_ROW_H;
+      };
+
+      // ---- 1. Tabla de la semana de horas extra en curso ----
+      drawHeader();
+      let y = drawTableHeader(42);
+      const week = drawRecordsTable(weekRecords, y, 'No se autorizaron horas extra en esta área durante la semana en curso.');
+      y = drawTotalRow(week.y, `Total semana: ${week.totalHoras}h en ${weekRecords.length} autorización(es)`);
+
+      // ---- 2. Resumen de horas acumuladas por colaborador, semana al corte ----
+      y = drawSectionTitle(y, '📊 Resumen por Colaborador (semana al corte)');
+      const summaryColWidths = [130, 52];
+      const byCollaborator = new Map();
+      weekRecords.forEach((h) => {
+        const name = h.operarioName || '—';
+        byCollaborator.set(name, (byCollaborator.get(name) || 0) + (Number(h.overtimeHours) || 0));
+      });
+      const summaryRows = [...byCollaborator.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+      if (summaryRows.length === 0) {
+        y = ensurePageForY(y, MIN_ROW_H);
+        doc.setDrawColor(...BORDER);
+        doc.rect(MARGIN, y, WIDTH, MIN_ROW_H);
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(FONT_SIZE);
+        doc.setTextColor(...DARK);
+        doc.text('Sin horas extra registradas esta semana.', MARGIN + 2, y + TOP_PAD);
+        y += MIN_ROW_H;
+      } else {
+        summaryRows.forEach(([name, hours], idx) => {
+          y = ensurePageForY(y, MIN_ROW_H);
+          if (idx % 2 === 1) {
+            doc.setFillColor(...STRIPE);
+            doc.rect(MARGIN, y, WIDTH, MIN_ROW_H, 'F');
+          }
+          doc.setDrawColor(...BORDER);
+          doc.rect(MARGIN, y, WIDTH, MIN_ROW_H);
+          doc.line(MARGIN + summaryColWidths[0], y, MARGIN + summaryColWidths[0], y + MIN_ROW_H);
+          doc.setFont(undefined, 'normal');
+          doc.setFontSize(FONT_SIZE);
+          doc.setTextColor(...DARK);
+          doc.text(name, MARGIN + 2, y + TOP_PAD);
+          doc.text(`${hours}h`, MARGIN + summaryColWidths[0] + 2, y + TOP_PAD);
+          y += MIN_ROW_H;
+        });
       }
-      doc.setFillColor(...STRIPE);
-      doc.rect(MARGIN, y, WIDTH, MIN_ROW_H, 'F');
-      doc.setDrawColor(...BORDER);
-      doc.rect(MARGIN, y, WIDTH, MIN_ROW_H);
-      doc.setFont(undefined, 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(...SECONDARY);
-      doc.text(`Total: ${totalHoras}h en ${areaRecords.length} autorización(es)`, MARGIN + 2, y + TOP_PAD);
-      y += MIN_ROW_H + 8;
+
+      // ---- 3. Horas extra ya autorizadas para MAÑANA, aparte (aunque caiga en otra semana) ----
+      y = drawSectionTitle(y, `🕒 Horas Extra Autorizadas para Mañana (${tomorrowStr})`);
+      y = ensurePageForY(y, MIN_ROW_H);
+      y = drawTableHeader(y);
+      const tomorrow = drawRecordsTable(tomorrowRecords, y, 'Sin horas extra autorizadas para mañana todavía.');
+      y = drawTotalRow(tomorrow.y, `Total mañana: ${tomorrow.totalHoras}h en ${tomorrowRecords.length} autorización(es)`);
+      y += 8;
 
       doc.setFont(undefined, 'normal');
       doc.setFontSize(7);
       doc.setTextColor(150, 150, 150);
       doc.text(`Generado el ${new Date().toLocaleString('es-MX')} por ${user?.name || 'Usuario'} — Sistema Dicrejart`, MARGIN, 290);
 
-      doc.save(`HorasExtra_${areaName.replace(/\s+/g, '-')}_${start}_a_${rangeEnd}.pdf`);
+      doc.save(`HorasExtra_${areaName.replace(/\s+/g, '-')}_${start}_a_${end}.pdf`);
     } catch (error) {
       console.error('Error al generar el PDF de horas extra del área:', error);
       toast.danger('No se pudo generar el PDF. Intenta de nuevo.');
