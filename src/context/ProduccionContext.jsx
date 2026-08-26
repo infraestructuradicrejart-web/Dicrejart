@@ -1978,6 +1978,94 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, user]);
 
   /**
+   * Variante de `setQualityVerdict` para un Proyecto que no tiene ningún Juego asociado
+   * (no hay ruta de fabricación por áreas) — un solo veredicto para todo el proyecto, en
+   * `proyectos/{id}.qualityAuditProject`, sin indexar por área.
+   */
+  const setQualityVerdictProject = useCallback(async (projectId, status, reviewerName, notes = '') => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    if (status === 'no_cumple' && !notes.trim()) {
+      return { ok: false, error: 'Indica el motivo por el que no cumple.' };
+    }
+    const p = proyectos.find((pr) => pr.id === projectId);
+    if (!p) return { ok: false, error: 'Proyecto no encontrado' };
+    const current = p.qualityAuditProject || {};
+    try {
+      await updateDoc(doc(db, 'proyectos', projectId), {
+        qualityAuditProject: {
+          ...current,
+          status,
+          reviewedBy: reviewerName,
+          reviewedAt: new Date().toISOString(),
+          notes: notes || '',
+        },
+      });
+      logAudit({ user, module: 'produccion', action: 'Marcó semáforo de calidad de un Proyecto sin Juego', details: `${p.name}: ${status}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al guardar semáforo de calidad de proyecto en Firestore:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [proyectos, user]);
+
+  /** Variante de `setQualityVerdictEvidenceLink` para auditoría a nivel Proyecto. */
+  const setQualityVerdictEvidenceLinkProject = useCallback(async (projectId, evidenceLink) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    const p = proyectos.find((pr) => pr.id === projectId);
+    if (!p) return { ok: false, error: 'Proyecto no encontrado' };
+    const current = p.qualityAuditProject || { status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' };
+    try {
+      await updateDoc(doc(db, 'proyectos', projectId), {
+        qualityAuditProject: { ...current, evidenceLink: evidenceLink.trim() },
+      });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al guardar enlace de evidencia de auditoría de proyecto:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [proyectos]);
+
+  /** Variante de `assignQualityAudit` para auditoría a nivel Proyecto. */
+  const assignQualityAuditProject = useCallback(async (projectId, assignedTo, assignedToName) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    const p = proyectos.find((pr) => pr.id === projectId);
+    if (!p) return { ok: false, error: 'Proyecto no encontrado' };
+    const current = p.qualityAuditProject || { status: 'pendiente', reviewedBy: null, reviewedAt: null, notes: '' };
+    if (current.assignedTo) return { ok: true, alreadyAssigned: true };
+    try {
+      await updateDoc(doc(db, 'proyectos', projectId), {
+        qualityAuditProject: { ...current, assignedTo, assignedToName },
+      });
+      logAudit({ user, module: 'produccion', action: 'Asignó automáticamente una auditoría de calidad de Proyecto', details: `${p.name} -> ${assignedToName}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al asignar auditoría de calidad de proyecto:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [proyectos, user]);
+
+  /** Variante de `cancelQualityAudit` para auditoría a nivel Proyecto. */
+  const cancelQualityAuditProject = useCallback(async (projectId) => {
+    if (!db) return { ok: false };
+    const p = proyectos.find((pr) => pr.id === projectId);
+    if (!p) return { ok: false };
+    const current = p.qualityAuditProject;
+    if (!current || current.status !== 'pendiente' || !current.assignedTo) {
+      return { ok: false, skipped: true };
+    }
+    try {
+      await updateDoc(doc(db, 'proyectos', projectId), {
+        qualityAuditProject: { status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' },
+      });
+      logAudit({ user, module: 'produccion', action: 'Canceló asignación de auditoría de calidad de Proyecto', details: `${p.name} — ${current.assignedToName}` });
+      return { ok: true, canceledAssignee: { id: current.assignedTo, name: current.assignedToName } };
+    } catch (error) {
+      console.error('Error al cancelar auditoría de calidad de proyecto:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [proyectos, user]);
+
+  /**
    * Calidad da el visto bueno final, como testigo, para que Producto Terminado pueda
    * recibir físicamente una entrega ya notificada — aprobación adicional a la que ya se
    * dio antes de notificar (qualityReview), sin checklist ni motivo, solo confirma "todo
@@ -2096,6 +2184,10 @@ export const ProduccionProvider = ({ children }) => {
       setQualityVerdictEvidenceLink,
       assignQualityAudit,
       cancelQualityAudit,
+      setQualityVerdictProject,
+      setQualityVerdictEvidenceLinkProject,
+      assignQualityAuditProject,
+      cancelQualityAuditProject,
       approveReceptionForPT,
       returnDeliveryForReview,
     }),
@@ -2152,6 +2244,10 @@ export const ProduccionProvider = ({ children }) => {
       setQualityVerdictEvidenceLink,
       assignQualityAudit,
       cancelQualityAudit,
+      setQualityVerdictProject,
+      setQualityVerdictEvidenceLinkProject,
+      assignQualityAuditProject,
+      cancelQualityAuditProject,
       approveReceptionForPT,
       returnDeliveryForReview,
     ]

@@ -33,7 +33,7 @@ import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { compressImage } from '../../utils/imageCompressor';
-import { isReadOnlySection, canUserEditRoute } from '../../utils/roleAccess';
+import { isReadOnlySection, canUserEditRoute, canUserEditProjectAudit } from '../../utils/roleAccess';
 import RegisterDeliveryModal from './RegisterDeliveryModal';
 import styles from './EditorVisualPage.module.css';
 
@@ -460,7 +460,11 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
  */
 const EditorVisualPage = ({ standalone = false }) => {
   const navigate = useNavigate();
-  const { proyectos, juegos, addProject, addGame, updateProject, setQualityVerdict, setQualityVerdictEvidenceLink, assignQualityAudit, cancelQualityAudit } = useProduccion();
+  const {
+    proyectos, juegos, addProject, addGame, updateProject,
+    setQualityVerdict, setQualityVerdictEvidenceLink, assignQualityAudit, cancelQualityAudit,
+    setQualityVerdictProject, setQualityVerdictEvidenceLinkProject, assignQualityAuditProject, cancelQualityAuditProject,
+  } = useProduccion();
   const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
@@ -619,6 +623,37 @@ const EditorVisualPage = ({ standalone = false }) => {
     currentColor: '#ea580c',
   });
 
+  /**
+   * Cancela (si sigue pendiente sin resolver) la asignación de auditoría ligada a un
+   * nodo semáforo, en cualquiera de los dos modos (Juego+Área o Proyecto sin Juego), y
+   * notifica por chat directo a quien estaba asignado. Único punto que parsea `refId` —
+   * antes `performDeleteNode` y "Vaciar Lienzo" lo hacían cada uno por su cuenta, y con
+   * el prefijo `proyecto::` ambos habrían quedado rotos (tratando "proyecto" como si
+   * fuera un gameId, sin cancelar ni avisar nada).
+   */
+  const cancelAuditForNode = async (node, contextLabel) => {
+    if (!node?.refId) return null;
+    const parts = node.refId.split('::');
+    const isProject = parts[0] === 'proyecto';
+    const res = isProject
+      ? await cancelQualityAuditProject(parts[1])
+      : await cancelQualityAudit(parts[0], parts[1]);
+    if (res?.ok && res.canceledAssignee?.id) {
+      const targetLabel = isProject
+        ? `del Proyecto "${proyectos.find((p) => p.id === parts[1])?.name || parts[1]}" (sin Juego)`
+        : `de la entrega de ${dynamicAreas.find((a) => a.id === parts[1])?.name || parts[1]} en "${juegos.find((j) => j.id === parts[0])?.name || parts[0]}"`;
+      sendSystemChatMessage({
+        targetUserId: res.canceledAssignee.id,
+        targetUserName: res.canceledAssignee.name,
+        text: `🚫 [Auditoría de Calidad Cancelada] ${contextLabel} la auditoría ${targetLabel} — ya no es necesario que la revises.`,
+        senderId: user?.id || 'sistema',
+        senderName: user?.name || 'Sistema Dicrejart',
+        isGlobal: false,
+      });
+    }
+    return res;
+  };
+
   // Limpia / vacía todos los nodos del lienzo actual
   const handleClearCurrentCanvasNodes = () => {
     if (!canEditDiagram) return;
@@ -629,24 +664,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     // aplica.
     nodes
       .filter((n) => n.type === 'auditoria-calidad' && n.refId)
-      .forEach((n) => {
-        const [gameId, areaId] = n.refId.split('::');
-        const game = juegos.find((j) => j.id === gameId);
-        if (!game) return;
-        cancelQualityAudit(gameId, areaId).then((res) => {
-          if (res?.ok && res.canceledAssignee?.id) {
-            const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
-            sendSystemChatMessage({
-              targetUserId: res.canceledAssignee.id,
-              targetUserName: res.canceledAssignee.name,
-              text: `🚫 [Auditoría de Calidad Cancelada] Se vació el lienzo y se quitó la auditoría de la entrega de ${areaName} en "${game.name}" — ya no es necesario que la revises.`,
-              senderId: user?.id || 'sistema',
-              senderName: user?.name || 'Sistema Dicrejart',
-              isGlobal: false,
-            });
-          }
-        });
-      });
+      .forEach((n) => cancelAuditForNode(n, 'Se vació el lienzo y se quitó'));
 
     setNodes([]);
     setEdges([]);
@@ -953,11 +971,18 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (node.type === 'colaborador') return operarios.find((o) => o.id === node.refId);
       if (node.type === 'area') return dynamicAreas.find((a) => a.id === node.refId);
       if (node.type === 'auditoria-calidad') {
-        const [gameId, areaId] = (node.refId || '').split('::');
+        const parts = (node.refId || '').split('::');
+        if (parts[0] === 'proyecto') {
+          const project = proyectos.find((p) => p.id === parts[1]);
+          if (!project) return null;
+          const verdict = project.qualityAuditProject || { status: 'pendiente', reviewedBy: null, reviewedAt: null, notes: '' };
+          return { id: node.refId, mode: 'project', projectId: parts[1], project, ...verdict };
+        }
+        const [gameId, areaId] = parts;
         const game = juegos.find((j) => j.id === gameId);
         if (!game) return null;
         const verdict = game.qualityVerdict?.[areaId] || { status: 'pendiente', reviewedBy: null, reviewedAt: null, notes: '' };
-        return { id: node.refId, gameId, areaId, game, ...verdict };
+        return { id: node.refId, mode: 'game', gameId, areaId, game, ...verdict };
       }
       return null;
     },
@@ -974,6 +999,7 @@ const EditorVisualPage = ({ standalone = false }) => {
       const entity = getLinkedEntity(node);
       if (!entity) return '(no encontrado)';
       if (node.type === 'auditoria-calidad') {
+        if (entity.mode === 'project') return `🔍 Auditoría — ${entity.project?.name || entity.projectId}`;
         const areaName = dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId;
         return `🔍 Auditoría — ${areaName}`;
       }
@@ -1587,24 +1613,11 @@ const EditorVisualPage = ({ standalone = false }) => {
     // seguía pendiente sin resolver — ver cancelQualityAudit) y se avisa a quien estaba
     // asignado que ya no tiene que auditar esa entrega.
     if (deletedNode?.type === 'auditoria-calidad') {
-      const [gameId, areaId] = (deletedNode.refId || '').split('::');
-      const game = juegos.find((j) => j.id === gameId);
-      if (game) {
-        cancelQualityAudit(gameId, areaId).then((res) => {
-          if (res?.ok && res.canceledAssignee?.id) {
-            const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
-            sendSystemChatMessage({
-              targetUserId: res.canceledAssignee.id,
-              targetUserName: res.canceledAssignee.name,
-              text: `🚫 [Auditoría de Calidad Cancelada] Se quitó del lienzo la auditoría de la entrega de ${areaName} en "${game.name}" — ya no es necesario que la revises.`,
-              senderId: user?.id || 'sistema',
-              senderName: user?.name || 'Sistema Dicrejart',
-              isGlobal: false,
-            });
-            toast.info(`🚫 Auditoría cancelada — se avisó a ${res.canceledAssignee.name}.`);
-          }
-        });
-      }
+      cancelAuditForNode(deletedNode, 'Se quitó del lienzo').then((res) => {
+        if (res?.ok && res.canceledAssignee?.id) {
+          toast.info(`🚫 Auditoría cancelada — se avisó a ${res.canceledAssignee.name}.`);
+        }
+      });
     }
   };
 
@@ -2134,13 +2147,15 @@ const EditorVisualPage = ({ standalone = false }) => {
               // Recepción río abajo), no se vuelve a resolver — conserva el área original.
               if (actNode && auditNode) {
                 const actEntity = getLinkedEntity(actNode);
+                let resolvedMode = null;
                 let resolvedGameId = actEntity?.gameId || null;
                 let resolvedAreaId = actEntity?.areaId || null;
+                let resolvedProjectId = actEntity?.projectId || null;
 
                 // Si la actividad no trae gameId/areaId propios (nunca se conectó
                 // directo a un nodo Juego/Área), se busca en todo su subgrafo — el
                 // usuario puede unir la auditoría a cualquier actividad de la cadena
-                // y por las líneas sabemos de qué Juego/Área proviene.
+                // y por las líneas sabemos de qué Juego/Área/Proyecto proviene.
                 if (!auditNode.refId && (!resolvedGameId || !resolvedAreaId)) {
                   const clusterIds = getConnectedClusterNodeIds(actNode.id);
                   for (const id of clusterIds) {
@@ -2153,20 +2168,21 @@ const EditorVisualPage = ({ standalone = false }) => {
                     if (!resolvedAreaId && n.type === 'area') {
                       resolvedAreaId = n.refId;
                     }
+                    if (!resolvedProjectId && n.type === 'proyecto') {
+                      resolvedProjectId = n.refId || (n.draft ? null : n.id);
+                    }
                     if (n.type === 'actividad' && n.id !== actNode.id) {
                       const otherEntity = getLinkedEntity(n);
                       if (!resolvedGameId && otherEntity?.gameId) resolvedGameId = otherEntity.gameId;
                       if (!resolvedAreaId && otherEntity?.areaId) resolvedAreaId = otherEntity.areaId;
+                      if (!resolvedProjectId && otherEntity?.projectId) resolvedProjectId = otherEntity.projectId;
                     }
                   }
                 }
 
                 if (!auditNode.refId) {
-                  if (!resolvedGameId || !resolvedAreaId) {
-                    toast.warning('🔍 No se encontró un Juego/Área conectado (por cable, directo o en cadena) a esta actividad — la auditoría no se pudo vincular.');
-                    resolvedGameId = null;
-                    resolvedAreaId = null;
-                  } else {
+                  if (resolvedGameId && resolvedAreaId) {
+                    resolvedMode = 'game';
                     const resolvedRefId = `${resolvedGameId}::${resolvedAreaId}`;
                     const nextNodesWithLink = nodes.map((n) => (n.id === auditNode.id ? { ...n, refId: resolvedRefId } : n));
                     setNodes(nextNodesWithLink);
@@ -2174,12 +2190,32 @@ const EditorVisualPage = ({ standalone = false }) => {
                     const linkedAreaName = dynamicAreas.find((a) => a.id === resolvedAreaId)?.name || resolvedAreaId;
                     const linkedGame = juegos.find((j) => j.id === resolvedGameId);
                     toast.success(`🔍 Auditoría vinculada a "${linkedAreaName}" del Juego "${linkedGame?.name || resolvedGameId}".`);
+                  } else if (resolvedProjectId) {
+                    // Sin Juego/Área en toda la cadena: el Proyecto no usa Ruta de
+                    // Fabricación por áreas, así que la auditoría se vincula directo al
+                    // Proyecto (un solo veredicto, sin indexar por área).
+                    resolvedMode = 'project';
+                    const resolvedRefId = `proyecto::${resolvedProjectId}`;
+                    const nextNodesWithLink = nodes.map((n) => (n.id === auditNode.id ? { ...n, refId: resolvedRefId } : n));
+                    setNodes(nextNodesWithLink);
+                    saveToFirestore(nextNodesWithLink, nextEdges);
+                    const linkedProject = proyectos.find((p) => p.id === resolvedProjectId);
+                    toast.success(`🔍 Auditoría vinculada al Proyecto "${linkedProject?.name || resolvedProjectId}" (sin Juego).`);
+                  } else {
+                    toast.warning('🔍 No se encontró un Juego/Área ni un Proyecto conectado (por cable, directo o en cadena) a esta actividad — la auditoría no se pudo vincular.');
                   }
                 } else {
-                  [resolvedGameId, resolvedAreaId] = auditNode.refId.split('::');
+                  const parts = auditNode.refId.split('::');
+                  if (parts[0] === 'proyecto') {
+                    resolvedMode = 'project';
+                    resolvedProjectId = parts[1];
+                  } else {
+                    resolvedMode = 'game';
+                    [resolvedGameId, resolvedAreaId] = parts;
+                  }
                 }
 
-                if (resolvedGameId && resolvedAreaId) {
+                if (resolvedMode === 'game' && resolvedGameId && resolvedAreaId) {
                   const game = juegos.find((j) => j.id === resolvedGameId);
                   const calidadUser = users.find((u) => u.roleType === 'calidad');
                   if (game && !game.qualityVerdict?.[resolvedAreaId]?.assignedTo) {
@@ -2198,6 +2234,28 @@ const EditorVisualPage = ({ standalone = false }) => {
                             isGlobal: false,
                           });
                           toast.success(`🔍 Auditoría de "${areaName}" asignada a ${calidadUser.name}.`);
+                        }
+                      });
+                    }
+                  }
+                } else if (resolvedMode === 'project' && resolvedProjectId) {
+                  const project = proyectos.find((p) => p.id === resolvedProjectId);
+                  const calidadUser = users.find((u) => u.roleType === 'calidad');
+                  if (project && !project.qualityAuditProject?.assignedTo) {
+                    if (!calidadUser) {
+                      toast.warning('⚠️ No hay ningún usuario con rol Calidad registrado — no se pudo asignar esta auditoría automáticamente. Créalo en Admin → Usuarios del Sistema.');
+                    } else {
+                      assignQualityAuditProject(resolvedProjectId, calidadUser.id, calidadUser.name).then((res) => {
+                        if (res?.ok) {
+                          sendSystemChatMessage({
+                            targetUserId: calidadUser.id,
+                            targetUserName: calidadUser.name,
+                            text: `🔍 [Auditoría de Calidad] Se te asignó la auditoría del Proyecto "${project.name}" (sin Juego). Revisa el semáforo en el lienzo cuando esté listo.`,
+                            senderId: user?.id || 'sistema',
+                            senderName: user?.name || 'Sistema Dicrejart',
+                            isGlobal: false,
+                          });
+                          toast.success(`🔍 Auditoría del Proyecto "${project.name}" asignada a ${calidadUser.name}.`);
                         }
                       });
                     }
@@ -3315,7 +3373,9 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   /** Marca el semáforo de Auditoría de Calidad de una entrega de área como "Cumple" */
   const handleMarkAuditCumple = async (entity) => {
-    const res = await setQualityVerdict(entity.gameId, entity.areaId, 'cumple', user?.name || 'Calidad');
+    const res = entity.mode === 'project'
+      ? await setQualityVerdictProject(entity.projectId, 'cumple', user?.name || 'Calidad')
+      : await setQualityVerdict(entity.gameId, entity.areaId, 'cumple', user?.name || 'Calidad');
     if (res?.ok !== false) {
       toast.success('✅ Entrega marcada como conforme.');
     } else {
@@ -3334,7 +3394,9 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const handleConfirmAuditNoCumple = async (nodeId, entity) => {
     const notes = (auditReasonDrafts[nodeId]?.text || '').trim();
-    const res = await setQualityVerdict(entity.gameId, entity.areaId, 'no_cumple', user?.name || 'Calidad', notes);
+    const res = entity.mode === 'project'
+      ? await setQualityVerdictProject(entity.projectId, 'no_cumple', user?.name || 'Calidad', notes)
+      : await setQualityVerdict(entity.gameId, entity.areaId, 'no_cumple', user?.name || 'Calidad', notes);
     if (res?.ok !== false) {
       toast.warning('❌ Entrega marcada como no conforme.');
       setAuditReasonDrafts((prev) => ({ ...prev, [nodeId]: { showReasonBox: false, text: '' } }));
@@ -3345,7 +3407,9 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   /** Reabre el semáforo a "pendiente" para corregirlo */
   const handleReopenAudit = async (entity) => {
-    const res = await setQualityVerdict(entity.gameId, entity.areaId, 'pendiente', user?.name || 'Calidad');
+    const res = entity.mode === 'project'
+      ? await setQualityVerdictProject(entity.projectId, 'pendiente', user?.name || 'Calidad')
+      : await setQualityVerdict(entity.gameId, entity.areaId, 'pendiente', user?.name || 'Calidad');
     if (!res?.ok) toast.danger(res.error || 'No se pudo reabrir el semáforo de calidad.');
   };
 
@@ -3355,7 +3419,9 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const handleSaveAuditEvidenceLink = async (nodeId, entity) => {
     const link = auditEvidenceDrafts[nodeId] ?? entity.evidenceLink ?? '';
-    const res = await setQualityVerdictEvidenceLink(entity.gameId, entity.areaId, link);
+    const res = entity.mode === 'project'
+      ? await setQualityVerdictEvidenceLinkProject(entity.projectId, link)
+      : await setQualityVerdictEvidenceLink(entity.gameId, entity.areaId, link);
     if (res?.ok) {
       toast.success('🗄️ Enlace de evidencia guardado.');
     } else {
@@ -4914,8 +4980,9 @@ const EditorVisualPage = ({ standalone = false }) => {
 
                 if (node.type === 'auditoria-calidad') {
                   const isAuditExpanded = expandedAuditNodes.has(node.id);
-                  const areaName = entity ? (dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId) : null;
-                  const canEditAudit = entity && canUserEditRoute(user, entity.game);
+                  const areaName = entity && entity.mode === 'game' ? (dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId) : null;
+                  const auditTargetLabel = entity ? (entity.mode === 'project' ? (entity.project?.name || entity.projectId) : areaName) : null;
+                  const canEditAudit = entity && (entity.mode === 'project' ? canUserEditProjectAudit(user) : canUserEditRoute(user, entity.game));
                   return (
                     <div
                       key={node.id}
@@ -4931,7 +4998,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                       <div className={styles.framelessAuditBadge}>
                         <span className={styles.framelessAuditBadgeSub}>🔍 Auditoría</span>
                         <span className={styles.framelessAuditBadgeTitle}>
-                          {entity ? areaName : node.refId ? 'No encontrada' : '🔗 Sin conectar'}
+                          {entity ? auditTargetLabel : node.refId ? 'No encontrada' : '🔗 Sin conectar'}
                         </span>
                         {entity?.assignedToName && (
                           <span className={styles.framelessAuditBadgeAssignee}>👤 {entity.assignedToName}</span>
@@ -4989,7 +5056,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                       {isAuditExpanded && entity && (
                         <div className={styles.framelessAuditPanel} onMouseDown={(e) => e.stopPropagation()}>
                           <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '6px' }}>
-                            🎮 {entity.game?.name} · 🏭 {areaName}
+                            {entity.mode === 'project' ? `📁 ${entity.project?.name} (Proyecto sin Juego)` : `🎮 ${entity.game?.name} · 🏭 ${areaName}`}
                           </div>
                           <strong style={{ fontSize: '13px' }}>
                             {entity.status === 'cumple' ? '🟢 Cumple' : entity.status === 'no_cumple' ? '🔴 No Cumple' : '🟡 Pendiente'}
@@ -5071,7 +5138,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                             </div>
                           ) : (
                             <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '6px', fontStyle: 'italic' }}>
-                              🔒 Solo Calidad o supervisor de esta área
+                              🔒 {entity.mode === 'project' ? 'Solo Calidad o Dirección' : 'Solo Calidad o supervisor de esta área'}
                             </div>
                           )}
                         </div>

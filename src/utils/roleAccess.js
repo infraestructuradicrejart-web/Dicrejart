@@ -139,6 +139,19 @@ export const canUserEditRoute = (user, game) => {
 };
 
 /**
+ * Indica si un usuario puede editar la auditoría de calidad de un Proyecto sin Juego
+ * (nodo semáforo del lienzo conectado directo a un Proyecto). Sin ruta de fabricación por
+ * áreas no aplican los roles de área de `canUserEditRoute` — solo Calidad y superiores.
+ *
+ * @param {Object|null} user - Usuario autenticado
+ * @returns {boolean}
+ */
+export const canUserEditProjectAudit = (user) => {
+  if (!user) return false;
+  return [ROLE_TYPES.ADMIN, ROLE_TYPES.DIRECCION, ROLE_TYPES.CALIDAD].includes(user.roleType);
+};
+
+/**
  * Indica si el usuario solo puede consultar (solo lectura) una sección,
  * sin poder crear, editar ni eliminar información en ella
  *

@@ -22,7 +22,7 @@ import useCalidad from '../../hooks/useCalidad';
 import useProduccion from '../../hooks/useProduccion';
 import useAuth from '../../hooks/useAuth';
 import PageHeader from '../../components/ui/PageHeader';
-import { isReadOnlySection } from '../../utils/roleAccess';
+import { isReadOnlySection, canUserEditRoute, canUserEditProjectAudit } from '../../utils/roleAccess';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { getOvertimeBlocks, formatHourLabel } from '../../utils/overtimeUtils';
 import { getEstadoOnDate } from '../../utils/estadoUtils';
@@ -280,12 +280,17 @@ const CalidadPage = () => {
   const { operarios, blockDuration, updateBlockDuration, horasExtra, verifyHorasExtra, correctHorasExtraSchedule } = useOperarios();
   const {
     juegos,
+    proyectos,
     addQualityChecklistItem,
     removeQualityChecklistItem,
     toggleQualityChecklistItem,
     approveQualityReview,
     rejectQualityReview,
     approveReceptionForPT,
+    setQualityVerdict,
+    setQualityVerdictEvidenceLink,
+    setQualityVerdictProject,
+    setQualityVerdictEvidenceLinkProject,
   } = useProduccion();
   const { user } = useAuth();
   const toast = useToast();
@@ -544,6 +549,85 @@ const CalidadPage = () => {
       })),
     [allReviewPairs]
   );
+
+  // Tab 5: Auditorías de Entrega — el semáforo del lienzo (Editor Visual), distinto del
+  // checklist de arriba: solo indica si lo que un área (o un Proyecto sin Juego) entregó
+  // cumple o no. Antes solo se veía en el nodo del lienzo; esta cola replica el mismo
+  // patrón de `reviewQueue` (solo pendientes, sin historial de resueltos) para que Calidad
+  // no dependa únicamente del mensaje directo de chat.
+  const pendingGameAudits = useMemo(
+    () => juegos.flatMap((j) =>
+      Object.entries(j.qualityVerdict || {})
+        .filter(([, v]) => v.status === 'pendiente' && v.assignedTo)
+        .map(([areaId, v]) => ({ mode: 'game', key: `${j.id}::${areaId}`, gameId: j.id, areaId, game: j, ...v }))
+    ),
+    [juegos]
+  );
+
+  const pendingProjectAudits = useMemo(
+    () => proyectos
+      .filter((p) => p.qualityAuditProject?.status === 'pendiente' && p.qualityAuditProject?.assignedTo)
+      .map((p) => ({ mode: 'project', key: `proyecto::${p.id}`, projectId: p.id, project: p, ...p.qualityAuditProject })),
+    [proyectos]
+  );
+
+  const pendingAudits = useMemo(
+    () => [...pendingGameAudits, ...pendingProjectAudits],
+    [pendingGameAudits, pendingProjectAudits]
+  );
+
+  const [selectedAuditKey, setSelectedAuditKey] = useState('');
+  const selectedAudit = useMemo(
+    () => pendingAudits.find((a) => a.key === selectedAuditKey) || null,
+    [pendingAudits, selectedAuditKey]
+  );
+  const [auditReasonDraft, setAuditReasonDraft] = useState({ show: false, text: '' });
+  const [auditEvidenceDraft, setAuditEvidenceDraft] = useState('');
+
+  const canEditSelectedAudit = selectedAudit
+    ? (selectedAudit.mode === 'project' ? canUserEditProjectAudit(user) : canUserEditRoute(user, selectedAudit.game))
+    : false;
+
+  const handleMarkSemaforoCumple = async () => {
+    if (!selectedAudit) return;
+    const res = selectedAudit.mode === 'project'
+      ? await setQualityVerdictProject(selectedAudit.projectId, 'cumple', user?.name || 'Calidad')
+      : await setQualityVerdict(selectedAudit.gameId, selectedAudit.areaId, 'cumple', user?.name || 'Calidad');
+    if (res?.ok !== false) {
+      toast.success('✅ Entrega marcada como conforme.');
+      setSelectedAuditKey('');
+    } else {
+      toast.danger(res.error || 'No se pudo guardar el semáforo de calidad.');
+    }
+  };
+
+  const handleConfirmSemaforoNoCumple = async () => {
+    if (!selectedAudit) return;
+    const notes = auditReasonDraft.text.trim();
+    const res = selectedAudit.mode === 'project'
+      ? await setQualityVerdictProject(selectedAudit.projectId, 'no_cumple', user?.name || 'Calidad', notes)
+      : await setQualityVerdict(selectedAudit.gameId, selectedAudit.areaId, 'no_cumple', user?.name || 'Calidad', notes);
+    if (res?.ok !== false) {
+      toast.warning('❌ Entrega marcada como no conforme.');
+      setAuditReasonDraft({ show: false, text: '' });
+      setSelectedAuditKey('');
+    } else {
+      toast.danger(res.error || 'No se pudo guardar el semáforo de calidad.');
+    }
+  };
+
+  const handleSaveSemaforoEvidence = async () => {
+    if (!selectedAudit) return;
+    const link = auditEvidenceDraft || selectedAudit.evidenceLink || '';
+    const res = selectedAudit.mode === 'project'
+      ? await setQualityVerdictEvidenceLinkProject(selectedAudit.projectId, link)
+      : await setQualityVerdictEvidenceLink(selectedAudit.gameId, selectedAudit.areaId, link);
+    if (res?.ok) {
+      toast.success('🗄️ Enlace de evidencia guardado.');
+    } else {
+      toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
+    }
+  };
 
   // Todas las autorizaciones de tiempo extra pendientes de verificar, de cualquier fecha
   // (o de una fecha específica si pendingHEDateFilter está puesto) — ordenadas de más
@@ -1067,6 +1151,8 @@ const CalidadPage = () => {
             ? 'Inspecciona productos y garantiza los estándares de Dicrejart.'
             : activeTab === 'revision'
             ? 'Aprueba el checklist de calidad antes de que un área notifique su entrega a Producto Terminado.'
+            : activeTab === 'semaforos'
+            ? 'Marca conforme / no conforme las entregas auditadas desde el lienzo (semáforos de Juego+Área o de Proyecto).'
             : activeTab === 'horasExtra'
             ? 'Verifica si las tareas asignadas durante el tiempo extra realmente se cumplieron, de cualquier fecha.'
             : 'Evalúa y califica el desempeño en tiempo real de los colaboradores en taller.'
@@ -1088,6 +1174,12 @@ const CalidadPage = () => {
           onClick={() => setActiveTab('revision')}
         >
           ✅ Revisión para Entrega a PT
+        </button>
+        <button
+          className={`${styles.tabBtn} ${activeTab === 'semaforos' ? styles.tabBtnActive : ''}`}
+          onClick={() => setActiveTab('semaforos')}
+        >
+          🔍 Auditorías de Entrega ({pendingAudits.length})
         </button>
         <button
           className={`${styles.tabBtn} ${activeTab === 'evaluaciones' ? styles.tabBtnActive : ''}`}
@@ -1170,6 +1262,30 @@ const CalidadPage = () => {
                 <span className={styles.kpiLabel}>Rechazados</span>
                 <h3 className={styles.kpiValue}>{reviewStats.rechazados}</h3>
                 <p className={styles.kpiFooter}>Esperando retrabajo y nueva revisión</p>
+              </div>
+            </Card>
+          </>
+        ) : activeTab === 'semaforos' ? (
+          <>
+            <Card variant="danger">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Auditorías Pendientes</span>
+                <h3 className={styles.kpiValue} style={{ color: 'var(--color-alert)' }}>{pendingAudits.length}</h3>
+                <p className={styles.kpiFooter}>Asignadas, sin marcar todavía</p>
+              </div>
+            </Card>
+            <Card variant="default">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Por Juego+Área</span>
+                <h3 className={styles.kpiValue}>{pendingGameAudits.length}</h3>
+                <p className={styles.kpiFooter}>Semáforos de entrega por área</p>
+              </div>
+            </Card>
+            <Card variant="default">
+              <div className={styles.kpiContent}>
+                <span className={styles.kpiLabel}>Por Proyecto (sin Juego)</span>
+                <h3 className={styles.kpiValue}>{pendingProjectAudits.length}</h3>
+                <p className={styles.kpiFooter}>Semáforos a nivel Proyecto</p>
               </div>
             </Card>
           </>
@@ -1846,6 +1962,139 @@ const CalidadPage = () => {
                 <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '16px' }}>
                   Selecciona un área y un juego para ver o construir su checklist de revisión.
                 </p>
+              )}
+            </Card>
+          </motion.div>
+        </div>
+      )}
+
+      {/* 5. AUDITORÍAS DE ENTREGA (SEMÁFORO DEL LIENZO) */}
+      {activeTab === 'semaforos' && (
+        <div className={styles.layoutColumns}>
+          {/* Cola de auditorías pendientes, de ambos modos (Juego+Área y Proyecto) */}
+          <motion.div variants={itemVariants}>
+            <Card variant="default">
+              <h3 className={styles.sectionTitle}>Auditorías Pendientes ({pendingAudits.length})</h3>
+              <div className={styles.historyList}>
+                {pendingAudits.map((a) => (
+                  <button
+                    key={a.key}
+                    type="button"
+                    onClick={() => {
+                      setSelectedAuditKey(a.key);
+                      setAuditReasonDraft({ show: false, text: '' });
+                      setAuditEvidenceDraft('');
+                    }}
+                    className={styles.insCard}
+                    style={{ width: '100%', textAlign: 'left', cursor: 'pointer', border: a.key === selectedAuditKey ? '2px solid var(--color-secondary)' : 'none' }}
+                  >
+                    <div className={styles.insHeader}>
+                      <div>
+                        <strong className={styles.insGame}>{a.mode === 'project' ? a.project?.name : a.game?.name}</strong>
+                        <span className={styles.insArea}>
+                          {a.mode === 'project' ? 'Proyecto (sin Juego)' : (AREAS.find((ar) => ar.id === a.areaId)?.name || a.areaId)}
+                        </span>
+                      </div>
+                      <Badge variant="warning">PENDIENTE</Badge>
+                    </div>
+                    <p className={styles.insNotes}>Asignado a: {a.assignedToName}</p>
+                  </button>
+                ))}
+                {pendingAudits.length === 0 && (
+                  <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '16px' }}>
+                    No hay auditorías de entrega pendientes en este momento.
+                  </p>
+                )}
+              </div>
+            </Card>
+          </motion.div>
+
+          {/* Detalle / gestión de la auditoría seleccionada */}
+          <motion.div variants={itemVariants} className={styles.historyCol}>
+            <Card variant="default">
+              <h3 className={styles.sectionTitle}>Detalle de Auditoría</h3>
+              {!selectedAudit ? (
+                <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', textAlign: 'center', padding: '16px' }}>
+                  Selecciona una auditoría de la lista para revisarla.
+                </p>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', margin: '10px 0' }}>
+                    <Badge variant="warning">PENDIENTE</Badge>
+                    <span style={{ fontSize: '13px', fontWeight: 600 }}>
+                      {selectedAudit.mode === 'project'
+                        ? `📁 ${selectedAudit.project?.name} (Proyecto sin Juego)`
+                        : `🎮 ${selectedAudit.game?.name} · 🏭 ${AREAS.find((ar) => ar.id === selectedAudit.areaId)?.name || selectedAudit.areaId}`}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>Asignado a: {selectedAudit.assignedToName}</p>
+
+                  <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--color-gray-200)' }}>
+                    <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-gray-600)', textTransform: 'uppercase' }}>
+                      🗄️ Evidencia (NAS)
+                    </label>
+                    {canEditSelectedAudit ? (
+                      <div style={{ display: 'flex', gap: '6px', marginTop: '4px', alignItems: 'flex-end' }}>
+                        <div style={{ flex: 1 }}>
+                          <Input
+                            value={auditEvidenceDraft || selectedAudit.evidenceLink || ''}
+                            onChange={(e) => setAuditEvidenceDraft(e.target.value)}
+                            placeholder="Enlace a la evidencia en el NAS"
+                          />
+                        </div>
+                        <Button type="button" variant="secondary" size="sm" onClick={handleSaveSemaforoEvidence}>💾</Button>
+                        {selectedAudit.evidenceLink && (
+                          <Button type="button" variant="secondary" size="sm" onClick={() => window.open(selectedAudit.evidenceLink, '_blank', 'noopener,noreferrer')}>
+                            Abrir
+                          </Button>
+                        )}
+                      </div>
+                    ) : selectedAudit.evidenceLink ? (
+                      <Button type="button" variant="secondary" size="sm" onClick={() => window.open(selectedAudit.evidenceLink, '_blank', 'noopener,noreferrer')} style={{ marginTop: '4px' }}>
+                        🗄️ Abrir Evidencia
+                      </Button>
+                    ) : (
+                      <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '4px' }}>Sin evidencia capturada.</p>
+                    )}
+                  </div>
+
+                  {canEditSelectedAudit ? (
+                    <div style={{ marginTop: '12px' }}>
+                      {auditReasonDraft.show ? (
+                        <>
+                          <textarea
+                            rows={2}
+                            placeholder="Motivo por el que no cumple..."
+                            value={auditReasonDraft.text}
+                            onChange={(e) => setAuditReasonDraft((prev) => ({ ...prev, text: e.target.value }))}
+                            style={{ width: '100%', fontSize: '12px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--color-gray-300)', marginBottom: '8px' }}
+                          />
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <Button type="button" variant="danger" size="sm" onClick={handleConfirmSemaforoNoCumple} style={{ flex: 1 }}>
+                              Confirmar
+                            </Button>
+                            <Button type="button" variant="secondary" size="sm" onClick={() => setAuditReasonDraft({ show: false, text: '' })}>
+                              Cancelar
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <Button type="button" variant="primary" size="sm" onClick={handleMarkSemaforoCumple} style={{ flex: 1 }}>
+                            ✅ Cumple
+                          </Button>
+                          <Button type="button" variant="danger" size="sm" onClick={() => setAuditReasonDraft({ show: true, text: '' })} style={{ flex: 1 }}>
+                            ❌ No Cumple
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: '11px', color: 'var(--color-gray-500)', marginTop: '10px', fontStyle: 'italic' }}>
+                      🔒 {selectedAudit.mode === 'project' ? 'Solo Calidad o Dirección' : 'Solo Calidad o supervisor de esta área'}
+                    </p>
+                  )}
+                </>
               )}
             </Card>
           </motion.div>
