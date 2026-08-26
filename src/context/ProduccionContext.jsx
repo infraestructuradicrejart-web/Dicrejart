@@ -1823,6 +1823,38 @@ export const ProduccionProvider = ({ children }) => {
   }, [juegos, user]);
 
   /**
+   * Semáforo de Calidad por entrega de área (nodo "Auditoría de Calidad" del lienzo) —
+   * a propósito NO tiene checklist ni exige piezas al 100%, a diferencia de
+   * `qualityReview`/`approveQualityReview` (ese es un sistema aparte, usado por
+   * `RutaFabricacionView.jsx`, que no se toca). Solo indica si lo que esa área entregó
+   * cumple o no, para bloquear (vía getActivityBlockStatus en EditorVisualPage.jsx) una
+   * actividad de recepción conectada río abajo hasta que el semáforo esté en 'cumple'.
+   */
+  const setQualityVerdict = useCallback(async (gameId, areaId, status, reviewerName, notes = '') => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    if (status === 'no_cumple' && !notes.trim()) {
+      return { ok: false, error: 'Indica el motivo por el que no cumple.' };
+    }
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`qualityVerdict.${areaId}`]: {
+          status,
+          reviewedBy: reviewerName,
+          reviewedAt: new Date().toISOString(),
+          notes: notes || '',
+        },
+      });
+      logAudit({ user, module: 'produccion', action: 'Marcó semáforo de calidad de una entrega de área', details: `${j.name} (${areaId}): ${status}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al guardar semáforo de calidad en Firestore:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
    * Calidad da el visto bueno final, como testigo, para que Producto Terminado pueda
    * recibir físicamente una entrega ya notificada — aprobación adicional a la que ya se
    * dio antes de notificar (qualityReview), sin checklist ni motivo, solo confirma "todo
@@ -1937,6 +1969,7 @@ export const ProduccionProvider = ({ children }) => {
       removeQualityItemPhoto,
       approveQualityReview,
       rejectQualityReview,
+      setQualityVerdict,
       approveReceptionForPT,
       returnDeliveryForReview,
     }),
@@ -1989,6 +2022,7 @@ export const ProduccionProvider = ({ children }) => {
       removeQualityItemPhoto,
       approveQualityReview,
       rejectQualityReview,
+      setQualityVerdict,
       approveReceptionForPT,
       returnDeliveryForReview,
     ]

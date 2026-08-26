@@ -33,7 +33,7 @@ import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
 import { getTodayLocalDateStr } from '../../utils/dateUtils';
 import { compressImage } from '../../utils/imageCompressor';
-import { isReadOnlySection } from '../../utils/roleAccess';
+import { isReadOnlySection, canUserEditRoute } from '../../utils/roleAccess';
 import RegisterDeliveryModal from './RegisterDeliveryModal';
 import styles from './EditorVisualPage.module.css';
 
@@ -83,6 +83,7 @@ const NODE_TYPES = {
   area: { icon: '🏭', label: 'Área de Taller', badgeText: 'TALLER', colorVar: '#6366f1', allowCreate: false },
   colaborador: { icon: '👷', label: 'Colaborador', badgeText: 'PERSONAL', colorVar: '#9333ea', allowCreate: false },
   bloque: { icon: '📦', label: 'Bloque de Trabajo', badgeText: 'BLOQUE', colorVar: '#ea580c', allowCreate: true },
+  'auditoria-calidad': { icon: '🔍', label: 'Auditoría de Calidad', badgeText: 'AUDITORÍA', colorVar: '#dc2626', allowCreate: false },
 };
 
 const PRIORITY_OPTIONS = [
@@ -459,7 +460,7 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
  */
 const EditorVisualPage = ({ standalone = false }) => {
   const navigate = useNavigate();
-  const { proyectos, juegos, addProject, addGame, updateProject } = useProduccion();
+  const { proyectos, juegos, addProject, addGame, updateProject, setQualityVerdict } = useProduccion();
   const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
@@ -581,6 +582,11 @@ const EditorVisualPage = ({ standalone = false }) => {
   // completo) para que el juego pasado al modal siempre sea el más reciente de `juegos`,
   // igual que hace RutaFabricacionView.jsx, y no una copia congelada del momento del clic.
   const [deliveryModal, setDeliveryModal] = useState({ isOpen: false, gameId: null, areaId: null, areaLabel: '' });
+
+  // Borrador del motivo de "No Cumple" del nodo semáforo de Auditoría de Calidad,
+  // guardado por nodeId — no puede ser un useState suelto porque se usa dentro de
+  // nodes.map(), donde no se pueden declarar hooks condicionalmente por iteración.
+  const [auditReasonDrafts, setAuditReasonDrafts] = useState({});
 
   // Modal para ver y ampliar Ayudas Visuales (Imágenes en alta resolución, PDFs, Modelos 3D y Enlaces)
   const [previewResourceModal, setPreviewResourceModal] = useState({
@@ -906,6 +912,13 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (node.type === 'actividad') return actividades.find((a) => a.id === node.refId);
       if (node.type === 'colaborador') return operarios.find((o) => o.id === node.refId);
       if (node.type === 'area') return dynamicAreas.find((a) => a.id === node.refId);
+      if (node.type === 'auditoria-calidad') {
+        const [gameId, areaId] = (node.refId || '').split('::');
+        const game = juegos.find((j) => j.id === gameId);
+        if (!game) return null;
+        const verdict = game.qualityVerdict?.[areaId] || { status: 'pendiente', reviewedBy: null, reviewedAt: null, notes: '' };
+        return { id: node.refId, gameId, areaId, game, ...verdict };
+      }
       return null;
     },
     [proyectos, juegos, actividades, operarios, dynamicAreas]
@@ -920,9 +933,13 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (node.draft) return node.draftFields?.name || node.draftFields?.title || 'Sin nombre';
       const entity = getLinkedEntity(node);
       if (!entity) return '(no encontrado)';
+      if (node.type === 'auditoria-calidad') {
+        const areaName = dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId;
+        return `🔍 Auditoría — ${areaName}`;
+      }
       return entity.name || entity.title || 'Sin nombre';
     },
-    [getLinkedEntity]
+    [getLinkedEntity, dynamicAreas]
   );
 
   /**
@@ -1226,7 +1243,11 @@ const EditorVisualPage = ({ standalone = false }) => {
       for (const edge of connectedEdges) {
         const otherNodeId = edge.to === actNode.id ? edge.from : edge.to;
         const otherNode = findNode(otherNodeId);
-        if (!otherNode || otherNode.type !== 'actividad') continue;
+        // El semáforo de Auditoría de Calidad también cuenta como predecesor válido —
+        // una actividad de recepción conectada río abajo de un semáforo debe esperar a
+        // que ese semáforo diga "Cumple", igual que espera a que otra actividad se
+        // complete (ver el criterio de "resuelto" más abajo en getActivityBlockStatus).
+        if (!otherNode || (otherNode.type !== 'actividad' && otherNode.type !== 'auditoria-calidad')) continue;
 
         // Determinar si otherNode es predecesor:
         // 1. Si el cable se conectó de otherNode -> actNode
@@ -1259,8 +1280,14 @@ const EditorVisualPage = ({ standalone = false }) => {
         return { isBlocked: false, blockers: [], predecessors: [] };
       }
 
-      // Filtrar aquellas actividades predecesoras que NO estén completadas
+      // Filtrar aquellos predecesores que NO estén resueltos — el criterio de "resuelto"
+      // depende del tipo: una actividad normal debe estar 'completado'; un semáforo de
+      // Auditoría de Calidad debe estar en 'cumple' (no tiene checklist ni fases
+      // intermedias, solo pendiente/cumple/no_cumple).
       const uncompletedBlockers = predecessors.filter((p) => {
+        if (p.node.type === 'auditoria-calidad') {
+          return p.entity?.status !== 'cumple';
+        }
         const status = p.entity?.status;
         return status !== 'completado' && status !== 'hecho' && status !== 'completada';
       });
@@ -2506,6 +2533,16 @@ const EditorVisualPage = ({ standalone = false }) => {
         });
       }
       if (type === 'area') return dynamicAreas.map((a) => ({ id: a.id, label: `🏭 ${a.name}` }));
+      if (type === 'auditoria-calidad') {
+        const options = [];
+        juegos.filter((j) => j.useManufacturingRoute).forEach((j) => {
+          (j.areas || []).forEach((areaId) => {
+            const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+            options.push({ id: `${j.id}::${areaId}`, label: `🔍 ${j.name} — ${areaName}` });
+          });
+        });
+        return options;
+      }
       return [];
     },
     [proyectos, juegos, actividades, operarios, dynamicAreas]
@@ -2585,7 +2622,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const openNodeModal = (type) => {
     if (!canEditDiagram) return;
-    const defaultTab = (type === 'colaborador' || type === 'area') ? 'existing' : 'new';
+    const defaultTab = (type === 'colaborador' || type === 'area' || type === 'auditoria-calidad') ? 'existing' : 'new';
     setNodeModal({
       ...EMPTY_NODE_MODAL,
       isOpen: true,
@@ -3133,6 +3170,42 @@ const EditorVisualPage = ({ standalone = false }) => {
     } else {
       toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
     }
+  };
+
+  /** Marca el semáforo de Auditoría de Calidad de una entrega de área como "Cumple" */
+  const handleMarkAuditCumple = async (entity) => {
+    const res = await setQualityVerdict(entity.gameId, entity.areaId, 'cumple', user?.name || 'Calidad');
+    if (res?.ok !== false) {
+      toast.success('✅ Entrega marcada como conforme.');
+    } else {
+      toast.danger(res.error || 'No se pudo guardar el semáforo de calidad.');
+    }
+  };
+
+  /** Abre/cierra el recuadro de motivo antes de confirmar "No Cumple" */
+  const toggleAuditReasonBox = (nodeId, show) => {
+    setAuditReasonDrafts((prev) => ({ ...prev, [nodeId]: { ...prev[nodeId], showReasonBox: show } }));
+  };
+
+  const setAuditReasonText = (nodeId, text) => {
+    setAuditReasonDrafts((prev) => ({ ...prev, [nodeId]: { ...prev[nodeId], text } }));
+  };
+
+  const handleConfirmAuditNoCumple = async (nodeId, entity) => {
+    const notes = (auditReasonDrafts[nodeId]?.text || '').trim();
+    const res = await setQualityVerdict(entity.gameId, entity.areaId, 'no_cumple', user?.name || 'Calidad', notes);
+    if (res?.ok !== false) {
+      toast.warning('❌ Entrega marcada como no conforme.');
+      setAuditReasonDrafts((prev) => ({ ...prev, [nodeId]: { showReasonBox: false, text: '' } }));
+    } else {
+      toast.danger(res.error || 'No se pudo guardar el semáforo de calidad.');
+    }
+  };
+
+  /** Reabre el semáforo a "pendiente" para corregirlo */
+  const handleReopenAudit = async (entity) => {
+    const res = await setQualityVerdict(entity.gameId, entity.areaId, 'pendiente', user?.name || 'Calidad');
+    if (!res?.ok) toast.danger(res.error || 'No se pudo reabrir el semáforo de calidad.');
   };
 
   /**
@@ -3951,6 +4024,23 @@ const EditorVisualPage = ({ standalone = false }) => {
                         <div>
                           <strong>Área de Taller</strong>
                           <small>Estación de planta</small>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.paletteNodeBtn}
+                        style={{ '--btn-theme': '#dc2626' }}
+                        onClick={() => {
+                          openNodeModal('auditoria-calidad');
+                          setIsLeftRailOpen(false);
+                        }}
+                        title="Agregar semáforo de Auditoría de Calidad por entrega de área"
+                      >
+                        <span style={{ fontSize: '18px' }}>🔍</span>
+                        <div>
+                          <strong>Auditoría Calidad</strong>
+                          <small>Cumple / No cumple</small>
                         </div>
                       </button>
 
@@ -5294,6 +5384,98 @@ const EditorVisualPage = ({ standalone = false }) => {
                         </div>
                       )}
 
+                      {node.type === 'auditoria-calidad' && (
+                        <div>
+                          <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>🔍 AUDITORÍA DE CALIDAD</span>
+                          <div className={styles.nodeTag} style={{ marginTop: '3px' }}>
+                            {entity ? (
+                              <>
+                                <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '4px' }}>
+                                  🎮 {entity.game?.name} · 🏭 {dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '4px 0' }}>
+                                  <span style={{ fontSize: '30px', lineHeight: 1 }}>
+                                    {entity.status === 'cumple' ? '🟢' : entity.status === 'no_cumple' ? '🔴' : '🟡'}
+                                  </span>
+                                  <strong style={{ fontSize: '13px' }}>
+                                    {entity.status === 'cumple' ? 'Cumple' : entity.status === 'no_cumple' ? 'No Cumple' : 'Pendiente'}
+                                  </strong>
+                                </div>
+
+                                {entity.reviewedBy && (
+                                  <div style={{ fontSize: '10px', color: 'var(--color-gray-500)', textAlign: 'center', marginBottom: '4px' }}>
+                                    {entity.reviewedBy} · {new Date(entity.reviewedAt).toLocaleString('es-MX')}
+                                    {entity.notes && <div style={{ fontStyle: 'italic', marginTop: '2px' }}>"{entity.notes}"</div>}
+                                  </div>
+                                )}
+
+                                {canUserEditRoute(user, entity.game) ? (
+                                  entity.status !== 'pendiente' ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); handleReopenAudit(entity); }}
+                                      style={{ width: '100%', padding: '4px 8px', fontSize: '10.5px', fontWeight: 700, background: 'rgba(0,0,0,0.06)', color: 'var(--color-gray-700)', border: '1px solid rgba(0,0,0,0.1)', borderRadius: '5px', cursor: 'pointer' }}
+                                    >
+                                      🔄 Reabrir para corregir
+                                    </button>
+                                  ) : auditReasonDrafts[node.id]?.showReasonBox ? (
+                                    <div onMouseDown={(e) => e.stopPropagation()}>
+                                      <textarea
+                                        rows={2}
+                                        placeholder="Motivo por el que no cumple..."
+                                        value={auditReasonDrafts[node.id]?.text || ''}
+                                        onChange={(e) => setAuditReasonText(node.id, e.target.value)}
+                                        style={{ width: '100%', fontSize: '11px', padding: '4px 6px', borderRadius: '5px', border: '1px solid var(--color-gray-300)', marginBottom: '4px' }}
+                                      />
+                                      <div style={{ display: 'flex', gap: '4px' }}>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleConfirmAuditNoCumple(node.id, entity)}
+                                          style={{ flex: 1, padding: '4px 8px', fontSize: '10.5px', fontWeight: 700, background: 'linear-gradient(135deg, #dc2626, #b91c1c)', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+                                        >
+                                          Confirmar
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleAuditReasonBox(node.id, false)}
+                                          style={{ padding: '4px 8px', fontSize: '10.5px', fontWeight: 600, background: 'rgba(0,0,0,0.06)', color: 'var(--color-gray-700)', border: '1px solid rgba(0,0,0,0.1)', borderRadius: '5px', cursor: 'pointer' }}
+                                        >
+                                          Cancelar
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: 'flex', gap: '4px' }}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); handleMarkAuditCumple(entity); }}
+                                        style={{ flex: 1, padding: '4px 8px', fontSize: '10.5px', fontWeight: 700, background: 'linear-gradient(135deg, #10b981, #059669)', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+                                      >
+                                        ✅ Cumple
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); toggleAuditReasonBox(node.id, true); }}
+                                        style={{ flex: 1, padding: '4px 8px', fontSize: '10.5px', fontWeight: 700, background: 'linear-gradient(135deg, #dc2626, #b91c1c)', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+                                      >
+                                        ❌ No Cumple
+                                      </button>
+                                    </div>
+                                  )
+                                ) : (
+                                  <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', textAlign: 'center', fontStyle: 'italic' }}>
+                                    🔒 Solo Calidad o supervisor de esta área
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              'Auditoría no encontrada'
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       {node.type === 'colaborador' && (
                         <div>
                           <span className={styles.nodeEyebrow} style={{ color: nodeThemeColor }}>👷 PERSONAL / COLABORADOR</span>
@@ -6089,6 +6271,8 @@ const EditorVisualPage = ({ standalone = false }) => {
             ? '🏭 Agregar Nodo de Área de Manufactura'
             : nodeModal.type === 'actividad'
             ? '📌 Agregar Nodo de Actividad / Tarea'
+            : nodeModal.type === 'auditoria-calidad'
+            ? '🔍 Agregar Nodo de Auditoría de Calidad'
             : '📦 Crear Celda Modular de Trabajo'
         }
       >
