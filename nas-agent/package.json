@@ -1,0 +1,12 @@
+{
+  "name": "dicrejart-nas-agent",
+  "description": "Agente que corre dentro del NAS Synology de Dicrejart: revisa la cola de evidencias pendientes en Firestore y las sube al NAS por la API local de DSM (http://localhost:5000), evitando QuickConnect (no sirve para llamadas servidor-a-servidor).",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "private": true
+}

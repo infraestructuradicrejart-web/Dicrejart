@@ -652,7 +652,7 @@ const CalidadPage = () => {
         ? await setQualityVerdictEvidenceLinkProject(selectedAudit.projectId, result.url, result.nasPath)
         : await setQualityVerdictEvidenceLink(selectedAudit.gameId, selectedAudit.areaId, result.url, result.nasPath);
       if (res?.ok) {
-        toast.success(result.pendingMigration ? '📤 Evidencia guardada (se sincronizará con el NAS automáticamente).' : '🗄️ Evidencia subida al NAS.');
+        toast.success('📤 Evidencia guardada — se sincronizará con el NAS en unos minutos.');
       } else {
         toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
       }

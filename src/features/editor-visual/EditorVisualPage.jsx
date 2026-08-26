@@ -28,7 +28,7 @@ import useActividades from '../../hooks/useActividades';
 import useOperarios from '../../hooks/useOperarios';
 import useAuth from '../../hooks/useAuth';
 import { sendSystemChatMessage } from '../../services/chatNotificationService';
-import { uploadEvidenceFile, uploadDesignFile, deleteNasFile } from '../../services/nasUploadService';
+import { uploadEvidenceFile, deleteNasFile } from '../../services/nasUploadService';
 import { isAreaBlockedByRoute, getBlockingAreaForRoute } from '../../context/ProduccionContext';
 import useAreas from '../../hooks/useAreas';
 import { NON_PRODUCTION_AREAS } from '../../data/nonProductionAreasConfig';
@@ -386,12 +386,10 @@ const getSmartWirePath = (fromNode, toNode, edge = null, nodeSizes = {}) => {
 };
 
 /**
- * Sube un archivo de Ayuda Visual (imagen/PDF/modelo 3D) — intenta el NAS primero
- * (organizado por Proyecto vía `routeCtx`, ver nasUploadService.js), y si no responde
- * cae a Firebase Storage con compresión automática para imágenes, incluyendo fallback
- * ligero transparente (< 30KB) si la red o Storage presentaran intermitencia.
+ * Sube un archivo a Firebase Storage con compresión automática para imágenes,
+ * incluyendo fallback ligero transparente (< 30KB) si la red o Storage presentaran intermitencia.
  */
-const uploadResourceFile = async (file, lienzoId = 'general', routeCtx = {}) => {
+const uploadResourceFile = async (file, lienzoId = 'general') => {
   if (!file) return null;
   const isImage = file.type?.startsWith('image/');
   let toUpload = file;
@@ -413,17 +411,6 @@ const uploadResourceFile = async (file, lienzoId = 'general', routeCtx = {}) => 
     }
   }
 
-  // Prioridad 1: NAS. Se reconstruye como File (compressImage regresa un Blob sin
-  // `.name`) conservando el nombre/tipo originales.
-  const nasResult = await uploadDesignFile(
-    new File([toUpload], file.name, { type: toUpload.type || file.type }),
-    routeCtx
-  );
-  if (nasResult) {
-    return { name: file.name, size: file.size, type: file.type, url: nasResult.url, nasPath: nasResult.nasPath, isUploading: false };
-  }
-
-  // Prioridad 2 (respaldo si el NAS no respondió): Firebase Storage
   const safeName = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
   const path = `lienzos_recursos/${lienzoId}/${Date.now()}_${safeName}`;
 
@@ -2950,7 +2937,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     if (pendingFile) {
       toast.info(`⏳ Subiendo archivo adjunto "${pendingFile.name}" a la nube...`);
       try {
-        uploadedFile = await uploadResourceFile(pendingFile, lienzoActivoId, { projectId: currentProject?.id, projectName: currentProject?.name });
+        uploadedFile = await uploadResourceFile(pendingFile, lienzoActivoId);
       } catch (err) {
         console.error('Error al subir archivo de actividad:', err);
       }
@@ -3212,7 +3199,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     if (pendingFile) {
       toast.info(`⏳ Guardando "${pendingFile.name}" en la nube...`);
       try {
-        const uploaded = await uploadResourceFile(pendingFile, lienzoActivoId, { projectId: currentProject?.id, projectName: currentProject?.name });
+        const uploaded = await uploadResourceFile(pendingFile, lienzoActivoId);
         if (uploaded) {
           updateDraftField(tempId, 'fileData', uploaded);
           toast.success(`☁️ "${pendingFile.name}" guardado permanentemente.`);
@@ -3446,7 +3433,7 @@ const EditorVisualPage = ({ standalone = false }) => {
       if (res?.ok === false) {
         toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
       } else {
-        toast.success(result.pendingMigration ? '📤 Evidencia guardada (se sincronizará con el NAS automáticamente).' : '🗄️ Evidencia subida al NAS.');
+        toast.success('📤 Evidencia guardada — se sincronizará con el NAS en unos minutos.');
       }
     } catch (err) {
       console.error('Error al subir evidencia de actividad:', err);
@@ -3547,7 +3534,7 @@ const EditorVisualPage = ({ standalone = false }) => {
         ? await setQualityVerdictEvidenceLinkProject(entity.projectId, result.url, result.nasPath)
         : await setQualityVerdictEvidenceLink(entity.gameId, entity.areaId, result.url, result.nasPath);
       if (res?.ok) {
-        toast.success(result.pendingMigration ? '📤 Evidencia guardada (se sincronizará con el NAS automáticamente).' : '🗄️ Evidencia subida al NAS.');
+        toast.success('📤 Evidencia guardada — se sincronizará con el NAS en unos minutos.');
       } else {
         toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
       }
@@ -7941,7 +7928,7 @@ const NodeInspector = ({
       if (res?.ok === false) {
         toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
       } else {
-        toast.success(result.pendingMigration ? '📤 Evidencia guardada (se sincronizará con el NAS automáticamente).' : '🗄️ Evidencia subida al NAS.');
+        toast.success('📤 Evidencia guardada — se sincronizará con el NAS en unos minutos.');
       }
     } catch (err) {
       console.error('Error al subir evidencia de actividad:', err);
@@ -7956,7 +7943,7 @@ const NodeInspector = ({
     setIsUploadingActFile(true);
     toast.info(`⏳ Subiendo "${file.name}" a la nube...`);
     try {
-      const uploaded = await uploadResourceFile(file, lienzoActivoId, { projectId: currentProject?.id, projectName: currentProject?.name });
+      const uploaded = await uploadResourceFile(file, lienzoActivoId);
       if (uploaded) {
         const currentAttachments = entity.attachments || [];
         const nextAttachments = [...currentAttachments, uploaded];
@@ -9739,7 +9726,7 @@ const NodeInspector = ({
                       toast.info(`⏳ Guardando "${file.name}" en la nube...`);
 
                       try {
-                        const uploaded = await uploadResourceFile(file, lienzoActivoId, { projectId: currentProject?.id, projectName: currentProject?.name });
+                        const uploaded = await uploadResourceFile(file, lienzoActivoId);
                         if (uploaded) {
                           updateDraftField('fileData', uploaded);
                           toast.success(`✅ Archivo "${file.name}" guardado permanentemente.`);

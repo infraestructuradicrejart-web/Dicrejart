@@ -70,6 +70,16 @@ service firebase.storage {
       allow delete: if request.auth != null;
     }
 
+    // Respaldo temporal cuando el NAS no responde al subir una evidencia/ayuda visual —
+    // nasMigrationRetryCheck (Cloud Function) migra estos archivos al NAS y los borra de
+    // aquí automáticamente en cuanto el NAS vuelve a responder.
+    match /nas_pendientes/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                            && request.resource.size < 50 * 1024 * 1024;
+      allow delete: if request.auth != null;
+    }
+
     // Evidencia fotográfica ("auditoría de piezas") por punto de checklist de la revisión
     // de calidad de un área (itemKey = {gameId}_{areaId}_{itemId}), Ruta de Fabricación
     match /quality-evidence/{itemKey}/{fileName} {
