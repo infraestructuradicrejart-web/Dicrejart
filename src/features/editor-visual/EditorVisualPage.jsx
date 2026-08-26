@@ -587,6 +587,17 @@ const EditorVisualPage = ({ standalone = false }) => {
   // guardado por nodeId — no puede ser un useState suelto porque se usa dentro de
   // nodes.map(), donde no se pueden declarar hooks condicionalmente por iteración.
   const [auditReasonDrafts, setAuditReasonDrafts] = useState({});
+  // Nodos de Auditoría de Calidad expandidos (mostrando área/juego, botones y notas) —
+  // colapsados por defecto, solo el semáforo, para que el lienzo no se sature.
+  const [expandedAuditNodes, setExpandedAuditNodes] = useState(() => new Set());
+  const toggleAuditExpanded = (nodeId) => {
+    setExpandedAuditNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  };
 
   // Modal para ver y ampliar Ayudas Visuales (Imágenes en alta resolución, PDFs, Modelos 3D y Enlaces)
   const [previewResourceModal, setPreviewResourceModal] = useState({
@@ -5390,17 +5401,32 @@ const EditorVisualPage = ({ standalone = false }) => {
                           <div className={styles.nodeTag} style={{ marginTop: '3px' }}>
                             {entity ? (
                               <>
-                                <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '4px' }}>
-                                  🎮 {entity.game?.name} · 🏭 {dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
-                                </div>
-
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '4px 0' }}>
-                                  <span style={{ fontSize: '30px', lineHeight: 1 }}>
+                                {/* Fila siempre visible: solo el semáforo + chevron para desplegar —
+                                    colapsado por defecto para no saturar el lienzo. */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); toggleAuditExpanded(node.id); }}
+                                  style={{
+                                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    gap: '8px', padding: '4px 0', background: 'none', border: 'none', cursor: 'pointer',
+                                  }}
+                                  title={dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
+                                >
+                                  <span style={{ fontSize: '26px', lineHeight: 1 }}>
                                     {entity.status === 'cumple' ? '🟢' : entity.status === 'no_cumple' ? '🔴' : '🟡'}
                                   </span>
-                                  <strong style={{ fontSize: '13px' }}>
+                                  <strong style={{ fontSize: '12.5px' }}>
                                     {entity.status === 'cumple' ? 'Cumple' : entity.status === 'no_cumple' ? 'No Cumple' : 'Pendiente'}
                                   </strong>
+                                  <span style={{ fontSize: '10px', color: 'var(--color-gray-500)' }}>
+                                    {expandedAuditNodes.has(node.id) ? '▾' : '▸'}
+                                  </span>
+                                </button>
+
+                                {expandedAuditNodes.has(node.id) && (
+                                  <>
+                                <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '4px', marginTop: '4px', paddingTop: '4px', borderTop: '1px dashed rgba(0,0,0,0.1)' }}>
+                                  🎮 {entity.game?.name} · 🏭 {dynamicAreas.find((a) => a.id === entity.areaId)?.name || entity.areaId}
                                 </div>
 
                                 {entity.reviewedBy && (
@@ -5467,6 +5493,8 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   <div style={{ fontSize: '10px', color: 'var(--color-gray-400)', textAlign: 'center', fontStyle: 'italic' }}>
                                     🔒 Solo Calidad o supervisor de esta área
                                   </div>
+                                )}
+                                  </>
                                 )}
                               </>
                             ) : (
