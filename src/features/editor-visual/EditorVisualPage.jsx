@@ -7702,6 +7702,7 @@ const NodeInspector = ({
   const [editActPriority, setEditActPriority] = useState('media');
   const [editActDueDate, setEditActDueDate] = useState('');
   const [editActEvidenceLink, setEditActEvidenceLink] = useState('');
+  const [isUploadingInspectorEvidence, setIsUploadingInspectorEvidence] = useState(false);
   const [editActLinks, setEditActLinks] = useState([]);
   const [newLinkInput, setNewLinkInput] = useState('');
   const [checklist, setChecklist] = useState([]);
@@ -7913,6 +7914,40 @@ const NodeInspector = ({
       toast.danger('No se pudo actualizar la actividad.');
     } finally {
       setIsSavingAct(false);
+    }
+  };
+
+  /** Sube el archivo de evidencia (NAS) de la actividad seleccionada directo desde el Inspector */
+  const handleUploadInspectorEvidence = async (file) => {
+    if (!file) return;
+    setIsUploadingInspectorEvidence(true);
+    try {
+      const areaId = entity.areaId || null;
+      const gameId = entity.gameId || null;
+      const projectId = entity.projectId || currentProject?.id || null;
+      const result = await uploadEvidenceFile(file, {
+        category: 'fabricacion',
+        areaId,
+        areaName: areaId ? (dynamicAreas.find((a) => a.id === areaId)?.name || areaId) : null,
+        gameId,
+        gameName: gameId ? juegos.find((j) => j.id === gameId)?.name : null,
+        projectId,
+        projectName: projectId ? (proyectos.find((p) => p.id === projectId)?.name || currentProject?.name) : null,
+        targetType: 'actividad',
+        targetRef: { activityId: entity.id },
+      });
+      setEditActEvidenceLink(result.url);
+      const res = await updateActividad(entity.id, { evidenceLink: result.url, evidenceNasPath: result.nasPath || null });
+      if (res?.ok === false) {
+        toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
+      } else {
+        toast.success(result.pendingMigration ? '📤 Evidencia guardada (se sincronizará con el NAS automáticamente).' : '🗄️ Evidencia subida al NAS.');
+      }
+    } catch (err) {
+      console.error('Error al subir evidencia de actividad:', err);
+      toast.danger('No se pudo subir el archivo de evidencia.');
+    } finally {
+      setIsUploadingInspectorEvidence(false);
     }
   };
 
@@ -9118,7 +9153,22 @@ const NodeInspector = ({
               </h3>
             </div>
             <div className={styles.field}>
-              <label>Enlace a la evidencia en el NAS</label>
+              <label>📤 Subir archivo (automático al NAS)</label>
+              <input
+                type="file"
+                disabled={!canEditDiagram || isUploadingInspectorEvidence}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleUploadInspectorEvidence(file);
+                  e.target.value = '';
+                }}
+              />
+              {isUploadingInspectorEvidence && (
+                <p style={{ fontSize: '11.5px', color: '#0284c7', fontWeight: 600, marginTop: '4px' }}>⏳ Subiendo...</p>
+              )}
+            </div>
+            <div className={styles.field}>
+              <label>O pega un link manual (respaldo)</label>
               <div style={{ display: 'flex', gap: '6px' }}>
                 <input
                   type="text"
