@@ -293,28 +293,29 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
     // default, el supervisor podía guardar sin darse cuenta de que seguía apuntando a una
     // fecha vieja.
     //
-    // Se abre primero con valores por defecto (respuesta inmediata) y se corrige en
-    // cuanto responde findHorasExtraForDate — consulta directo a Firestore por
-    // operario+fecha, no el arreglo local `horasExtra` (limitado a las últimas
-    // `horasExtraLimit` de TODA la empresa). Con horas extra programándose casi a diario
-    // ese recorte se agotaba rápido: la autorización real de HOY dejaba de "verse" en el
-    // formulario (aunque seguía intacta en Firestore) y guardar así la pisaba con datos
-    // vacíos o por defecto.
+    // Se abre primero con el horario BASE, sin horas extra (respuesta inmediata) — nunca
+    // con op.schedule (el último horario ya autorizado, que puede ser de días atrás):
+    // mostrarlo aquí como si ya fuera de hoy hacía parecer que ya había una autorización
+    // real para hoy cuando en realidad no había ninguna (campo de Tareas vacío era la
+    // única señal de que no era un registro real). Se corrige en cuanto responde
+    // findHorasExtraForDate — consulta directo a Firestore por operario+fecha, no el
+    // arreglo local `horasExtra` (limitado a las últimas `horasExtraLimit` de TODA la
+    // empresa). Con horas extra programándose casi a diario ese recorte se agotaba
+    // rápido: la autorización real de HOY dejaba de "verse" en el formulario (aunque
+    // seguía intacta en Firestore) y guardar así la pisaba con datos vacíos o por
+    // defecto.
     if (esFechaDomingo(todayStr)) {
       setScheduleModal({
         isOpen: true, collaborator: op, startHour: '8', endHour: '18',
         overtimeHours: '10', authorizedDate: todayStr, overtimeTasks: '',
       });
     } else {
-      const prefilledStart = Number(op.schedule?.startHour || 8);
-      const prefilledEnd = Number(op.schedule?.endHour || (isSat ? 13 : 18));
-      const { earlyHours, lateHours } = getOvertimeBlocks(prefilledStart, prefilledEnd, todayStr);
       setScheduleModal({
         isOpen: true,
         collaborator: op,
-        startHour: String(prefilledStart),
-        endHour: String(prefilledEnd),
-        overtimeHours: String(earlyHours + lateHours),
+        startHour: '8',
+        endHour: String(isSat ? 13 : 18),
+        overtimeHours: '0',
         authorizedDate: todayStr,
         overtimeTasks: '',
       });

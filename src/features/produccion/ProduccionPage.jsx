@@ -453,30 +453,34 @@ const ProduccionPage = () => {
     // default, el supervisor podía guardar sin darse cuenta de que seguía apuntando a una
     // fecha vieja.
     const todayForModal = getTodayLocalDateStr();
+    const isSatModal = new Date(`${todayForModal}T00:00:00`).getDay() === 6;
+    const defaultEndModal = isSatModal ? 13 : 18;
 
-    // Se abre primero con valores por defecto (respuesta inmediata), y se corrige en
-    // cuanto llega la consulta a Firestore — findHorasExtraForDate consulta directo por
-    // operario+fecha, no el arreglo local `horasExtra` (limitado a las últimas
-    // `horasExtraLimit` autorizaciones de TODA la empresa). Con horas extra programándose
-    // casi a diario ese recorte se agotaba rápido: la autorización real de HOY dejaba de
-    // "verse" en el formulario (aunque seguía intacta en Firestore) y el supervisor, al
-    // guardar creyendo que no había nada capturado, terminaba pisándola con datos vacíos o
-    // por defecto — exactamente el "se borra la información" reportado.
-    const prefilledStart = Number(op.schedule?.startHour || 8);
-    const prefilledEnd = Number(op.schedule?.endHour || 18);
+    // Se abre primero con el horario BASE, sin horas extra (respuesta inmediata) — nunca
+    // con op.schedule (el último horario ya autorizado, que puede ser de días atrás):
+    // mostrarlo aquí como si ya fuera de hoy hacía parecer que ya había una autorización
+    // real para hoy cuando en realidad no había ninguna (bug reportado: se veían "5h ya
+    // autorizadas" de un día anterior, con el campo de Tareas vacío como única señal de
+    // que no era un registro real). Se corrige en cuanto llega la consulta a Firestore —
+    // findHorasExtraForDate consulta directo por operario+fecha, no el arreglo local
+    // `horasExtra` (limitado a las últimas `horasExtraLimit` autorizaciones de TODA la
+    // empresa). Con horas extra programándose casi a diario ese recorte se agotaba
+    // rápido: la autorización real de HOY dejaba de "verse" en el formulario (aunque
+    // seguía intacta en Firestore) y el supervisor, al guardar creyendo que no había nada
+    // capturado, terminaba pisándola con datos vacíos o por defecto — exactamente el "se
+    // borra la información" reportado.
     if (esFechaDomingo(todayForModal)) {
       setScheduleModal({
         isOpen: true, collaborator: op, startHour: '8', endHour: '18',
         overtimeHours: '10', authorizedDate: todayForModal, overtimeTasks: '',
       });
     } else {
-      const { earlyHours, lateHours } = getOvertimeBlocks(prefilledStart, prefilledEnd, todayForModal);
       setScheduleModal({
         isOpen: true,
         collaborator: op,
-        startHour: String(prefilledStart),
-        endHour: String(prefilledEnd),
-        overtimeHours: String(earlyHours + lateHours),
+        startHour: '8',
+        endHour: String(defaultEndModal),
+        overtimeHours: '0',
         authorizedDate: todayForModal,
         overtimeTasks: '',
       });
