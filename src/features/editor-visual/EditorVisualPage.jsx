@@ -460,7 +460,7 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
  */
 const EditorVisualPage = ({ standalone = false }) => {
   const navigate = useNavigate();
-  const { proyectos, juegos, addProject, addGame, updateProject, setQualityVerdict } = useProduccion();
+  const { proyectos, juegos, addProject, addGame, updateProject, setQualityVerdict, assignQualityAudit } = useProduccion();
   const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
@@ -2658,6 +2658,31 @@ const EditorVisualPage = ({ standalone = false }) => {
     closeNodeModal();
     const meta = NODE_TYPES[type];
     toast.success(`✅ Nodo de ${meta?.label || type} agregado al lienzo.`);
+
+    // Asignación automática de Auditoría de Calidad — solo la primera vez que se agrega
+    // este semáforo (assignQualityAudit no reasigna si ya tiene alguien). Se elige al
+    // primer usuario con rol Calidad y se le avisa por mensaje DIRECTO (isGlobal: false),
+    // no al chat general — así solo se entera quien de verdad debe auditar.
+    if (type === 'auditoria-calidad') {
+      const [gameId, areaId] = (entityId || '').split('::');
+      const game = juegos.find((j) => j.id === gameId);
+      const calidadUser = users.find((u) => u.roleType === 'calidad');
+      if (game && calidadUser && !game.qualityVerdict?.[areaId]?.assignedTo) {
+        assignQualityAudit(gameId, areaId, calidadUser.id, calidadUser.name).then((res) => {
+          if (res?.ok) {
+            const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
+            sendSystemChatMessage({
+              targetUserId: calidadUser.id,
+              targetUserName: calidadUser.name,
+              text: `🔍 [Auditoría de Calidad] Se te asignó la auditoría de la entrega de ${areaName} en "${game.name}". Revisa el semáforo en el lienzo cuando esa área termine.`,
+              senderId: user?.id || 'sistema',
+              senderName: user?.name || 'Sistema Dicrejart',
+              isGlobal: false,
+            });
+          }
+        });
+      }
+    }
   };
 
   const handleCreateNewProjectNode = async () => {
@@ -4783,6 +4808,9 @@ const EditorVisualPage = ({ standalone = false }) => {
                       <div className={styles.framelessAuditBadge}>
                         <span className={styles.framelessAuditBadgeSub}>🔍 Auditoría</span>
                         <span className={styles.framelessAuditBadgeTitle}>{entity ? areaName : 'No encontrada'}</span>
+                        {entity?.assignedToName && (
+                          <span className={styles.framelessAuditBadgeAssignee}>👤 {entity.assignedToName}</span>
+                        )}
                       </div>
 
                       {/* CUERPO: LA FORMA DEL SEMÁFORO EN SÍ */}

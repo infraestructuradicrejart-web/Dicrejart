@@ -1837,9 +1837,13 @@ export const ProduccionProvider = ({ children }) => {
     }
     const j = juegos.find((jg) => jg.id === gameId);
     if (!j) return { ok: false, error: 'Juego no encontrado' };
+    // Se conserva assignedTo/assignedToName ya guardados (si los hay) — este método solo
+    // cambia el veredicto, no debe borrar la asignación automática de quién audita.
+    const current = j.qualityVerdict?.[areaId] || {};
     try {
       await updateDoc(doc(db, 'juegos', gameId), {
         [`qualityVerdict.${areaId}`]: {
+          ...current,
           status,
           reviewedBy: reviewerName,
           reviewedAt: new Date().toISOString(),
@@ -1850,6 +1854,31 @@ export const ProduccionProvider = ({ children }) => {
       return { ok: true };
     } catch (error) {
       console.error('Error al guardar semáforo de calidad en Firestore:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, user]);
+
+  /**
+   * Asigna automáticamente a la persona de Calidad responsable de una auditoría (nodo
+   * semáforo del lienzo) — solo la primera vez que se agrega ese nodo al lienzo (si ya
+   * tiene alguien asignado, no lo cambia). El nombre/uid a asignar lo resuelve quien
+   * llama (EditorVisualPage.jsx, que ya tiene acceso a `users`); esta función solo
+   * escribe, sin acoplar ProduccionContext al padrón de usuarios.
+   */
+  const assignQualityAudit = useCallback(async (gameId, areaId, assignedTo, assignedToName) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    const j = juegos.find((jg) => jg.id === gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    const current = j.qualityVerdict?.[areaId] || { status: 'pendiente', reviewedBy: null, reviewedAt: null, notes: '' };
+    if (current.assignedTo) return { ok: true, alreadyAssigned: true };
+    try {
+      await updateDoc(doc(db, 'juegos', gameId), {
+        [`qualityVerdict.${areaId}`]: { ...current, assignedTo, assignedToName },
+      });
+      logAudit({ user, module: 'produccion', action: 'Asignó automáticamente una auditoría de calidad', details: `${j.name} (${areaId}) -> ${assignedToName}` });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al asignar auditoría de calidad:', error);
       return { ok: false, error: error.message };
     }
   }, [juegos, user]);
@@ -1970,6 +1999,7 @@ export const ProduccionProvider = ({ children }) => {
       approveQualityReview,
       rejectQualityReview,
       setQualityVerdict,
+      assignQualityAudit,
       approveReceptionForPT,
       returnDeliveryForReview,
     }),
@@ -2023,6 +2053,7 @@ export const ProduccionProvider = ({ children }) => {
       approveQualityReview,
       rejectQualityReview,
       setQualityVerdict,
+      assignQualityAudit,
       approveReceptionForPT,
       returnDeliveryForReview,
     ]

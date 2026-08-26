@@ -1940,6 +1940,17 @@
   display: block;
 }
 
+.framelessAuditBadgeAssignee {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #a78bfa;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  margin-top: 1px;
+}
+
 .framelessAuditHousing {
   position: relative;
   width: 44px;
