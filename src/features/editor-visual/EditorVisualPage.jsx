@@ -2127,31 +2127,56 @@ const EditorVisualPage = ({ standalone = false }) => {
                 }
               }
 
-              // 13. Actividad ↔ Auditoría de Calidad: la asignación automática a Calidad
-              // pasa AQUÍ (al conectarse de verdad a la cadena), no al solo agregar el
-              // nodo al lienzo — así un semáforo suelto sin conectar no genera avisos.
+              // 13. Actividad ↔ Auditoría de Calidad: el semáforo se agrega sin vincular
+              // (ver botón de la paleta) y se resuelve solo AQUÍ, al conectarlo por cable
+              // a la Actividad que va a auditar — toma el área/juego de esa actividad. Si
+              // ya estaba vinculado (se conecta una segunda vez, ej. hacia la Actividad de
+              // Recepción río abajo), no se vuelve a resolver — conserva el área original.
               if (actNode && auditNode) {
-                const [gameId, areaId] = (auditNode.refId || '').split('::');
-                const game = juegos.find((j) => j.id === gameId);
-                const calidadUser = users.find((u) => u.roleType === 'calidad');
-                if (game && !game.qualityVerdict?.[areaId]?.assignedTo) {
-                  if (!calidadUser) {
-                    toast.warning('⚠️ No hay ningún usuario con rol Calidad registrado — no se pudo asignar esta auditoría automáticamente. Créalo en Admin → Usuarios del Sistema.');
+                const actEntity = getLinkedEntity(actNode);
+                let resolvedGameId = null;
+                let resolvedAreaId = null;
+
+                if (!auditNode.refId) {
+                  if (!actEntity?.gameId || !actEntity?.areaId) {
+                    toast.warning('🔍 Esta actividad no está ligada a un Juego/Área — la auditoría no se pudo vincular. Conéctala a una actividad de un Juego con Ruta de Fabricación.');
                   } else {
-                    assignQualityAudit(gameId, areaId, calidadUser.id, calidadUser.name).then((res) => {
-                      if (res?.ok) {
-                        const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
-                        sendSystemChatMessage({
-                          targetUserId: calidadUser.id,
-                          targetUserName: calidadUser.name,
-                          text: `🔍 [Auditoría de Calidad] Se te asignó la auditoría de la entrega de ${areaName} en "${game.name}". Revisa el semáforo en el lienzo cuando esa área termine.`,
-                          senderId: user?.id || 'sistema',
-                          senderName: user?.name || 'Sistema Dicrejart',
-                          isGlobal: false,
-                        });
-                        toast.success(`🔍 Auditoría de "${areaName}" asignada a ${calidadUser.name}.`);
-                      }
-                    });
+                    resolvedGameId = actEntity.gameId;
+                    resolvedAreaId = actEntity.areaId;
+                    const resolvedRefId = `${resolvedGameId}::${resolvedAreaId}`;
+                    const nextNodesWithLink = nodes.map((n) => (n.id === auditNode.id ? { ...n, refId: resolvedRefId } : n));
+                    setNodes(nextNodesWithLink);
+                    saveToFirestore(nextNodesWithLink, nextEdges);
+                    const linkedAreaName = dynamicAreas.find((a) => a.id === resolvedAreaId)?.name || resolvedAreaId;
+                    const linkedGame = juegos.find((j) => j.id === resolvedGameId);
+                    toast.success(`🔍 Auditoría vinculada a "${linkedAreaName}" del Juego "${linkedGame?.name || resolvedGameId}".`);
+                  }
+                } else {
+                  [resolvedGameId, resolvedAreaId] = auditNode.refId.split('::');
+                }
+
+                if (resolvedGameId && resolvedAreaId) {
+                  const game = juegos.find((j) => j.id === resolvedGameId);
+                  const calidadUser = users.find((u) => u.roleType === 'calidad');
+                  if (game && !game.qualityVerdict?.[resolvedAreaId]?.assignedTo) {
+                    if (!calidadUser) {
+                      toast.warning('⚠️ No hay ningún usuario con rol Calidad registrado — no se pudo asignar esta auditoría automáticamente. Créalo en Admin → Usuarios del Sistema.');
+                    } else {
+                      assignQualityAudit(resolvedGameId, resolvedAreaId, calidadUser.id, calidadUser.name).then((res) => {
+                        if (res?.ok) {
+                          const areaName = dynamicAreas.find((a) => a.id === resolvedAreaId)?.name || resolvedAreaId;
+                          sendSystemChatMessage({
+                            targetUserId: calidadUser.id,
+                            targetUserName: calidadUser.name,
+                            text: `🔍 [Auditoría de Calidad] Se te asignó la auditoría de la entrega de ${areaName} en "${game.name}". Revisa el semáforo en el lienzo cuando esa área termine.`,
+                            senderId: user?.id || 'sistema',
+                            senderName: user?.name || 'Sistema Dicrejart',
+                            isGlobal: false,
+                          });
+                          toast.success(`🔍 Auditoría de "${areaName}" asignada a ${calidadUser.name}.`);
+                        }
+                      });
+                    }
                   }
                 }
               }
@@ -2628,16 +2653,9 @@ const EditorVisualPage = ({ standalone = false }) => {
         });
       }
       if (type === 'area') return dynamicAreas.map((a) => ({ id: a.id, label: `🏭 ${a.name}` }));
-      if (type === 'auditoria-calidad') {
-        const options = [];
-        juegos.filter((j) => j.useManufacturingRoute).forEach((j) => {
-          (j.areas || []).forEach((areaId) => {
-            const areaName = dynamicAreas.find((a) => a.id === areaId)?.name || areaId;
-            options.push({ id: `${j.id}::${areaId}`, label: `🔍 ${j.name} — ${areaName}` });
-          });
-        });
-        return options;
-      }
+      // 'auditoria-calidad' no tiene catálogo: se agrega directo (sin picker) y se
+      // vincula solo al conectarlo por cable a la Actividad que va a auditar — ver el
+      // bloque "Actividad ↔ Auditoría de Calidad" en el handler de conexión de cables.
       return [];
     },
     [proyectos, juegos, actividades, operarios, dynamicAreas]
@@ -2717,7 +2735,7 @@ const EditorVisualPage = ({ standalone = false }) => {
 
   const openNodeModal = (type) => {
     if (!canEditDiagram) return;
-    const defaultTab = (type === 'colaborador' || type === 'area' || type === 'auditoria-calidad') ? 'existing' : 'new';
+    const defaultTab = (type === 'colaborador' || type === 'area') ? 'existing' : 'new';
     setNodeModal({
       ...EMPTY_NODE_MODAL,
       isOpen: true,
@@ -4145,10 +4163,14 @@ const EditorVisualPage = ({ standalone = false }) => {
                         className={styles.paletteNodeBtn}
                         style={{ '--btn-theme': '#dc2626' }}
                         onClick={() => {
-                          openNodeModal('auditoria-calidad');
+                          // Directo, sin picker: se agrega sin vincular a ningún Juego/Área
+                          // todavía — se resuelve solo (área y juego) al conectarlo por
+                          // cable a la Actividad que va a auditar.
+                          if (!canEditDiagram) return;
+                          spawnNode('auditoria-calidad', { draft: false, refId: null, draftFields: {} });
                           setIsLeftRailOpen(false);
                         }}
-                        title="Agregar semáforo de Auditoría de Calidad por entrega de área"
+                        title="Agregar semáforo de Auditoría de Calidad — conéctalo a la Actividad que va a auditar"
                       >
                         <span style={{ fontSize: '18px' }}>🔍</span>
                         <div>
@@ -4884,7 +4906,9 @@ const EditorVisualPage = ({ standalone = false }) => {
                       {/* ETIQUETA FLOTANTE ARRIBA */}
                       <div className={styles.framelessAuditBadge}>
                         <span className={styles.framelessAuditBadgeSub}>🔍 Auditoría</span>
-                        <span className={styles.framelessAuditBadgeTitle}>{entity ? areaName : 'No encontrada'}</span>
+                        <span className={styles.framelessAuditBadgeTitle}>
+                          {entity ? areaName : node.refId ? 'No encontrada' : '🔗 Sin conectar'}
+                        </span>
                         {entity?.assignedToName && (
                           <span className={styles.framelessAuditBadgeAssignee}>👤 {entity.assignedToName}</span>
                         )}
@@ -4901,7 +4925,7 @@ const EditorVisualPage = ({ standalone = false }) => {
                           }
                           if (entity) toggleAuditExpanded(node.id);
                         }}
-                        title="Clic para consultar / editar"
+                        title={entity ? 'Clic para consultar / editar' : 'Conecta este semáforo por cable a la Actividad que va a auditar'}
                       >
                         <span className={styles.framelessAuditLight} style={{
                           background: entity?.status === 'no_cumple' ? '#ef4444' : 'rgba(239, 68, 68, 0.18)',
