@@ -11,6 +11,9 @@ dist/
 # Clave de cuenta de servicio del agente NAS (nas-agent/) — acceso total de administrador
 service-account.json
 
+# Zip temporal usado solo para transferir nas-agent/ al NAS por File Station
+nas-agent.zip
+
 # Firebase
 .firebase/
 firebase-debug.log
