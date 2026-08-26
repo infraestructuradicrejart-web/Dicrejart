@@ -460,7 +460,7 @@ const uploadResourceFile = async (file, lienzoId = 'general') => {
 const EditorVisualPage = ({ standalone = false }) => {
   const navigate = useNavigate();
   const { proyectos, juegos, addProject, addGame, updateProject } = useProduccion();
-  const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus, addEvidenceToActividad, removeEvidenceFromActividad } = useActividades();
+  const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
   const { areas: dynamicAreas } = useAreas();
   const allBlockAreas = useMemo(() => [...dynamicAreas, ...NON_PRODUCTION_AREAS], [dynamicAreas]);
@@ -569,10 +569,11 @@ const EditorVisualPage = ({ standalone = false }) => {
   // Modal para marcar una actividad como completada con notas de entrega
   const [completeModal, setCompleteModal] = useState({ isOpen: false, activityId: null, title: '', notes: '' });
 
-  // Modal dedicado solo a subir/quitar evidencia fotográfica de una actividad —
-  // independiente de iniciar/pausar/terminar, se puede usar en cualquier momento.
-  const [evidenceModal, setEvidenceModal] = useState({ isOpen: false, activityId: null, title: '' });
-  const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
+  // Modal dedicado a capturar el link de evidencia de una actividad — la evidencia real
+  // vive en el NAS local del taller (fuera de la app); aquí solo se guarda el enlace que
+  // redirige a ella, mismo patrón que el campo de enlace NAS de Proyecto/Juego.
+  // Independiente de iniciar/pausar/terminar, se puede usar en cualquier momento.
+  const [evidenceModal, setEvidenceModal] = useState({ isOpen: false, activityId: null, title: '', linkInput: '' });
 
   // Modal de "Registrar Entrega" abierto directo desde una insignia de área en el nodo
   // Juego del lienzo libre — mismo componente que ya usa RutaFabricacionView.jsx, para no
@@ -3090,33 +3091,23 @@ const EditorVisualPage = ({ standalone = false }) => {
     }
   }, [completeModal, toast, advanceStatus]);
 
-  /** Abre el modal de evidencia fotográfica de una actividad */
+  /** Abre el modal de link de evidencia (NAS) de una actividad, precargado con su valor actual */
   const handleOpenEvidenceModal = (activityId, title) => {
-    setEvidenceModal({ isOpen: true, activityId, title });
+    const act = actividades.find((a) => a.id === activityId);
+    setEvidenceModal({ isOpen: true, activityId, title, linkInput: act?.evidenceLink || '' });
   };
 
-  const closeEvidenceModal = () => setEvidenceModal({ isOpen: false, activityId: null, title: '' });
+  const closeEvidenceModal = () => setEvidenceModal({ isOpen: false, activityId: null, title: '', linkInput: '' });
 
-  /** Sube uno o más archivos de evidencia a la actividad abierta en el modal */
-  const handleUploadEvidence = async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0 || !evidenceModal.activityId) return;
-    setIsUploadingEvidence(true);
-    const result = await addEvidenceToActividad(evidenceModal.activityId, files);
-    setIsUploadingEvidence(false);
-    e.target.value = '';
-    if (result.ok) {
-      toast.success(`📷 ${files.length} foto(s) de evidencia agregada(s).`);
+  /** Guarda el link de evidencia (carpeta/archivo en el NAS local) de la actividad abierta en el modal */
+  const handleSaveEvidenceLink = async () => {
+    if (!evidenceModal.activityId) return;
+    const res = await updateActividad(evidenceModal.activityId, { evidenceLink: evidenceModal.linkInput.trim() });
+    if (res?.ok !== false) {
+      toast.success('🗄️ Enlace de evidencia guardado.');
+      closeEvidenceModal();
     } else {
-      toast.danger(result.error || 'No se pudo subir la evidencia.');
-    }
-  };
-
-  /** Quita una foto de evidencia de la actividad abierta en el modal */
-  const handleRemoveEvidence = async (photoPath) => {
-    const result = await removeEvidenceFromActividad(evidenceModal.activityId, photoPath);
-    if (!result.ok) {
-      toast.danger(result.error || 'No se pudo quitar la evidencia.');
+      toast.danger(res.error || 'No se pudo guardar el enlace de evidencia.');
     }
   };
 
@@ -5183,9 +5174,11 @@ const EditorVisualPage = ({ standalone = false }) => {
                                   })()}
                                 </div>
 
-                                {/* Evidencia fotográfica de avance — botón propio, disponible en cualquier
-                                    estatus (no solo al terminar), independiente de Iniciar/Pausar/Terminar */}
-                                <div style={{ marginTop: '6px', paddingTop: '4px', borderTop: '1px dotted rgba(0,0,0,0.1)' }}>
+                                {/* Evidencia (link al NAS local) — botón propio, siempre visible en
+                                    cualquier estatus, independiente de Iniciar/Pausar/Terminar. La
+                                    evidencia real vive fuera de la app (NAS del taller); aquí solo se
+                                    guarda/abre el enlace. */}
+                                <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dotted rgba(0,0,0,0.1)' }}>
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -5194,22 +5187,22 @@ const EditorVisualPage = ({ standalone = false }) => {
                                     }}
                                     style={{
                                       width: '100%',
-                                      padding: '4px 8px',
-                                      fontSize: '10.5px',
-                                      fontWeight: 700,
-                                      background: entity.evidencePhotos?.length ? 'rgba(16, 185, 129, 0.1)' : 'rgba(0,0,0,0.05)',
-                                      color: entity.evidencePhotos?.length ? '#059669' : 'var(--color-gray-600)',
-                                      border: `1px solid ${entity.evidencePhotos?.length ? 'rgba(16, 185, 129, 0.25)' : 'rgba(0,0,0,0.1)'}`,
+                                      padding: '6px 8px',
+                                      fontSize: '11px',
+                                      fontWeight: 800,
+                                      background: entity.evidenceLink ? 'linear-gradient(135deg, #0891b2, #0e7490)' : 'rgba(8, 145, 178, 0.1)',
+                                      color: entity.evidenceLink ? '#ffffff' : '#0891b2',
+                                      border: entity.evidenceLink ? 'none' : '1.5px dashed rgba(8, 145, 178, 0.4)',
                                       borderRadius: '5px',
                                       cursor: 'pointer',
                                       display: 'flex',
                                       alignItems: 'center',
                                       justifyContent: 'center',
-                                      gap: '4px',
+                                      gap: '5px',
                                     }}
-                                    title="Agregar o revisar evidencia fotográfica de esta actividad"
+                                    title="Ver o capturar el enlace de evidencia (NAS) de esta actividad"
                                   >
-                                    📷 Evidencia {entity.evidencePhotos?.length ? `(${entity.evidencePhotos.length})` : ''}
+                                    🗄️ {entity.evidenceLink ? 'Ver Evidencia (NAS)' : 'Agregar Evidencia (NAS)'}
                                   </button>
                                 </div>
 
@@ -6840,84 +6833,47 @@ const EditorVisualPage = ({ standalone = false }) => {
         </div>
       </Modal>
 
-      {/* ---------- MODAL: EVIDENCIA FOTOGRÁFICA DE ACTIVIDAD ---------- */}
+      {/* ---------- MODAL: ENLACE DE EVIDENCIA (NAS) DE ACTIVIDAD ---------- */}
       <Modal
         isOpen={evidenceModal.isOpen}
         onClose={closeEvidenceModal}
-        title={`📷 Evidencia: ${evidenceModal.title || 'Actividad'}`}
+        title={`🗄️ Evidencia: ${evidenceModal.title || 'Actividad'}`}
       >
-        {(() => {
-          const act = actividades.find((a) => a.id === evidenceModal.activityId);
-          const photos = act?.evidencePhotos || [];
-          return (
-            <>
-              {photos.length > 0 ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '8px', marginBottom: '14px' }}>
-                  {photos.map((photo) => (
-                    <div key={photo.path || photo.url} style={{ position: 'relative' }}>
-                      <img
-                        src={photo.url}
-                        alt="Evidencia"
-                        style={{ width: '100%', height: '90px', objectFit: 'cover', borderRadius: '6px', border: '1px solid var(--color-gray-200)' }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveEvidence(photo.path)}
-                        title="Quitar esta foto"
-                        style={{
-                          position: 'absolute',
-                          top: '3px',
-                          right: '3px',
-                          width: '20px',
-                          height: '20px',
-                          borderRadius: '50%',
-                          border: 'none',
-                          background: 'rgba(0,0,0,0.65)',
-                          color: '#fff',
-                          fontSize: '12px',
-                          cursor: 'pointer',
-                          lineHeight: 1,
-                        }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ fontSize: '12.5px', color: 'var(--color-gray-500)', marginBottom: '14px' }}>
-                  Todavía no hay evidencia fotográfica para esta actividad.
-                </p>
-              )}
-
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '6px',
-                  padding: '10px',
-                  borderRadius: '6px',
-                  border: '1.5px dashed var(--color-gray-300)',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  color: 'var(--color-gray-600)',
-                  cursor: 'pointer',
-                }}
+        <p style={{ fontSize: '12.5px', color: 'var(--color-gray-500)', marginBottom: '12px' }}>
+          La evidencia (fotos, videos, archivos) se guarda en el NAS local del taller —
+          aquí solo se captura el enlace que redirige a ella.
+        </p>
+        <div className={styles.field} style={{ marginBottom: '14px' }}>
+          <label>Enlace a la evidencia en el NAS</label>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <input
+              type="text"
+              value={evidenceModal.linkInput}
+              placeholder="Enlace a la carpeta/archivo en el NAS"
+              onChange={(e) => setEvidenceModal((prev) => ({ ...prev, linkInput: e.target.value }))}
+              style={{ flex: 1 }}
+              autoFocus
+            />
+            {evidenceModal.linkInput && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => window.open(evidenceModal.linkInput, '_blank', 'noopener,noreferrer')}
               >
-                {isUploadingEvidence ? '⏳ Subiendo...' : '📤 Subir foto(s) de evidencia'}
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handleUploadEvidence}
-                  disabled={isUploadingEvidence}
-                  style={{ display: 'none' }}
-                />
-              </label>
-            </>
-          );
-        })()}
+                Abrir
+              </Button>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <Button variant="secondary" size="md" onClick={closeEvidenceModal}>
+            Cancelar
+          </Button>
+          <Button variant="primary" size="md" onClick={handleSaveEvidenceLink}>
+            💾 Guardar Enlace
+          </Button>
+        </div>
       </Modal>
 
       {/* ---------- MODAL: REGISTRAR ENTREGA (desde el nodo Juego del lienzo libre) ---------- */}

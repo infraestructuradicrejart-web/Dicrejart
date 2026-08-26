@@ -28,7 +28,7 @@ import { ConfigContext, DEFAULT_LIMITS } from './ConfigContext';
 import { AuthContext } from './AuthContext';
 import { ProduccionContext } from './ProduccionContext';
 import { logAudit } from '../utils/auditLog';
-import { uploadAttachments, uploadEvidencePhotos, deleteEvidencePhotos } from '../utils/evidenceStorage';
+import { uploadAttachments, deleteEvidencePhotos } from '../utils/evidenceStorage';
 import { notifyActivityDeleted } from '../services/chatNotificationService';
 
 export const ActividadesContext = createContext(null);
@@ -297,48 +297,6 @@ export const ActividadesProvider = ({ children }) => {
   }, [actividades, user]);
 
   /**
-   * Agrega evidencia fotográfica a una actividad (separada de `attachments`, que son
-   * adjuntos de referencia tipo planos, no evidencia de avance). Mismo patrón que
-   * addEvidenceToInspeccion en CalidadContext.jsx.
-   */
-  const addEvidenceToActividad = useCallback(async (activityId, files) => {
-    if (!db) return { ok: false, error: 'Firebase no inicializado' };
-    const act = actividades.find((a) => a.id === activityId);
-    if (!act) return { ok: false, error: 'Actividad no encontrada' };
-    try {
-      const uploaded = await uploadEvidencePhotos('actividades', activityId, files);
-      const photos = [...(act.evidencePhotos || []), ...uploaded];
-      await updateDoc(doc(db, 'actividades', activityId), { evidencePhotos: photos });
-      logAudit({ user, module: 'actividades', action: 'Agregó evidencia fotográfica a una actividad', details: act.title });
-      return { ok: true, photos };
-    } catch (error) {
-      console.error('Error al subir evidencia fotográfica de actividad:', error);
-      return { ok: false, error: error.message };
-    }
-  }, [actividades, user]);
-
-  /**
-   * Quita una foto de evidencia de una actividad (borra el archivo de Storage y
-   * actualiza el arreglo en Firestore).
-   */
-  const removeEvidenceFromActividad = useCallback(async (activityId, photoPath) => {
-    if (!db) return { ok: false, error: 'Firebase no inicializado' };
-    const act = actividades.find((a) => a.id === activityId);
-    if (!act) return { ok: false, error: 'Actividad no encontrada' };
-    try {
-      const photoToRemove = (act.evidencePhotos || []).find((p) => p.path === photoPath);
-      const photos = (act.evidencePhotos || []).filter((p) => p.path !== photoPath);
-      await updateDoc(doc(db, 'actividades', activityId), { evidencePhotos: photos });
-      if (photoToRemove) deleteEvidencePhotos([photoToRemove]).catch(() => {});
-      logAudit({ user, module: 'actividades', action: 'Quitó evidencia fotográfica de una actividad', details: act.title });
-      return { ok: true, photos };
-    } catch (error) {
-      console.error('Error al quitar evidencia fotográfica de actividad:', error);
-      return { ok: false, error: error.message };
-    }
-  }, [actividades, user]);
-
-  /**
    * Elimina una actividad si su estatus es 'pendiente', junto con sus adjuntos en Storage,
    * y despacha un aviso automático al chat del colaborador asignado y al canal general.
    */
@@ -437,12 +395,10 @@ export const ActividadesProvider = ({ children }) => {
       addChecklistItem,
       toggleChecklistItem,
       removeChecklistItem,
-      addEvidenceToActividad,
-      removeEvidenceFromActividad,
       findOrphanedAssignments,
       unassignOrphanedActivities,
     }),
-    [actividades, addActividad, updateActividad, advanceStatus, deleteActividad, addChecklistItem, toggleChecklistItem, removeChecklistItem, addEvidenceToActividad, removeEvidenceFromActividad, findOrphanedAssignments, unassignOrphanedActivities]
+    [actividades, addActividad, updateActividad, advanceStatus, deleteActividad, addChecklistItem, toggleChecklistItem, removeChecklistItem, findOrphanedAssignments, unassignOrphanedActivities]
   );
 
   return <ActividadesContext.Provider value={value}>{children}</ActividadesContext.Provider>;
