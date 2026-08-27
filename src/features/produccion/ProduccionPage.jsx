@@ -372,6 +372,7 @@ const ProduccionPage = () => {
     overtimeHours: '0',
     authorizedDate: '',
     overtimeTasks: '',
+    isCheckingExisting: false,
   });
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [expandedOvertimeOperarios, setExpandedOvertimeOperarios] = useState(() => new Set());
@@ -469,10 +470,16 @@ const ProduccionPage = () => {
     // seguía intacta en Firestore) y el supervisor, al guardar creyendo que no había nada
     // capturado, terminaba pisándola con datos vacíos o por defecto — exactamente el "se
     // borra la información" reportado.
+    // `isCheckingExisting: true` mientras se confirma contra Firestore — el formulario
+    // se deshabilita y se avisa explícitamente "Verificando..." en vez de dejar ver un
+    // horario base que, aunque no es el bug de datos falsos de antes, tampoco hay que
+    // presentar como si ya fuera la respuesta definitiva: si de verdad hay algo
+    // autorizado para hoy, alguien podría ver el formulario en blanco un instante y
+    // asumir que no se programó nada.
     if (esFechaDomingo(todayForModal)) {
       setScheduleModal({
         isOpen: true, collaborator: op, startHour: '8', endHour: '18',
-        overtimeHours: '10', authorizedDate: todayForModal, overtimeTasks: '',
+        overtimeHours: '10', authorizedDate: todayForModal, overtimeTasks: '', isCheckingExisting: true,
       });
     } else {
       setScheduleModal({
@@ -483,31 +490,31 @@ const ProduccionPage = () => {
         overtimeHours: '0',
         authorizedDate: todayForModal,
         overtimeTasks: '',
+        isCheckingExisting: true,
       });
     }
 
     const existingTodayHE = await findHorasExtraForDate(op.id, todayForModal);
-    if (existingTodayHE) {
+    setScheduleModal((prev) => {
+      if (!prev.isOpen || prev.collaborator?.id !== op.id || prev.authorizedDate !== todayForModal) return prev;
+      if (!existingTodayHE) return { ...prev, isCheckingExisting: false };
       // La autorización real de HOY (si existe) manda sobre los valores por defecto —
       // horario, horas y tareas, no solo las tareas como antes.
-      setScheduleModal((prev) => (
-        prev.isOpen && prev.collaborator?.id === op.id && prev.authorizedDate === todayForModal
-          ? {
-              ...prev,
-              startHour: String(existingTodayHE.startHour),
-              endHour: String(existingTodayHE.endHour),
-              overtimeHours: String(existingTodayHE.overtimeHours),
-              overtimeTasks: existingTodayHE.overtimeTasks || '',
-            }
-          : prev
-      ));
-    }
+      return {
+        ...prev,
+        startHour: String(existingTodayHE.startHour),
+        endHour: String(existingTodayHE.endHour),
+        overtimeHours: String(existingTodayHE.overtimeHours),
+        overtimeTasks: existingTodayHE.overtimeTasks || '',
+        isCheckingExisting: false,
+      };
+    });
   };
 
   const handleCloseScheduleModal = () => {
     setScheduleModal({
       isOpen: false, collaborator: null, startHour: '8', endHour: '18',
-      overtimeHours: '0', authorizedDate: '', overtimeTasks: '',
+      overtimeHours: '0', authorizedDate: '', overtimeTasks: '', isCheckingExisting: false,
     });
   };
 
@@ -532,26 +539,25 @@ const ProduccionPage = () => {
     if (esFechaDomingo(dateStr)) {
       // Domingo es turno completo desde cero — se resetea a un turno normal (08:00-18:00)
       // en vez de arrastrar horas de bloque matutino/vespertino que no aplican aquí.
-      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: '18', overtimeHours: '10', overtimeTasks: '' }));
+      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: '18', overtimeHours: '10', overtimeTasks: '', isCheckingExisting: true }));
     } else {
       const newDefaultEnd = new Date(`${dateStr}T00:00:00`).getDay() === 6 ? 13 : 18;
-      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: String(newDefaultEnd), overtimeHours: '0', overtimeTasks: '' }));
+      setScheduleModal((prev) => ({ ...prev, authorizedDate: dateStr, startHour: '8', endHour: String(newDefaultEnd), overtimeHours: '0', overtimeTasks: '', isCheckingExisting: true }));
     }
 
     const existingHE = await findHorasExtraForDate(collaboratorId, dateStr);
-    if (existingHE) {
-      setScheduleModal((prev) => (
-        prev.collaborator?.id === collaboratorId && prev.authorizedDate === dateStr
-          ? {
-              ...prev,
-              startHour: String(existingHE.startHour),
-              endHour: String(existingHE.endHour),
-              overtimeHours: String(existingHE.overtimeHours),
-              overtimeTasks: existingHE.overtimeTasks || '',
-            }
-          : prev
-      ));
-    }
+    setScheduleModal((prev) => {
+      if (prev.collaborator?.id !== collaboratorId || prev.authorizedDate !== dateStr) return prev;
+      if (!existingHE) return { ...prev, isCheckingExisting: false };
+      return {
+        ...prev,
+        startHour: String(existingHE.startHour),
+        endHour: String(existingHE.endHour),
+        overtimeHours: String(existingHE.overtimeHours),
+        overtimeTasks: existingHE.overtimeTasks || '',
+        isCheckingExisting: false,
+      };
+    });
   };
 
   const handleStartHourChange = (e) => {
@@ -3326,6 +3332,15 @@ const ProduccionPage = () => {
               </div>
             </div>
 
+            {scheduleModal.isCheckingExisting && (
+              <div className={styles.bannerInfo}>
+                <strong>🔄 Verificando...</strong>
+                <span> Consultando si ya hay algo autorizado para esta fecha antes de mostrar el formulario — un momento.</span>
+              </div>
+            )}
+
+            <fieldset disabled={scheduleModal.isCheckingExisting} style={{ border: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+
             <div className={styles.formGroup}>
               <label className={styles.label}>Fecha de la Jornada</label>
               <input
@@ -3444,11 +3459,13 @@ const ProduccionPage = () => {
               />
             </div>
 
+            </fieldset>
+
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
               <Button type="button" variant="secondary" onClick={handleCloseScheduleModal}>
                 Cancelar
               </Button>
-              <Button type="submit" variant="primary" isLoading={isSavingSchedule}>
+              <Button type="submit" variant="primary" isLoading={isSavingSchedule} disabled={scheduleModal.isCheckingExisting}>
                 Guardar y Autorizar
               </Button>
             </div>
