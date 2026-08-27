@@ -211,6 +211,11 @@ const ProduccionPage = () => {
   const [showMaterialesHistorial, setShowMaterialesHistorial] = useState(false);
   const [isExportingMaterialPdf, setIsExportingMaterialPdf] = useState(false);
   const [isExportingHorasExtraPdf, setIsExportingHorasExtraPdf] = useState(false);
+  // Rango de fechas del PDF de horas extra por área — arranca en la semana de horas
+  // extra en curso (jueves a miércoles) para no cambiar el comportamiento por default,
+  // pero el supervisor puede ajustarlo a cualquier rango antes de exportar.
+  const [heReportStart, setHeReportStart] = useState(() => getOvertimeWeekRange().start);
+  const [heReportEnd, setHeReportEnd] = useState(() => getOvertimeWeekRange().end);
 
   const toast = useToast();
 
@@ -1249,20 +1254,25 @@ const ProduccionPage = () => {
   };
 
   /**
-   * Exporta a PDF las horas extra autorizadas de ESTA área — con fines de control para el
-   * supervisor/encargado del área. Tres secciones: (1) tabla de la semana de horas extra
-   * en curso (jueves a miércoles, ver getOvertimeWeekRange), (2) resumen de horas
-   * acumuladas por colaborador esa misma semana "al corte", y (3) una sección aparte con
-   * las horas ya autorizadas para MAÑANA, aunque caigan fuera de la semana en curso
-   * (mismo criterio que el reporte que se manda a RH: hoy/semana + próximas) — así un
-   * supervisor que consulta esto un miércoles (último día de la semana) sí ve lo ya
-   * autorizado para el jueves siguiente. Solo incluye horario autorizado y total de horas
-   * (no correcciones de horario real ni verificación de cumplimiento).
+   * Exporta a PDF las horas extra autorizadas de ESTA área en el rango de fechas elegido
+   * (heReportStart/heReportEnd, por default la semana de horas extra en curso — jueves a
+   * miércoles — pero el supervisor puede ajustarlo antes de exportar). Tres secciones:
+   * (1) tabla del rango elegido, (2) resumen de horas acumuladas por colaborador en ese
+   * rango, y (3) una sección aparte con las horas ya autorizadas para MAÑANA, aunque
+   * caigan fuera del rango elegido (mismo criterio que el reporte que se manda a RH:
+   * hoy/semana + próximas) — así un supervisor que consulta esto el último día de su
+   * rango sí ve lo ya autorizado para el día siguiente. Solo incluye horario autorizado y
+   * total de horas (no correcciones de horario real ni verificación de cumplimiento).
    */
   const handleExportHorasExtraAreaPdf = async () => {
+    if (!heReportStart || !heReportEnd || heReportStart > heReportEnd) {
+      toast.danger('El rango de fechas del reporte no es válido — revisa "Desde" y "Hasta".');
+      return;
+    }
     setIsExportingHorasExtraPdf(true);
     try {
-      const { start, end } = getOvertimeWeekRange();
+      const start = heReportStart;
+      const end = heReportEnd;
       const tomorrowStr = getTodayLocalDateStr(new Date(Date.now() + 24 * 60 * 60 * 1000));
 
       const belongsToArea = (h) => h.areaId === areaId && h.verificationStatus !== 'cancelado';
@@ -1309,7 +1319,7 @@ const ProduccionPage = () => {
         doc.setFontSize(9);
         doc.setTextColor(...DARK);
         doc.text(`Área: ${areaName}`, boxX + 35, 21, { align: 'center' });
-        doc.text(`Semana: ${start} al ${end}`, boxX + 35, 26, { align: 'center' });
+        doc.text(`Periodo: ${start} al ${end}`, boxX + 35, 26, { align: 'center' });
 
         doc.setDrawColor(...PRIMARY);
         doc.setLineWidth(1);
@@ -1443,11 +1453,11 @@ const ProduccionPage = () => {
       // ---- 1. Tabla de la semana de horas extra en curso ----
       drawHeader();
       let y = drawTableHeader(42);
-      const week = drawRecordsTable(weekRecords, y, 'No se autorizaron horas extra en esta área durante la semana en curso.');
-      y = drawTotalRow(week.y, `Total semana: ${week.totalHoras}h en ${weekRecords.length} autorización(es)`);
+      const week = drawRecordsTable(weekRecords, y, 'No se autorizaron horas extra en esta área durante el periodo seleccionado.');
+      y = drawTotalRow(week.y, `Total del periodo: ${week.totalHoras}h en ${weekRecords.length} autorización(es)`);
 
-      // ---- 2. Resumen de horas acumuladas por colaborador, semana al corte ----
-      y = drawSectionTitle(y, '📊 Resumen por Colaborador (semana al corte)');
+      // ---- 2. Resumen de horas acumuladas por colaborador en el periodo seleccionado ----
+      y = drawSectionTitle(y, '📊 Resumen por Colaborador (periodo seleccionado)');
       const summaryColWidths = [130, 52];
       const byCollaborator = new Map();
       weekRecords.forEach((h) => {
@@ -1463,7 +1473,7 @@ const ProduccionPage = () => {
         doc.setFont(undefined, 'normal');
         doc.setFontSize(FONT_SIZE);
         doc.setTextColor(...DARK);
-        doc.text('Sin horas extra registradas esta semana.', MARGIN + 2, y + TOP_PAD);
+        doc.text('Sin horas extra registradas en el periodo seleccionado.', MARGIN + 2, y + TOP_PAD);
         y += MIN_ROW_H;
       } else {
         summaryRows.forEach(([name, hours], idx) => {
@@ -2603,16 +2613,36 @@ const ProduccionPage = () => {
             <h3 className={styles.sectionTitle} style={{ margin: 0 }}>
               👥 Personal del Área
             </h3>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={handleExportHorasExtraAreaPdf}
-              isLoading={isExportingHorasExtraPdf}
-              title="Descarga las horas extra autorizadas de esta área en la semana en curso (jueves a miércoles)"
-            >
-              📄 Exportar Horas Extra (PDF)
-            </Button>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <label style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--color-gray-600)' }}>Desde</label>
+                <input
+                  type="date"
+                  value={heReportStart}
+                  onChange={(e) => setHeReportStart(e.target.value)}
+                  style={{ fontSize: '12px', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--color-gray-300)' }}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <label style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--color-gray-600)' }}>Hasta</label>
+                <input
+                  type="date"
+                  value={heReportEnd}
+                  onChange={(e) => setHeReportEnd(e.target.value)}
+                  style={{ fontSize: '12px', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--color-gray-300)' }}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleExportHorasExtraAreaPdf}
+                isLoading={isExportingHorasExtraPdf}
+                title="Descarga las horas extra autorizadas de esta área en el rango de fechas elegido"
+              >
+                📄 Exportar Horas Extra (PDF)
+              </Button>
+            </div>
           </div>
 
           {operadoresDisponibles.length === 0 ? (

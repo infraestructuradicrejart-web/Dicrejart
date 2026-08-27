@@ -106,6 +106,10 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
 
   const canManageJornada = user?.roleType === ROLE_TYPES.ADMIN || user?.roleType === ROLE_TYPES.SUPERVISOR_AREA;
   const [isExportingHorasExtraPdf, setIsExportingHorasExtraPdf] = useState(false);
+  // Rango de fechas del PDF de horas extra — arranca en la semana en curso (jueves a
+  // miércoles) para no cambiar el comportamiento por default, ajustable antes de exportar.
+  const [heReportStart, setHeReportStart] = useState(() => getOvertimeWeekRange().start);
+  const [heReportEnd, setHeReportEnd] = useState(() => getOvertimeWeekRange().end);
 
   // Modales para horas extras y jornada del personal de PT
   const [requestOvertimeModal, setRequestOvertimeModal] = useState({
@@ -1231,15 +1235,21 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
   };
 
   /**
-   * Exporta a PDF las horas extra autorizadas de Producto Terminado — mismo formato y
-   * alcance que handleExportHorasExtraAreaPdf en ProduccionPage.jsx: (1) tabla de la
-   * semana en curso, (2) resumen por colaborador (semana al corte), y (3) sección aparte
-   * con las horas ya autorizadas para MAÑANA, aunque caigan fuera de la semana en curso.
+   * Exporta a PDF las horas extra autorizadas de Producto Terminado en el rango de
+   * fechas elegido (heReportStart/heReportEnd) — mismo formato y alcance que
+   * handleExportHorasExtraAreaPdf en ProduccionPage.jsx: (1) tabla del periodo elegido,
+   * (2) resumen por colaborador en ese periodo, y (3) sección aparte con las horas ya
+   * autorizadas para MAÑANA, aunque caigan fuera del periodo elegido.
    */
   const handleExportHorasExtraAreaPdf = async () => {
+    if (!heReportStart || !heReportEnd || heReportStart > heReportEnd) {
+      toast.danger('El rango de fechas del reporte no es válido — revisa "Desde" y "Hasta".');
+      return;
+    }
     setIsExportingHorasExtraPdf(true);
     try {
-      const { start, end } = getOvertimeWeekRange();
+      const start = heReportStart;
+      const end = heReportEnd;
       const tomorrowStr = getTodayLocalDateStr(new Date(Date.now() + 24 * 60 * 60 * 1000));
 
       const belongsToArea = (h) => h.areaId === 'producto-terminado' && h.verificationStatus !== 'cancelado';
@@ -1286,7 +1296,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
         doc.setFontSize(9);
         doc.setTextColor(...DARK);
         doc.text(`Área: ${areaName}`, boxX + 35, 21, { align: 'center' });
-        doc.text(`Semana: ${start} al ${end}`, boxX + 35, 26, { align: 'center' });
+        doc.text(`Periodo: ${start} al ${end}`, boxX + 35, 26, { align: 'center' });
 
         doc.setDrawColor(...PRIMARY);
         doc.setLineWidth(1);
@@ -1420,11 +1430,11 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
       // ---- 1. Tabla de la semana de horas extra en curso ----
       drawHeader();
       let y = drawTableHeader(42);
-      const week = drawRecordsTable(weekRecords, y, 'No se autorizaron horas extra en esta área durante la semana en curso.');
-      y = drawTotalRow(week.y, `Total semana: ${week.totalHoras}h en ${weekRecords.length} autorización(es)`);
+      const week = drawRecordsTable(weekRecords, y, 'No se autorizaron horas extra en esta área durante el periodo seleccionado.');
+      y = drawTotalRow(week.y, `Total del periodo: ${week.totalHoras}h en ${weekRecords.length} autorización(es)`);
 
-      // ---- 2. Resumen de horas acumuladas por colaborador, semana al corte ----
-      y = drawSectionTitle(y, '📊 Resumen por Colaborador (semana al corte)');
+      // ---- 2. Resumen de horas acumuladas por colaborador en el periodo seleccionado ----
+      y = drawSectionTitle(y, '📊 Resumen por Colaborador (periodo seleccionado)');
       const summaryColWidths = [130, 52];
       const byCollaborator = new Map();
       weekRecords.forEach((h) => {
@@ -1440,7 +1450,7 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
         doc.setFont(undefined, 'normal');
         doc.setFontSize(FONT_SIZE);
         doc.setTextColor(...DARK);
-        doc.text('Sin horas extra registradas esta semana.', MARGIN + 2, y + TOP_PAD);
+        doc.text('Sin horas extra registradas en el periodo seleccionado.', MARGIN + 2, y + TOP_PAD);
         y += MIN_ROW_H;
       } else {
         summaryRows.forEach(([name, hours], idx) => {
@@ -1883,16 +1893,36 @@ export default function ProductoTerminadoPanel({ activeArea, onBack, readOnly })
             <h3 className={styles.columnTitle} style={{ margin: 0 }}>
               👥 Personal del Área de Producto Terminado ({ptOperarios.length})
             </h3>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={handleExportHorasExtraAreaPdf}
-              isLoading={isExportingHorasExtraPdf}
-              title="Descarga las horas extra autorizadas de esta área en la semana en curso (jueves a miércoles)"
-            >
-              📄 Exportar Horas Extra (PDF)
-            </Button>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <label style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--color-gray-600)' }}>Desde</label>
+                <input
+                  type="date"
+                  value={heReportStart}
+                  onChange={(e) => setHeReportStart(e.target.value)}
+                  style={{ fontSize: '12px', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--color-gray-300)' }}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <label style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--color-gray-600)' }}>Hasta</label>
+                <input
+                  type="date"
+                  value={heReportEnd}
+                  onChange={(e) => setHeReportEnd(e.target.value)}
+                  style={{ fontSize: '12px', padding: '4px 6px', borderRadius: '6px', border: '1px solid var(--color-gray-300)' }}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleExportHorasExtraAreaPdf}
+                isLoading={isExportingHorasExtraPdf}
+                title="Descarga las horas extra autorizadas de esta área en el rango de fechas elegido"
+              >
+                📄 Exportar Horas Extra (PDF)
+              </Button>
+            </div>
           </div>
 
           {ptOperarios.length === 0 ? (
