@@ -105,19 +105,23 @@ async function ensureFolder(nasUrl, sid, parentPath, name) {
   return createFolder(nasUrl, sid, parentPath, name);
 }
 
-/** Sube un archivo (Buffer) a una carpeta del NAS. Devuelve la ruta final del archivo. */
+/**
+ * Sube un archivo (Buffer) a una carpeta del NAS. Devuelve la ruta final del archivo.
+ * A diferencia de las demás llamadas de escritura, la API de Upload de DSM valida el
+ * `_sid` desde la URL (no desde el cuerpo del formulario) antes de procesar el
+ * multipart — mandarlo solo en el form regresa "código 119: sesión no encontrada"
+ * aunque la sesión sea válida (confirmado: CreateFolder sí acepta `_sid` en el cuerpo,
+ * Upload no).
+ */
 async function uploadFile(nasUrl, sid, folderPath, fileName, buffer, mimeType) {
   const form = new FormData();
-  form.append('api', 'SYNO.FileStation.Upload');
-  form.append('version', '2');
-  form.append('method', 'upload');
   form.append('path', folderPath);
   form.append('create_parents', 'true');
   form.append('overwrite', 'false');
-  form.append('_sid', sid);
   form.append('file', new Blob([buffer], { type: mimeType || 'application/octet-stream' }), fileName);
 
-  const data = await fetchJson(`${nasUrl}/webapi/entry.cgi`, { method: 'POST', body: form }, 'subir archivo');
+  const url = `${nasUrl}/webapi/entry.cgi?api=SYNO.FileStation.Upload&version=2&method=upload&_sid=${sid}`;
+  const data = await fetchJson(url, { method: 'POST', body: form }, 'subir archivo');
   if (!data.success) {
     throw new Error(`No se pudo subir el archivo al NAS (código ${data.error?.code}).`);
   }
