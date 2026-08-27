@@ -31,6 +31,23 @@ async function fetchJson(url, options = {}, label = 'solicitud') {
   }
 }
 
+/**
+ * POST a `entry.cgi` con los parámetros en el CUERPO (application/x-www-form-urlencoded),
+ * no en la URL — las operaciones de escritura (crear carpeta, compartir, borrar) de DSM
+ * regresaban "código 101: falta un parámetro" al mandarlas como POST con los parámetros
+ * solo en el query string y sin cuerpo; con el cuerpo correcto sí los reconoce. Las
+ * operaciones de lectura (login, listar) sí funcionan bien por GET con query string, así
+ * que esas no se tocan.
+ */
+async function entryPost(nasUrl, sid, params, label) {
+  const body = new URLSearchParams({ ...params, _sid: sid }).toString();
+  return fetchJson(
+    `${nasUrl}/webapi/entry.cgi`,
+    { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body },
+    label
+  );
+}
+
 /** Inicia sesión en DSM y devuelve el `sid` para las siguientes llamadas. */
 async function login(nasUrl, account, passwd) {
   const url = `${nasUrl}/webapi/auth.cgi?api=SYNO.API.Auth&version=6&method=login&account=${encodeURIComponent(account)}&passwd=${encodeURIComponent(passwd)}&session=${SESSION_NAME}&format=sid`;
@@ -62,8 +79,14 @@ async function listFolder(nasUrl, sid, folderPath) {
 
 /** Crea una carpeta (y sus padres si hace falta). Idempotente: si ya existe, no falla. */
 async function createFolder(nasUrl, sid, parentPath, name) {
-  const url = `${nasUrl}/webapi/entry.cgi?api=SYNO.FileStation.CreateFolder&version=2&method=create&folder_path=${encodeURIComponent(JSON.stringify([parentPath]))}&name=${encodeURIComponent(JSON.stringify([name]))}&force_parent=true&_sid=${sid}`;
-  const data = await fetchJson(url, { method: 'POST' }, 'crear carpeta');
+  const data = await entryPost(nasUrl, sid, {
+    api: 'SYNO.FileStation.CreateFolder',
+    version: '2',
+    method: 'create',
+    folder_path: JSON.stringify([parentPath]),
+    name: JSON.stringify([name]),
+    force_parent: 'true',
+  }, 'crear carpeta');
   // Código 408 = "El archivo ya existe" — no es un error real para nosotros (idempotente).
   if (!data.success && data.error?.code !== 408) {
     throw new Error(`No se pudo crear la carpeta "${name}" en el NAS (código ${data.error?.code}).`);
@@ -108,8 +131,12 @@ async function uploadFile(nasUrl, sid, folderPath, fileName, buffer, mimeType) {
  * del NAS, así que un link `http://localhost:5000/sharing/...` no les serviría de nada.
  */
 async function createShareLink(nasUrl, sid, filePath, publicUrl) {
-  const url = `${nasUrl}/webapi/entry.cgi?api=SYNO.FileStation.Sharing&version=3&method=create&path=${encodeURIComponent(JSON.stringify([filePath]))}&_sid=${sid}`;
-  const data = await fetchJson(url, { method: 'POST' }, 'crear link para compartir');
+  const data = await entryPost(nasUrl, sid, {
+    api: 'SYNO.FileStation.Sharing',
+    version: '3',
+    method: 'create',
+    path: JSON.stringify([filePath]),
+  }, 'crear link para compartir');
   if (!data.success || !data.data?.links?.[0]?.id) {
     throw new Error(`No se pudo crear el link para compartir (código ${data.error?.code}).`);
   }
@@ -118,8 +145,12 @@ async function createShareLink(nasUrl, sid, filePath, publicUrl) {
 
 /** Borra un archivo — "fire and forget" (no se espera a que termine la tarea async de DSM). */
 async function deleteFile(nasUrl, sid, filePath) {
-  const url = `${nasUrl}/webapi/entry.cgi?api=SYNO.FileStation.Delete&version=2&method=start&path=${encodeURIComponent(JSON.stringify([filePath]))}&_sid=${sid}`;
-  const data = await fetchJson(url, { method: 'POST' }, 'borrar archivo');
+  const data = await entryPost(nasUrl, sid, {
+    api: 'SYNO.FileStation.Delete',
+    version: '2',
+    method: 'start',
+    path: JSON.stringify([filePath]),
+  }, 'borrar archivo');
   if (!data.success) {
     throw new Error(`No se pudo borrar el archivo del NAS (código ${data.error?.code}).`);
   }
