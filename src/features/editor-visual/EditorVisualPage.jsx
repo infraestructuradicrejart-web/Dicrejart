@@ -728,8 +728,15 @@ const EditorVisualPage = ({ standalone = false }) => {
       return next;
     });
   };
-  // Confirmación antes de borrar un Bloque que ya tiene actividades reales adentro
-  const [deleteBlockConfirm, setDeleteBlockConfirm] = useState({ isOpen: false, nodeId: null });
+  // Confirmación SIEMPRE antes de borrar cualquier nodo del lienzo — antes solo se
+  // pedía para un Bloque con actividades reales adentro (y ese modal ni siquiera se
+  // llegaba a mostrar, ver más abajo), dejando borrar cualquier otro nodo al instante
+  // sin aviso ni forma de recuperarlo.
+  const [deleteNodeConfirm, setDeleteNodeConfirm] = useState({ isOpen: false, nodeId: null });
+  // Últimos nodos borrados (con sus cables) para poder deshacer con Ctrl+Z — solo cubre
+  // borrados individuales (botón "✕"), no "Vaciar Lienzo" (acción masiva, ya tiene su
+  // propio modal y es deliberadamente no reversible por esta vía).
+  const [deletionUndoStack, setDeletionUndoStack] = useState([]);
 
   // Qué nodos están "colapsados" — se guarda en el propio documento del lienzo
   // (`lienzos/{id}.collapsedNodeIds`, ver el listener de abajo y toggleNodeCollapsed),
@@ -1613,9 +1620,16 @@ const EditorVisualPage = ({ standalone = false }) => {
     e.preventDefault();
   };
 
-  /** Quita un nodo del lienzo (y sus cables) — solo retira la representación visual del lienzo, conservando los datos en la actividad */
+  /**
+   * Quita un nodo del lienzo (y sus cables) — solo retira la representación visual del
+   * lienzo, conservando los datos en la actividad. Captura el nodo + sus cables en
+   * `deletionUndoStack` (tope 20) para poder deshacerlo con Ctrl+Z — ver
+   * `handleUndoDelete`. El undo solo restaura la estructura del lienzo, no revierte
+   * efectos que ya se dispararon (ej. la notificación de auditoría cancelada de abajo).
+   */
   const performDeleteNode = (nodeId) => {
     const deletedNode = findNode(nodeId);
+    const removedEdges = edges.filter((ed) => ed.from === nodeId || ed.to === nodeId);
     const nextNodes = nodes.filter((n) => n.id !== nodeId);
     const nextEdges = edges.filter((ed) => ed.from !== nodeId && ed.to !== nodeId);
     setNodes(nextNodes);
@@ -1629,6 +1643,10 @@ const EditorVisualPage = ({ standalone = false }) => {
     setSelectedEdgeId(null);
     saveToFirestore(nextNodes, nextEdges);
 
+    if (deletedNode) {
+      setDeletionUndoStack((prev) => [...prev, { node: deletedNode, edges: removedEdges }].slice(-20));
+    }
+
     // Al borrar un semáforo de Auditoría de Calidad, se cancela la asignación (solo si
     // seguía pendiente sin resolver — ver cancelQualityAudit) y se avisa a quien estaba
     // asignado que ya no tiene que auditar esa entrega.
@@ -1641,25 +1659,36 @@ const EditorVisualPage = ({ standalone = false }) => {
     }
   };
 
-  const handleCloseNode = (nodeId) => {
-    if (!canEditDiagram) return;
-    const node = findNode(nodeId);
-    if (node?.type === 'bloque' && (node.activityIds || []).length > 0) {
-      setDeleteBlockConfirm({ isOpen: true, nodeId });
-      return;
-    }
-    performDeleteNode(nodeId);
+  /** Restaura el último nodo borrado (con sus cables) — atajo Ctrl+Z, ver el useEffect más abajo. */
+  const handleUndoDelete = () => {
+    setDeletionUndoStack((prevStack) => {
+      if (prevStack.length === 0) return prevStack;
+      const last = prevStack[prevStack.length - 1];
+      const nextNodes = [...nodes, last.node];
+      const nextEdges = [...edges, ...last.edges];
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      saveToFirestore(nextNodes, nextEdges);
+      toast.success(`↩️ Se restauró "${nodeTitle(last.node)}".`);
+      return prevStack.slice(0, -1);
+    });
   };
 
-  const closeDeleteBlockConfirm = () => setDeleteBlockConfirm({ isOpen: false, nodeId: null });
+  /** Siempre pide confirmación antes de borrar cualquier nodo — ver el modal "Eliminar nodo del lienzo". */
+  const handleCloseNode = (nodeId) => {
+    if (!canEditDiagram) return;
+    setDeleteNodeConfirm({ isOpen: true, nodeId });
+  };
+
+  const closeDeleteNodeConfirm = () => setDeleteNodeConfirm({ isOpen: false, nodeId: null });
 
   /**
    * Confirma el borrado de un Bloque junto con TODAS sus actividades reales.
    */
   const handleConfirmDeleteBlockWithActivities = async () => {
-    const node = findNode(deleteBlockConfirm.nodeId);
+    const node = findNode(deleteNodeConfirm.nodeId);
     if (!node) {
-      closeDeleteBlockConfirm();
+      closeDeleteNodeConfirm();
       return;
     }
 
@@ -1684,7 +1713,17 @@ const EditorVisualPage = ({ standalone = false }) => {
 
     performDeleteNode(node.id);
     toast.success('🗑️ Bloque y sus actividades eliminados.');
-    closeDeleteBlockConfirm();
+    closeDeleteNodeConfirm();
+  };
+
+  /** Confirma el borrado de cualquier nodo que NO sea un Bloque con actividades reales adentro (ver arriba). */
+  const handleConfirmDeleteNode = () => {
+    const node = findNode(deleteNodeConfirm.nodeId);
+    if (node) {
+      performDeleteNode(node.id);
+      toast.success(`🗑️ "${nodeTitle(node)}" eliminado — puedes deshacerlo con Ctrl+Z.`);
+    }
+    closeDeleteNodeConfirm();
   };
 
   const handlePortMouseDown = (e, nodeId, side) => {
@@ -2429,6 +2468,21 @@ const EditorVisualPage = ({ standalone = false }) => {
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, [handleFitToView]);
+
+  // Ctrl+Z (o Cmd+Z en Mac) deshace el último nodo borrado — efecto propio, separado del
+  // de Espacio/F de arriba, para no arriesgar tocar un atajo que ya funciona.
+  useEffect(() => {
+    const handleUndoKeyDown = (e) => {
+      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+      if (isInput) return; // no interceptar el Ctrl+Z nativo de un campo de texto
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndoDelete();
+      }
+    };
+    window.addEventListener('keydown', handleUndoKeyDown);
+    return () => window.removeEventListener('keydown', handleUndoKeyDown);
+  }, [nodes, edges, deletionUndoStack]);
 
   /**
    * Reacomoda todos los nodos en la misma cuadrícula ordenada que usa spawnNode al
@@ -6833,6 +6887,46 @@ const EditorVisualPage = ({ standalone = false }) => {
             )}
           </AnimatePresence>
       </div>
+
+      {/* ---------- MODAL: CONFIRMAR ELIMINAR NODO DEL LIENZO (SIEMPRE, cualquier tipo) ---------- */}
+      {(() => {
+        const nodeToDelete = deleteNodeConfirm.isOpen ? findNode(deleteNodeConfirm.nodeId) : null;
+        const isBlockWithActivities = nodeToDelete?.type === 'bloque' && (nodeToDelete.activityIds || []).length > 0;
+        const isAudit = nodeToDelete?.type === 'auditoria-calidad';
+        return (
+          <Modal
+            isOpen={deleteNodeConfirm.isOpen}
+            onClose={closeDeleteNodeConfirm}
+            title="🗑️ Eliminar nodo del lienzo"
+          >
+            {nodeToDelete && (
+              <p style={{ margin: '0 0 16px 0', fontSize: '14px', lineHeight: 1.5, color: 'var(--color-dark)' }}>
+                {isBlockWithActivities ? (
+                  <>
+                    <strong>"{nodeTitle(nodeToDelete)}"</strong> tiene {(nodeToDelete.activityIds || []).length} actividad(es) real(es) adentro — al eliminar este Bloque también se eliminarán esas actividades (solo si ninguna tiene avance todavía). Esta acción <strong>no</strong> se puede deshacer con Ctrl+Z.
+                  </>
+                ) : isAudit ? (
+                  <>
+                    ¿Eliminar el semáforo de <strong>"{nodeTitle(nodeToDelete)}"</strong> del lienzo? Si sigue pendiente, se cancelará la asignación y se avisará por chat a quien la tenía asignada. Puedes deshacer el borrado del nodo con <strong>Ctrl+Z</strong>, pero ese aviso ya enviado no se puede desdecir.
+                  </>
+                ) : (
+                  <>
+                    ¿Eliminar <strong>"{nodeTitle(nodeToDelete)}"</strong> del lienzo? Solo se quita del lienzo — los datos reales (si los tiene) no se borran — y puedes deshacerlo justo después con <strong>Ctrl+Z</strong>.
+                  </>
+                )}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <Button variant="secondary" size="md" onClick={closeDeleteNodeConfirm}>
+                Cancelar
+              </Button>
+              <Button variant="danger" size="md" onClick={isBlockWithActivities ? handleConfirmDeleteBlockWithActivities : handleConfirmDeleteNode}>
+                🗑️ Sí, Eliminar
+              </Button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* ---------- MODAL: CONFIRMAR LIMPIAR NODOS DEL LIENZO ---------- */}
       <Modal
