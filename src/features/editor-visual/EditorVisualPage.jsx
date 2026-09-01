@@ -465,6 +465,7 @@ const EditorVisualPage = ({ standalone = false }) => {
     proyectos, juegos, addProject, addGame, updateProject,
     setQualityVerdict, setQualityVerdictEvidenceLink, assignQualityAudit, cancelQualityAudit,
     setQualityVerdictProject, setQualityVerdictEvidenceLinkProject, assignQualityAuditProject, cancelQualityAuditProject,
+    addAuditInspection, addAuditInspectionChecklistItem, toggleAuditInspectionChecklistItem, removeAuditInspectionChecklistItem, deleteAuditInspection,
   } = useProduccion();
   const { actividades, addActividad, updateActividad, deleteActividad, advanceStatus } = useActividades();
   const { operarios, assignToArea } = useOperarios();
@@ -598,6 +599,21 @@ const EditorVisualPage = ({ standalone = false }) => {
   const [auditEvidenceDrafts, setAuditEvidenceDrafts] = useState({});
   // Sube-en-curso del archivo de evidencia del semáforo, por nodeId — mismo motivo que auditEvidenceDrafts.
   const [auditEvidenceUploading, setAuditEvidenceUploading] = useState({});
+  // Inspecciones expandidas dentro de un semáforo — clave "${nodeId}:${inspectionId}"
+  // porque puede haber varios nodos semáforo en el lienzo, cada uno con varias
+  // inspecciones propias.
+  const [expandedInspections, setExpandedInspections] = useState(() => new Set());
+  const toggleInspectionExpanded = (nodeId, inspectionId) => {
+    const key = `${nodeId}:${inspectionId}`;
+    setExpandedInspections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  // Texto en curso del input "agregar punto" de cada inspección — misma clave compuesta.
+  const [newInspectionItemDrafts, setNewInspectionItemDrafts] = useState({});
   // Nodos de Auditoría de Calidad expandidos (mostrando área/juego, botones y notas) —
   // colapsados por defecto, solo el semáforo, para que el lienzo no se sature.
   const [expandedAuditNodes, setExpandedAuditNodes] = useState(() => new Set());
@@ -3546,6 +3562,49 @@ const EditorVisualPage = ({ standalone = false }) => {
     }
   };
 
+  /** Arma el descriptor que las funciones de inspecciones necesitan para saber a qué semáforo pertenecen (Juego+Área o Proyecto). */
+  const buildAuditTarget = (entity) => ({
+    mode: entity.mode,
+    gameId: entity.gameId,
+    areaId: entity.areaId,
+    projectId: entity.projectId,
+  });
+
+  const handleAddInspection = async (entity) => {
+    const res = await addAuditInspection(buildAuditTarget(entity));
+    if (!res?.ok) toast.danger(res?.error || 'No se pudo crear la inspección.');
+  };
+
+  const setNewInspectionItemText = (key, text) => {
+    setNewInspectionItemDrafts((prev) => ({ ...prev, [key]: text }));
+  };
+
+  const handleAddInspectionChecklistItem = async (entity, inspectionId, draftKey) => {
+    const text = (newInspectionItemDrafts[draftKey] || '').trim();
+    if (!text) return;
+    const res = await addAuditInspectionChecklistItem(buildAuditTarget(entity), inspectionId, text);
+    if (res?.ok) {
+      setNewInspectionItemDrafts((prev) => ({ ...prev, [draftKey]: '' }));
+    } else {
+      toast.danger(res?.error || 'No se pudo agregar el punto.');
+    }
+  };
+
+  const handleToggleInspectionChecklistItem = async (entity, inspectionId, itemId) => {
+    const res = await toggleAuditInspectionChecklistItem(buildAuditTarget(entity), inspectionId, itemId);
+    if (!res?.ok) toast.danger(res?.error || 'No se pudo actualizar el punto.');
+  };
+
+  const handleRemoveInspectionChecklistItem = async (entity, inspectionId, itemId) => {
+    const res = await removeAuditInspectionChecklistItem(buildAuditTarget(entity), inspectionId, itemId);
+    if (!res?.ok) toast.danger(res?.error || 'No se pudo quitar el punto.');
+  };
+
+  const handleDeleteInspection = async (entity, inspectionId) => {
+    const res = await deleteAuditInspection(buildAuditTarget(entity), inspectionId);
+    if (!res?.ok) toast.danger(res?.error || 'No se pudo eliminar la inspección.');
+  };
+
   /**
    * Reabre o cambia de estado una actividad
    */
@@ -5273,6 +5332,110 @@ const EditorVisualPage = ({ standalone = false }) => {
                               🔒 {entity.mode === 'project' ? 'Solo Calidad o Dirección' : 'Solo Calidad o supervisor de esta área'}
                             </div>
                           )}
+
+                          {/* Inspecciones — varias listas de sub-tareas independientes por semáforo */}
+                          <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px dashed rgba(255,255,255,0.15)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <label style={{ fontSize: '9.5px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                🔍 Inspecciones ({(entity.inspections || []).length})
+                              </label>
+                              {canEditAudit && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddInspection(entity)}
+                                  style={{ padding: '3px 7px', fontSize: '10px', fontWeight: 700, background: 'rgba(16,185,129,0.15)', color: '#6ee7b7', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '5px', cursor: 'pointer' }}
+                                >
+                                  + Nueva
+                                </button>
+                              )}
+                            </div>
+                            {(entity.inspections || []).length === 0 ? (
+                              <p style={{ fontSize: '10px', color: '#64748b', margin: '2px 0' }}>Sin inspecciones registradas.</p>
+                            ) : (
+                              entity.inspections.map((insp) => {
+                                const inspKey = `${node.id}:${insp.id}`;
+                                const isInspExpanded = expandedInspections.has(inspKey);
+                                const doneCount = (insp.checklist || []).filter((it) => it.completed).length;
+                                const totalCount = (insp.checklist || []).length;
+                                return (
+                                  <div key={insp.id} style={{ marginTop: '4px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }}>
+                                    <div
+                                      onClick={() => toggleInspectionExpanded(node.id, insp.id)}
+                                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', cursor: 'pointer' }}
+                                    >
+                                      <span style={{ fontSize: '11px', fontWeight: 600, color: '#f1f5f9' }}>{insp.label}</span>
+                                      <span style={{ fontSize: '10px', color: totalCount > 0 && doneCount === totalCount ? '#6ee7b7' : '#94a3b8' }}>
+                                        {doneCount}/{totalCount} {isInspExpanded ? '▲' : '▼'}
+                                      </span>
+                                    </div>
+                                    {isInspExpanded && (
+                                      <div style={{ padding: '0 8px 8px' }} onMouseDown={(e) => e.stopPropagation()}>
+                                        {(insp.checklist || []).length > 0 && (
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginBottom: '5px' }}>
+                                            {insp.checklist.map((item) => (
+                                              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px' }}>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={Boolean(item.completed)}
+                                                  disabled={!canEditAudit}
+                                                  onChange={() => handleToggleInspectionChecklistItem(entity, insp.id, item.id)}
+                                                />
+                                                <span style={{ flex: 1, textDecoration: item.completed ? 'line-through' : 'none', color: item.completed ? '#64748b' : '#e2e8f0' }}>
+                                                  {item.text}
+                                                </span>
+                                                {canEditAudit && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveInspectionChecklistItem(entity, insp.id, item.id)}
+                                                    style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '11px', padding: '0 2px' }}
+                                                  >
+                                                    ✕
+                                                  </button>
+                                                )}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                        {canEditAudit && (
+                                          <>
+                                            <div style={{ display: 'flex', gap: '4px' }}>
+                                              <input
+                                                type="text"
+                                                placeholder="➕ Nuevo punto..."
+                                                value={newInspectionItemDrafts[inspKey] || ''}
+                                                onChange={(e) => setNewInspectionItemText(inspKey, e.target.value)}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    handleAddInspectionChecklistItem(entity, insp.id, inspKey);
+                                                  }
+                                                }}
+                                                style={{ flex: 1, fontSize: '10.5px', padding: '4px 6px', borderRadius: '5px', border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.06)', color: '#f1f5f9' }}
+                                              />
+                                              <button
+                                                type="button"
+                                                onClick={() => handleAddInspectionChecklistItem(entity, insp.id, inspKey)}
+                                                style={{ padding: '4px 7px', fontSize: '10px', fontWeight: 700, background: 'rgba(255,255,255,0.1)', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '5px', cursor: 'pointer' }}
+                                              >
+                                                Agregar
+                                              </button>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteInspection(entity, insp.id)}
+                                              style={{ marginTop: '5px', fontSize: '9.5px', color: '#f87171', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                                            >
+                                              🗑️ Eliminar esta inspección
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

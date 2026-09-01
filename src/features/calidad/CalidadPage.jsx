@@ -292,6 +292,11 @@ const CalidadPage = () => {
     setQualityVerdictEvidenceLink,
     setQualityVerdictProject,
     setQualityVerdictEvidenceLinkProject,
+    addAuditInspection,
+    addAuditInspectionChecklistItem,
+    toggleAuditInspectionChecklistItem,
+    removeAuditInspectionChecklistItem,
+    deleteAuditInspection,
   } = useProduccion();
   const { user } = useAuth();
   const toast = useToast();
@@ -585,6 +590,18 @@ const CalidadPage = () => {
   const [auditReasonDraft, setAuditReasonDraft] = useState({ show: false, text: '' });
   const [auditEvidenceDraft, setAuditEvidenceDraft] = useState('');
   const [auditEvidenceUploading, setAuditEvidenceUploading] = useState(false);
+  // Inspecciones expandidas dentro del semáforo seleccionado — clave = id de la inspección
+  // (aquí solo hay un semáforo seleccionado a la vez, a diferencia del lienzo).
+  const [expandedInspections, setExpandedInspections] = useState(() => new Set());
+  const toggleInspectionExpanded = (inspectionId) => {
+    setExpandedInspections((prev) => {
+      const next = new Set(prev);
+      if (next.has(inspectionId)) next.delete(inspectionId);
+      else next.add(inspectionId);
+      return next;
+    });
+  };
+  const [newInspectionItemDrafts, setNewInspectionItemDrafts] = useState({});
 
   const canEditSelectedAudit = selectedAudit
     ? (selectedAudit.mode === 'project' ? canUserEditProjectAudit(user) : canUserEditRoute(user, selectedAudit.game))
@@ -662,6 +679,54 @@ const CalidadPage = () => {
     } finally {
       setAuditEvidenceUploading(false);
     }
+  };
+
+  /** Arma el descriptor que las funciones de inspecciones necesitan (Juego+Área o Proyecto). */
+  const buildAuditTarget = (audit) => ({
+    mode: audit.mode,
+    gameId: audit.gameId,
+    areaId: audit.areaId,
+    projectId: audit.projectId,
+  });
+
+  const handleAddSemaforoInspection = async () => {
+    if (!selectedAudit) return;
+    const res = await addAuditInspection(buildAuditTarget(selectedAudit));
+    if (!res?.ok) toast.danger(res?.error || 'No se pudo crear la inspección.');
+  };
+
+  const setNewInspectionItemText = (inspectionId, text) => {
+    setNewInspectionItemDrafts((prev) => ({ ...prev, [inspectionId]: text }));
+  };
+
+  const handleAddSemaforoInspectionItem = async (inspectionId) => {
+    if (!selectedAudit) return;
+    const text = (newInspectionItemDrafts[inspectionId] || '').trim();
+    if (!text) return;
+    const res = await addAuditInspectionChecklistItem(buildAuditTarget(selectedAudit), inspectionId, text);
+    if (res?.ok) {
+      setNewInspectionItemDrafts((prev) => ({ ...prev, [inspectionId]: '' }));
+    } else {
+      toast.danger(res?.error || 'No se pudo agregar el punto.');
+    }
+  };
+
+  const handleToggleSemaforoInspectionItem = async (inspectionId, itemId) => {
+    if (!selectedAudit) return;
+    const res = await toggleAuditInspectionChecklistItem(buildAuditTarget(selectedAudit), inspectionId, itemId);
+    if (!res?.ok) toast.danger(res?.error || 'No se pudo actualizar el punto.');
+  };
+
+  const handleRemoveSemaforoInspectionItem = async (inspectionId, itemId) => {
+    if (!selectedAudit) return;
+    const res = await removeAuditInspectionChecklistItem(buildAuditTarget(selectedAudit), inspectionId, itemId);
+    if (!res?.ok) toast.danger(res?.error || 'No se pudo quitar el punto.');
+  };
+
+  const handleDeleteSemaforoInspection = async (inspectionId) => {
+    if (!selectedAudit) return;
+    const res = await deleteAuditInspection(buildAuditTarget(selectedAudit), inspectionId);
+    if (!res?.ok) toast.danger(res?.error || 'No se pudo eliminar la inspección.');
   };
 
   // Todas las autorizaciones de tiempo extra pendientes de verificar, de cualquier fecha
@@ -2145,6 +2210,93 @@ const CalidadPage = () => {
                       🔒 {selectedAudit.mode === 'project' ? 'Solo Calidad o Dirección' : 'Solo Calidad o supervisor de esta área'}
                     </p>
                   )}
+
+                  {/* Inspecciones — varias listas de sub-tareas independientes por semáforo */}
+                  <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid var(--color-gray-200)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <strong style={{ fontSize: '12px' }}>🔍 Inspecciones ({(selectedAudit.inspections || []).length})</strong>
+                      {canEditSelectedAudit && (
+                        <Button type="button" variant="secondary" size="sm" onClick={handleAddSemaforoInspection}>
+                          + Nueva
+                        </Button>
+                      )}
+                    </div>
+                    {(selectedAudit.inspections || []).length === 0 ? (
+                      <p style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>Sin inspecciones registradas.</p>
+                    ) : (
+                      selectedAudit.inspections.map((insp) => {
+                        const isInspExpanded = expandedInspections.has(insp.id);
+                        const doneCount = (insp.checklist || []).filter((it) => it.completed).length;
+                        const totalCount = (insp.checklist || []).length;
+                        return (
+                          <div key={insp.id} style={{ marginTop: '6px', borderRadius: '8px', border: '1px solid var(--color-gray-200)' }}>
+                            <div
+                              onClick={() => toggleInspectionExpanded(insp.id)}
+                              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', cursor: 'pointer' }}
+                            >
+                              <span style={{ fontSize: '12px', fontWeight: 600 }}>{insp.label}</span>
+                              <Badge variant={totalCount > 0 && doneCount === totalCount ? 'success' : 'warning'}>
+                                {doneCount}/{totalCount} {isInspExpanded ? '▲' : '▼'}
+                              </Badge>
+                            </div>
+                            {isInspExpanded && (
+                              <div style={{ padding: '0 10px 10px' }}>
+                                {(insp.checklist || []).length > 0 && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
+                                    {insp.checklist.map((item) => (
+                                      <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(item.completed)}
+                                          disabled={!canEditSelectedAudit}
+                                          onChange={() => handleToggleSemaforoInspectionItem(insp.id, item.id)}
+                                        />
+                                        <span style={{ flex: 1, textDecoration: item.completed ? 'line-through' : 'none', color: item.completed ? 'var(--color-gray-400)' : 'inherit' }}>
+                                          {item.text}
+                                        </span>
+                                        {canEditSelectedAudit && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRemoveSemaforoInspectionItem(insp.id, item.id)}
+                                            style={{ background: 'none', border: 'none', color: 'var(--color-alert)', cursor: 'pointer', fontSize: '12px' }}
+                                          >
+                                            ✕
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {canEditSelectedAudit && (
+                                  <>
+                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                      <div style={{ flex: 1 }}>
+                                        <Input
+                                          value={newInspectionItemDrafts[insp.id] || ''}
+                                          onChange={(e) => setNewInspectionItemText(insp.id, e.target.value)}
+                                          placeholder="➕ Nuevo punto..."
+                                        />
+                                      </div>
+                                      <Button type="button" variant="secondary" size="sm" onClick={() => handleAddSemaforoInspectionItem(insp.id)}>
+                                        Agregar
+                                      </Button>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteSemaforoInspection(insp.id)}
+                                      style={{ marginTop: '6px', fontSize: '11px', color: 'var(--color-alert)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                                    >
+                                      🗑️ Eliminar esta inspección
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </>
               )}
             </Card>

@@ -1967,7 +1967,7 @@ export const ProduccionProvider = ({ children }) => {
     }
     try {
       await updateDoc(doc(db, 'juegos', gameId), {
-        [`qualityVerdict.${areaId}`]: { status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' },
+        [`qualityVerdict.${areaId}`]: { ...current, status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' },
       });
       logAudit({ user, module: 'produccion', action: 'Canceló asignación de auditoría de calidad', details: `${j.name} (${areaId}) — ${current.assignedToName}` });
       return { ok: true, canceledAssignee: { id: current.assignedTo, name: current.assignedToName } };
@@ -2055,7 +2055,7 @@ export const ProduccionProvider = ({ children }) => {
     }
     try {
       await updateDoc(doc(db, 'proyectos', projectId), {
-        qualityAuditProject: { status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' },
+        qualityAuditProject: { ...current, status: 'pendiente', assignedTo: null, assignedToName: null, reviewedBy: null, reviewedAt: null, notes: '' },
       });
       logAudit({ user, module: 'produccion', action: 'Canceló asignación de auditoría de calidad de Proyecto', details: `${p.name} — ${current.assignedToName}` });
       return { ok: true, canceledAssignee: { id: current.assignedTo, name: current.assignedToName } };
@@ -2064,6 +2064,84 @@ export const ProduccionProvider = ({ children }) => {
       return { ok: false, error: error.message };
     }
   }, [proyectos, user]);
+
+  /**
+   * Un semáforo puede recibir más de una inspección a lo largo del tiempo (cada
+   * re-visita del área, o distintos puntos a verificar) — cada inspección lleva su
+   * propio checklist de sub-tareas, independiente de las demás. `target` distingue el
+   * modo del semáforo (`{ mode: 'game', gameId, areaId }` o `{ mode: 'project',
+   * projectId }` — literalmente lo que ya trae `entity` en el lienzo y en
+   * CalidadPage.jsx), así que es un solo juego de funciones para los dos modos en vez de
+   * duplicarlas. `updater(inspeccionesActuales) => nuevoArreglo` aplica el cambio.
+   */
+  const updateAuditInspections = useCallback(async (target, updater) => {
+    if (!db) return { ok: false, error: 'Firestore no está inicializado' };
+    if (target.mode === 'project') {
+      const p = proyectos.find((pr) => pr.id === target.projectId);
+      if (!p) return { ok: false, error: 'Proyecto no encontrado' };
+      const nextInspections = updater(p.qualityAuditProject?.inspections || []);
+      try {
+        await updateDoc(doc(db, 'proyectos', target.projectId), { 'qualityAuditProject.inspections': nextInspections });
+        return { ok: true };
+      } catch (error) {
+        console.error('Error al actualizar inspecciones de auditoría de proyecto:', error);
+        return { ok: false, error: error.message };
+      }
+    }
+    const j = juegos.find((jg) => jg.id === target.gameId);
+    if (!j) return { ok: false, error: 'Juego no encontrado' };
+    const nextInspections = updater(j.qualityVerdict?.[target.areaId]?.inspections || []);
+    try {
+      await updateDoc(doc(db, 'juegos', target.gameId), { [`qualityVerdict.${target.areaId}.inspections`]: nextInspections });
+      return { ok: true };
+    } catch (error) {
+      console.error('Error al actualizar inspecciones de auditoría:', error);
+      return { ok: false, error: error.message };
+    }
+  }, [juegos, proyectos]);
+
+  /** Crea una nueva inspección vacía (autonumerada) dentro del semáforo. */
+  const addAuditInspection = useCallback(async (target) => {
+    const res = await updateAuditInspections(target, (list) => [
+      ...list,
+      { id: `INSP-${Date.now()}`, label: `Inspección ${list.length + 1}`, createdAt: new Date().toISOString(), createdBy: user?.name || 'Calidad', checklist: [] },
+    ]);
+    if (res.ok) logAudit({ user, module: 'produccion', action: 'Creó una inspección en un semáforo de calidad', details: JSON.stringify(target) });
+    return res;
+  }, [updateAuditInspections, user]);
+
+  /** Agrega un punto de checklist a una inspección específica. */
+  const addAuditInspectionChecklistItem = useCallback((target, inspectionId, text) =>
+    updateAuditInspections(target, (list) => list.map((insp) =>
+      insp.id === inspectionId
+        ? { ...insp, checklist: [...(insp.checklist || []), { id: `chk-${Date.now()}`, text, completed: false }] }
+        : insp
+    )), [updateAuditInspections]);
+
+  /** Marca/desmarca un punto de checklist de una inspección. */
+  const toggleAuditInspectionChecklistItem = useCallback((target, inspectionId, itemId) =>
+    updateAuditInspections(target, (list) => list.map((insp) =>
+      insp.id !== inspectionId ? insp : {
+        ...insp,
+        checklist: (insp.checklist || []).map((it) => it.id !== itemId ? it : {
+          ...it,
+          completed: !it.completed,
+          completedAt: !it.completed ? new Date().toISOString() : null,
+          completedBy: !it.completed ? (user?.name || 'Calidad') : null,
+        }),
+      }
+    )), [updateAuditInspections, user]);
+
+  /** Quita un punto de checklist de una inspección. */
+  const removeAuditInspectionChecklistItem = useCallback((target, inspectionId, itemId) =>
+    updateAuditInspections(target, (list) => list.map((insp) =>
+      insp.id === inspectionId ? { ...insp, checklist: (insp.checklist || []).filter((it) => it.id !== itemId) } : insp
+    )), [updateAuditInspections]);
+
+  /** Borra una inspección completa (y su checklist) del semáforo. */
+  const deleteAuditInspection = useCallback((target, inspectionId) =>
+    updateAuditInspections(target, (list) => list.filter((insp) => insp.id !== inspectionId)),
+  [updateAuditInspections]);
 
   /**
    * Calidad da el visto bueno final, como testigo, para que Producto Terminado pueda
@@ -2188,6 +2266,11 @@ export const ProduccionProvider = ({ children }) => {
       setQualityVerdictEvidenceLinkProject,
       assignQualityAuditProject,
       cancelQualityAuditProject,
+      addAuditInspection,
+      addAuditInspectionChecklistItem,
+      toggleAuditInspectionChecklistItem,
+      removeAuditInspectionChecklistItem,
+      deleteAuditInspection,
       approveReceptionForPT,
       returnDeliveryForReview,
     }),
@@ -2248,6 +2331,11 @@ export const ProduccionProvider = ({ children }) => {
       setQualityVerdictEvidenceLinkProject,
       assignQualityAuditProject,
       cancelQualityAuditProject,
+      addAuditInspection,
+      addAuditInspectionChecklistItem,
+      toggleAuditInspectionChecklistItem,
+      removeAuditInspectionChecklistItem,
+      deleteAuditInspection,
       approveReceptionForPT,
       returnDeliveryForReview,
     ]
